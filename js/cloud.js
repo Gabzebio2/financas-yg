@@ -14,6 +14,12 @@ const Cloud = (() => {
   const AUTOSYNC_STORAGE = "fyg:cloud-autosync";
   const TABLE = "pastas";
 
+  // Conexão padrão do projeto — embutida para não precisar colar em cada
+  // aparelho. A chave "publishable" é pública por design (o Supabase diz:
+  // "can be safely shared publicly"); a proteção real é o login + RLS.
+  const DEFAULT_URL = "https://mhgagjhwsjjjwwvopjgu.supabase.co";
+  const DEFAULT_KEY = "sb_publishable_fB3B_MW3VgJBcJpUbN1wvg_1Glbr2r5";
+
   let client = null;
   let session = null;
   let syncing = false;   // trava anti-loop enquanto puxa da nuvem
@@ -24,8 +30,10 @@ const Cloud = (() => {
   function getCfg() {
     try {
       const c = JSON.parse(localStorage.getItem(CFG_STORAGE));
-      return c && /^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(c.url) && typeof c.anonKey === "string" && c.anonKey.length > 20 ? c : null;
-    } catch { return null; }
+      if (c && /^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(c.url) && typeof c.anonKey === "string" && c.anonKey.length > 20) return c;
+    } catch { /* config local inválida: cai no padrão */ }
+    if (DEFAULT_URL && DEFAULT_KEY.length > 20) return { url: DEFAULT_URL, anonKey: DEFAULT_KEY };
+    return null;
   }
 
   function setStatus(msg, cls) {
