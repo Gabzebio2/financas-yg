@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <!-- Segurança: só scripts do próprio app e conexões aos serviços autorizados
-     (api.anthropic.com p/ leitura de comprovante; googleapis/accounts p/ Google Drive).
+     (api.anthropic.com p/ leitura de comprovante; *.supabase.co p/ nuvem).
      "file:" mantém o app funcionando quando aberto localmente com dois cliques. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file: https://accounts.google.com; style-src 'self' 'unsafe-inline' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://www.googleapis.com https://oauth2.googleapis.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://*.supabase.co wss://*.supabase.co; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <title>Finanças YG</title>
@@ -59,6 +59,48 @@
     </div>
     <div id="folders-grid" class="folders-grid"></div>
     <p class="hint" id="storage-hint">Seus dados ficam salvos neste navegador, neste computador. Exporte um backup de vez em quando por segurança.</p>
+
+    <!-- ===== Sincronização na nuvem (Supabase) ===== -->
+    <div class="card drive-card" id="cloud-card">
+      <div class="drive-head">
+        <div>
+          <h3>☁️ Sincronizar na nuvem</h3>
+          <span class="hint">Guarde seus dados com login e senha e acesse do PC e do celular. As regras do banco (RLS) garantem que só VOCÊ consegue ler o que é seu.</span>
+        </div>
+        <div class="cloud-login" id="cloud-login">
+          <input type="email" id="cloud-email" placeholder="seu e-mail" autocomplete="username">
+          <input type="password" id="cloud-pass" placeholder="senha (mín. 8)" autocomplete="current-password">
+          <div class="drive-connected-btns">
+            <button class="btn btn-primary btn-sm" id="btn-cloud-signin">Entrar</button>
+            <button class="btn btn-ghost btn-sm" id="btn-cloud-signup">Criar conta</button>
+          </div>
+        </div>
+        <div class="drive-connected hidden" id="cloud-connected">
+          <span class="hint" id="cloud-user"></span>
+          <label class="checkline"><input type="checkbox" id="cloud-autosync"> Salvar na nuvem automaticamente</label>
+          <div class="drive-connected-btns">
+            <button class="btn btn-ghost btn-sm" id="btn-cloud-sync-now">Sincronizar agora</button>
+            <button class="btn btn-ghost btn-sm" id="btn-cloud-logout">Sair</button>
+          </div>
+        </div>
+      </div>
+      <p class="drive-status" id="cloud-status"></p>
+      <p class="hint" id="cloud-cfg-hint">Na primeira vez, configure a conexão com seu projeto (uma única vez por aparelho — guia CONFIGURAR-SUPABASE.txt).
+        <button type="button" class="btn-link" id="btn-cloud-setup-link">Configurar conexão</button>
+      </p>
+      <div class="drive-cid-box hidden" id="cloud-cfg-wrap">
+        <p class="hint">Cole a <b>URL do projeto</b> e a <b>chave anon (public)</b> do seu Supabase.
+          Elas não são secretas — a proteção real é seu login + as regras RLS do banco.</p>
+        <div class="apikey-row">
+          <input type="text" id="cloud-url-input" placeholder="https://abcdefgh.supabase.co">
+        </div>
+        <div class="apikey-row">
+          <input type="text" id="cloud-key-input" placeholder="chave anon (eyJ... ou sb_publishable_...)">
+          <button type="button" class="btn btn-primary btn-sm" id="btn-cloud-cfg-save">Salvar</button>
+        </div>
+        <button type="button" class="btn-link" id="btn-cloud-cfg-clear">remover configuração salva</button>
+      </div>
+    </div>
   </section>
 
   <!-- ===================== IMPORTAÇÃO ===================== -->
@@ -351,9 +393,11 @@
 
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
+<script src="lib/supabase.min.js"></script>
 <script src="js/app.js"></script>
 <script src="js/importer.js"></script>
 <script src="js/dashboard.js"></script>
 <script src="js/receipt.js"></script>
+<script src="js/cloud.js"></script>
 </body>
 </html>

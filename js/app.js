@@ -143,10 +143,17 @@ const Store = {
       idx.unshift({ id: ds.id, name: ds.name, createdAt: ds.createdAt, updatedAt: ds.updatedAt, txCount: ds.transactions.length });
     }
     this.saveIndex(idx);
+    this._notify();
   },
   deleteDataset(id) {
     localStorage.removeItem("fyg:ds:" + id);
     this.saveIndex(this.loadIndex().filter((x) => x.id !== id));
+    if (typeof Cloud !== "undefined" && Cloud.onLocalDelete) Cloud.onLocalDelete(id);
+  },
+  // Avisa a sincronização (nuvem) que houve mudança local. A camada de sync
+  // só age se estiver conectada e ignora enquanto está puxando da nuvem.
+  _notify() {
+    if (typeof Cloud !== "undefined" && Cloud.onLocalChange) Cloud.onLocalChange();
   },
   createDataset(name) {
     const now = new Date().toISOString();
@@ -286,14 +293,26 @@ function cleanCats(v, fallback) {
   return list.length ? list : (fallback || []);
 }
 
-function sanitizeDataset(raw) {
+// IDs próprios do app são base36 (a-z0-9). Ao restaurar do Drive (dados do
+// próprio usuário) preservamos IDs válidos p/ não duplicar no round-trip;
+// em backups importados de terceiros, sempre regeramos.
+const RE_SAFE_ID = /^[a-z0-9]{6,40}$/;
+function keepOrNewId(v, preserve) {
+  return preserve && typeof v === "string" && RE_SAFE_ID.test(v) ? v : uid();
+}
+function cleanISO(v, fallback) {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v) && !isNaN(Date.parse(v)) ? v : fallback;
+}
+
+function sanitizeDataset(raw, opts) {
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.transactions)) return null;
+  const preserve = !!(opts && opts.preserveIds);
   const now = new Date().toISOString();
   const ds = {
-    id: uid(),
+    id: keepOrNewId(raw.id, preserve),
     name: cleanStr(raw.name, 80).trim() || "Backup importado",
-    createdAt: now,
-    updatedAt: now,
+    createdAt: cleanISO(raw.createdAt, now),
+    updatedAt: cleanISO(raw.updatedAt, now),
     categories: [],
     transactions: [],
     limits: [],
@@ -315,6 +334,7 @@ function sanitizeDataset(raw) {
   const groupMap = new Map();
   const mapGroup = (g) => {
     if (typeof g !== "string" || !g) return null;
+    if (preserve && RE_SAFE_ID.test(g)) return g;
     if (!groupMap.has(g)) groupMap.set(g, uid());
     return groupMap.get(g);
   };
@@ -324,7 +344,7 @@ function sanitizeDataset(raw) {
     const amount = cleanNum(t.amount);
     if (!date || amount == null || amount <= 0) return;
     ds.transactions.push({
-      id: uid(),
+      id: keepOrNewId(t.id, preserve),
       groupId: mapGroup(t.groupId),
       fixed: t.fixed === true,
       date,
@@ -358,7 +378,7 @@ function sanitizeDataset(raw) {
       versions.sort((a, b) => a.from.localeCompare(b.from));
       const last = versions[versions.length - 1];
       ds.limits.push({
-        id: uid(),
+        id: keepOrNewId(L?.id, preserve),
         name: cleanStr(L?.name, 60).trim() || cats.join(" + "),
         amount: last.amount,
         categories: last.categories,
@@ -367,6 +387,33 @@ function sanitizeDataset(raw) {
     });
   }
   return ds;
+}
+
+/* ---------- Sincronização: mesclar datasets vindos da nuvem ----------
+   Regra: por id, vence o de updatedAt mais recente. Ids novos são adicionados.
+   Retorna quantos foram criados/atualizados. */
+function mergeCloudDatasets(rawList) {
+  if (!Array.isArray(rawList)) return { added: 0, updated: 0 };
+  let added = 0, updated = 0;
+  for (const raw of rawList.slice(0, 200)) {
+    const ds = sanitizeDataset(raw, { preserveIds: true });
+    if (!ds) continue;
+    const local = Store.loadDataset(ds.id);
+    if (!local) { Store.saveDataset(ds); added++; }
+    else if ((ds.updatedAt || "") > (local.updatedAt || "")) {
+      Store.saveDataset(ds); updated++;
+    }
+  }
+  return { added, updated };
+}
+
+// Monta o payload de sincronização (mesmo formato do backup)
+function buildSyncPayload() {
+  const idx = Store.loadIndex();
+  return {
+    app: "financas-yg", version: 1, exportedAt: new Date().toISOString(),
+    datasets: idx.map((e) => Store.loadDataset(e.id)).filter(Boolean),
+  };
 }
 
 /* ---------- Backup ---------- */

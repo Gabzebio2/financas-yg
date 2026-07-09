@@ -22,5 +22,6 @@ financas-yg-*.json
 desktop.ini
 Thumbs.db
 
-# Guia local de uso (não é necessário no site)
+# Guias locais de uso/configuração (não são necessários no site)
 LEIA-ME.txt
+CONFIGURAR-SUPABASE.txt

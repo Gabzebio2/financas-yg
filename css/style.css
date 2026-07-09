@@ -340,6 +340,29 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .btn-link:hover { color: var(--red); }
 
+/* ===== Sincronização Google Drive ===== */
+.drive-card { margin-top: 16px; }
+.drive-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.drive-head h3 { margin: 0 0 3px; }
+.drive-head > div:first-child { flex: 1; min-width: 220px; }
+.drive-connected { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+.cloud-login { display: flex; flex-direction: column; gap: 8px; min-width: 230px; }
+.cloud-login input {
+  font-family: inherit; font-size: 14px; padding: 9px 12px;
+  border: 1px solid var(--border); border-radius: 10px;
+}
+.cloud-login input:focus { outline: 2px solid var(--primary); border-color: transparent; }
+.cloud-login .drive-connected-btns { justify-content: flex-end; }
+.drive-connected-btns { display: flex; gap: 8px; }
+.drive-status { font-size: 13px; margin: 10px 0 0; min-height: 1px; }
+.drive-status.ok { color: var(--green); font-weight: 600; }
+.drive-status.err { color: var(--red); font-weight: 600; }
+.drive-cid-box {
+  margin-top: 10px; padding: 12px; background: var(--bg); border-radius: 10px;
+}
+.drive-cid-box code { background: #fff; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+#drive-cid-input { font-family: monospace; font-size: 12.5px; }
+
 /* Escopo da edição de limite */
 .scope-line { font-weight: 500 !important; color: var(--text) !important; margin-top: 6px; }
 .scope-line input { width: 16px; height: 16px; flex-shrink: 0; }
