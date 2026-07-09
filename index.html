@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Segurança: só scripts do próprio app e conexões aos serviços autorizados
+     (api.anthropic.com p/ leitura de comprovante; googleapis/accounts p/ Google Drive).
+     "file:" mantém o app funcionando quando aberto localmente com dois cliques. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file: https://accounts.google.com; style-src 'self' 'unsafe-inline' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://www.googleapis.com https://oauth2.googleapis.com; frame-src https://accounts.google.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Finanças YG</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <button id="btn-back" class="btn-icon hidden" title="Voltar para a página inicial">←</button>
+    <div class="brand">
+      <div class="brand-logo">YG</div>
+      <span>Finanças YG</span>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ===================== HOME ===================== -->
+  <section id="screen-home" class="screen">
+    <div class="hero">
+      <h1>Como você quer começar?</h1>
+      <div class="hero-actions">
+        <button class="action-card" id="card-upload">
+          <div class="action-icon icon-upload">⬆</div>
+          <div class="action-text">
+            <strong>Importar Excel (.xlsx)</strong>
+            <span>Envie sua planilha de finanças e o painel será montado automaticamente</span>
+          </div>
+        </button>
+        <button class="action-card" id="card-new">
+          <div class="action-icon icon-new">✎</div>
+          <div class="action-text">
+            <strong>Começar do zero</strong>
+            <span>Registre suas receitas e despesas manualmente, direto no painel</span>
+          </div>
+        </button>
+      </div>
+    </div>
+    <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
+    <input type="file" id="backup-input" accept=".json" hidden>
+
+    <div class="folders-head">
+      <h2>Minhas pastas</h2>
+      <div class="backup-btns">
+        <button class="btn btn-ghost btn-sm" id="btn-export-backup" title="Salva todas as pastas em um arquivo .json">Exportar backup</button>
+        <button class="btn btn-ghost btn-sm" id="btn-import-backup" title="Restaura pastas de um arquivo .json">Importar backup</button>
+      </div>
+    </div>
+    <div id="folders-grid" class="folders-grid"></div>
+    <p class="hint" id="storage-hint">Seus dados ficam salvos neste navegador, neste computador. Exporte um backup de vez em quando por segurança.</p>
+  </section>
+
+  <!-- ===================== IMPORTAÇÃO ===================== -->
+  <section id="screen-import" class="screen hidden">
+    <h1 id="import-title">Importar planilha</h1>
+
+    <!-- Mapeamento manual (aparece só se o formato não for reconhecido) -->
+    <div id="map-box" class="card hidden">
+      <h3>Não reconheci o formato automaticamente 🤔</h3>
+      <p class="hint">Me diga o que é cada coluna da sua planilha e eu monto o painel.</p>
+      <div class="map-controls">
+        <label>Aba: <select id="map-sheet"></select></label>
+        <label>Linha do cabeçalho: <select id="map-header-row"></select></label>
+      </div>
+      <div class="table-wrap"><table id="map-table"></table></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="btn-apply-map">Aplicar mapeamento</button>
+      </div>
+    </div>
+
+    <!-- Pré-visualização -->
+    <div id="preview-box" class="hidden">
+      <div class="card">
+        <label class="field-label" for="import-name">Nome desta pasta de dados</label>
+        <input type="text" id="import-name" class="input-lg" placeholder="Ex: Cartões 2025">
+      </div>
+      <div class="summary-grid" id="import-stats"></div>
+      <div class="card">
+        <h3>Total por mês encontrado</h3>
+        <div class="table-wrap"><table id="import-months"></table></div>
+      </div>
+      <div class="card">
+        <h3>Amostra das transações lidas</h3>
+        <div class="table-wrap"><table id="import-sample"></table></div>
+        <p class="hint" id="import-note"></p>
+      </div>
+      <div class="modal-actions sticky-actions">
+        <button class="btn btn-ghost" id="btn-import-cancel">Cancelar</button>
+        <button class="btn btn-primary btn-lg" id="btn-import-save">💾 Salvar e abrir painel</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PAINEL ===================== -->
+  <section id="screen-dash" class="screen hidden">
+    <div class="dash-header">
+      <div class="ds-name-wrap">
+        <h1 id="ds-name" title="Clique para renomear">—</h1>
+        <button class="btn-icon" id="btn-rename-ds" title="Renomear pasta">✎</button>
+      </div>
+      <button class="btn btn-primary" id="btn-add-tx">＋ Nova transação</button>
+    </div>
+
+    <div class="filters card">
+      <div class="filter-group">
+        <label class="field-label">Período</label>
+        <div class="period-controls">
+          <select id="filter-mode">
+            <option value="month">Por mês</option>
+            <option value="range">Intervalo</option>
+            <option value="all">Tudo</option>
+          </select>
+          <div id="month-nav" class="month-nav">
+            <button class="btn-icon" id="month-prev">‹</button>
+            <span id="month-label">—</span>
+            <button class="btn-icon" id="month-next">›</button>
+          </div>
+          <div id="range-nav" class="range-nav hidden">
+            <input type="date" id="range-from"> <span>até</span> <input type="date" id="range-to">
+          </div>
+        </div>
+      </div>
+      <div class="filter-group" id="fg-categorias">
+        <label class="field-label">Categorias</label>
+        <div class="cat-filter" id="cat-filter">
+          <button class="btn btn-ghost" id="cat-filter-btn">Todas as categorias ▾</button>
+          <div class="cat-dropdown hidden" id="cat-dropdown"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="summary-grid" id="summary-cards"></div>
+
+    <!-- Controle de Limites (integrado ao painel) -->
+    <div class="card limits-block" id="limits-block">
+      <div class="limits-block-head">
+        <div>
+          <h3>🎯 Controle de Limites</h3>
+          <span class="hint" id="limits-overview"></span>
+        </div>
+        <button class="btn btn-primary btn-sm" data-action="add-limit">＋ Novo limite</button>
+      </div>
+      <div class="limits-block-body" id="limits-body">
+        <div id="limits-groups"></div>
+        <div class="chart-box chart-box-limits" id="limits-chart-box"><canvas id="chart-limits"></canvas></div>
+      </div>
+    </div>
+
+    <div class="charts-grid">
+      <div class="card chart-card">
+        <h3>Gastos por categoria</h3>
+        <div class="chart-box"><canvas id="chart-cat"></canvas></div>
+      </div>
+      <div class="card chart-card">
+        <h3>Receitas × Despesas por mês</h3>
+        <div class="chart-box"><canvas id="chart-evo"></canvas></div>
+      </div>
+      <div class="card chart-card">
+        <h3>Saldo mensal e acumulado</h3>
+        <div class="chart-box"><canvas id="chart-saldo"></canvas></div>
+      </div>
+      <div class="card chart-card">
+        <h3>Gastos por cartão / conta</h3>
+        <div class="chart-box"><canvas id="chart-conta"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card table-card">
+      <div class="table-head">
+        <h3>Transações <span id="tx-count" class="badge"></span></h3>
+        <input type="search" id="tx-search" placeholder="Buscar por descrição, categoria, cartão...">
+      </div>
+      <div class="table-wrap">
+        <table id="tx-table">
+          <thead>
+            <tr>
+              <th data-sort="date">Data <span class="sort-ind"></span></th>
+              <th data-sort="desc">Descrição <span class="sort-ind"></span></th>
+              <th data-sort="category">Categoria <span class="sort-ind"></span></th>
+              <th data-sort="account">Cartão/Conta <span class="sort-ind"></span></th>
+              <th data-sort="installment">Parcela <span class="sort-ind"></span></th>
+              <th data-sort="amount" class="num">Valor <span class="sort-ind"></span></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tx-tbody"></tbody>
+        </table>
+      </div>
+      <div class="table-foot">
+        <button class="btn btn-ghost hidden" id="btn-more-rows">Mostrar mais</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ===================== MODAIS ===================== -->
+
+<!-- Nova / editar transação -->
+<div class="modal-backdrop hidden" id="modal-tx">
+  <div class="modal">
+    <h3 id="modal-tx-title">Nova transação</h3>
+
+    <!-- Leitura de comprovante com IA -->
+    <div class="receipt-box" id="receipt-box">
+      <div class="receipt-btns">
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-camera">📷 Tirar foto</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-file">🧾 Ler comprovante</button>
+        <span class="receipt-status hidden" id="receipt-status"></span>
+        <button type="button" class="btn-link hidden" id="btn-apikey-remove"
+          title="Apaga a chave de IA salva neste navegador">🔒 remover chave</button>
+      </div>
+      <input type="file" id="receipt-input-camera" accept="image/*" capture="environment" hidden>
+      <input type="file" id="receipt-input-file" accept="image/*" hidden>
+      <div id="apikey-wrap" class="hidden">
+        <p class="hint">Para a IA ler comprovantes, cole sua chave da API Anthropic
+          (crie em <b>console.anthropic.com</b> → API Keys). Ela fica salva só neste navegador.</p>
+        <div class="apikey-row">
+          <input type="password" id="apikey-input" placeholder="sk-ant-...">
+          <button type="button" class="btn btn-primary btn-sm" id="btn-apikey-save">Salvar chave</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="type-toggle" id="tx-type-toggle">
+      <button data-type="despesa" class="active">Despesa</button>
+      <button data-type="receita">Receita</button>
+    </div>
+    <div class="form-grid">
+      <label>Valor (R$)
+        <input type="text" id="tx-amount" inputmode="decimal" placeholder="0,00">
+      </label>
+      <label>Data
+        <input type="date" id="tx-date">
+      </label>
+      <label class="span2">Descrição
+        <input type="text" id="tx-desc" placeholder="Ex: Supermercado">
+      </label>
+      <label>Categoria
+        <select id="tx-cat"></select>
+      </label>
+      <label id="tx-newcat-wrap" class="hidden">Nova categoria
+        <input type="text" id="tx-newcat" placeholder="Nome da categoria">
+      </label>
+      <label>Cartão / Conta
+        <select id="tx-account-sel"></select>
+      </label>
+      <label id="tx-account-other-wrap" class="hidden">Nome do cartão/conta
+        <input type="text" id="tx-account-other" placeholder="Ex: Carteira">
+      </label>
+      <label class="span2 checkline" id="tx-parc-wrap">
+        <input type="checkbox" id="tx-parcelado"> Compra parcelada
+      </label>
+      <label id="tx-nparc-wrap" class="hidden">Nº de parcelas
+        <input type="number" id="tx-nparc" min="2" max="48" value="2">
+      </label>
+      <label class="span2 checkline" id="tx-fixa-wrap">
+        <input type="checkbox" id="tx-fixa"> Despesa fixa (repete todo mês)
+      </label>
+      <p class="hint span2 hidden" id="tx-parc-hint"></p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-tx-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-tx-save">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Pedir nome (começar do zero / renomear) -->
+<div class="modal-backdrop hidden" id="modal-name">
+  <div class="modal modal-sm">
+    <h3 id="modal-name-title">Nome da pasta</h3>
+    <input type="text" id="modal-name-input" class="input-lg" placeholder="Ex: Minhas finanças 2026">
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-name-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-name-ok">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirmação genérica -->
+<div class="modal-backdrop hidden" id="modal-confirm">
+  <div class="modal modal-sm">
+    <h3 id="modal-confirm-title">Tem certeza?</h3>
+    <p id="modal-confirm-text"></p>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-confirm-cancel">Cancelar</button>
+      <button class="btn btn-danger" id="btn-confirm-ok">Excluir</button>
+    </div>
+  </div>
+</div>
+
+<!-- Excluir compra parcelada -->
+<div class="modal-backdrop hidden" id="modal-del-parc">
+  <div class="modal modal-sm">
+    <h3>Excluir compra parcelada</h3>
+    <p id="modal-del-parc-text"></p>
+    <div class="modal-actions modal-actions-wrap">
+      <button class="btn btn-ghost" id="btn-delparc-cancel">Cancelar</button>
+      <button class="btn btn-ghost btn-ghost-danger" id="btn-delparc-one">Só esta parcela</button>
+      <button class="btn btn-danger" id="btn-delparc-following">Esta e as seguintes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Novo / editar limite -->
+<div class="modal-backdrop hidden" id="modal-limit">
+  <div class="modal">
+    <h3 id="modal-limit-title">Novo limite</h3>
+    <div class="form-grid">
+      <label class="span2">Nome do grupo
+        <input type="text" id="limit-name" placeholder="Ex: Essenciais do mês">
+      </label>
+      <label>Valor do limite (R$)
+        <input type="text" id="limit-amount" inputmode="decimal" placeholder="0,00">
+      </label>
+      <div class="span2">
+        <span class="field-label">Categorias que somam neste limite</span>
+        <div id="limit-cats" class="limit-cats"></div>
+      </div>
+      <div class="span2 hidden" id="limit-scope-wrap">
+        <span class="field-label">Aplicar alteração</span>
+        <label class="checkline scope-line">
+          <input type="radio" name="limit-scope" value="from" checked>
+          <span>A partir de <b id="limit-scope-month">—</b> (meses anteriores mantêm o valor atual)</span>
+        </label>
+        <label class="checkline scope-line">
+          <input type="radio" name="limit-scope" value="all">
+          <span>Em todos os meses (inclusive anteriores)</span>
+        </label>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-limit-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-limit-save">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="lib/xlsx.min.js"></script>
+<script src="lib/chart.min.js"></script>
+<script src="js/app.js"></script>
+<script src="js/importer.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/receipt.js"></script>
+</body>
+</html>

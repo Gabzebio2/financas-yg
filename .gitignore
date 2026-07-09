@@ -1,0 +1,26 @@
+# ============================================================
+# NUNCA subir para o GitHub — dados pessoais e arquivos locais
+# ============================================================
+
+# Prints e imagens (podem conter dados financeiros reais)
+*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Planilhas (as suas planilhas reais de finanças)
+*.xlsx
+*.xls
+*.xlsm
+
+# Backups exportados pelo app (contêm TODAS as suas transações)
+*backup*.json
+financas-yg-*.json
+
+# Configurações locais do Claude Code e do Windows
+.claude/
+desktop.ini
+Thumbs.db
+
+# Guia local de uso (não é necessário no site)
+LEIA-ME.txt
