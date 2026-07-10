@@ -181,6 +181,7 @@ Extraia os dados da operação. Regras:
         }),
       });
       if (res.status === 401) { setStatus("Sua sessão expirou. Entre novamente na seção nuvem.", "err"); return; }
+      if (res.status === 429) { setStatus("Muitas leituras em sequência — aguarde um minuto e tente de novo.", "err"); return; }
       if (res.status === 501) { setStatus("A leitura por IA ainda não foi ativada no servidor (falta configurar a chave na Vercel).", "err"); return; }
       if (!res.ok) { setStatus(`A análise falhou (erro ${res.status}). Tente de novo.`, "err"); return; }
       const data = await res.json();
