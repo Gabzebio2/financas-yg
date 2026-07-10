@@ -220,5 +220,10 @@ const Cloud = (() => {
     init();
   });
 
-  return { onLocalChange, onLocalDelete };
+  // Token da sessão atual (usado pela leitura de comprovante via servidor seguro)
+  function getToken() {
+    return session?.access_token || null;
+  }
+
+  return { onLocalChange, onLocalDelete, getToken };
 })();

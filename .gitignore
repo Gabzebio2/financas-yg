@@ -22,6 +22,14 @@ financas-yg-*.json
 desktop.ini
 Thumbs.db
 
+# Segredos e artefatos de deploy — NUNCA subir (a chave da Anthropic
+# fica só nas variáveis de ambiente da Vercel, jamais no repositório)
+.env
+.env.*
+.vercel/
+node_modules/
+
 # Guias locais de uso/configuração (não são necessários no site)
 LEIA-ME.txt
 CONFIGURAR-SUPABASE.txt
+ATIVAR-LEITURA-COMPROVANTE.txt

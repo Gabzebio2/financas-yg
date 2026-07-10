@@ -3,9 +3,20 @@
 
 const Receipt = (() => {
   const KEY_STORAGE = "fyg:anthropic-key";
-  const MODEL = "claude-opus-4-8";
+  const MODEL = "claude-haiku-4-5"; // barato e ótimo para ler comprovantes
   const MAX_EDGE = 1568; // redimensiona para economizar tokens sem perder legibilidade
+  const PROXY_PATH = "/api/receipt"; // servidor seguro (Vercel) — a chave fica lá, não aqui
   let pendingFile = null; // arquivo aguardando a chave ser salva
+
+  // Onde há servidor próprio (Vercel/domínio), usamos o proxy seguro e o app
+  // nunca pede chave. Em uso local (file://) ou GitHub Pages, não há servidor,
+  // então cai no modo "colar chave" como alternativa.
+  function proxyAvailable() {
+    if (location.protocol === "file:") return false;
+    const h = location.hostname;
+    if (h === "localhost" || h === "127.0.0.1" || h.endsWith("github.io")) return false;
+    return true;
+  }
 
   function getKey() {
     return localStorage.getItem(KEY_STORAGE) || "";
@@ -76,6 +87,10 @@ Extraia os dados da operação. Regras:
   async function analyze(file) {
     if (!file) return;
     const key = getKey();
+    // Preferência: se NÃO há chave manual salva e existe servidor próprio,
+    // usa o proxy seguro (não pede chave). Uma chave manual salva tem prioridade
+    // (modo avançado / uso local).
+    if (!key && proxyAvailable()) { analyzeViaProxy(file); return; }
     if (!key) {
       pendingFile = file;
       $("#apikey-wrap").classList.remove("hidden");
@@ -140,6 +155,42 @@ Extraia os dados da operação. Regras:
     } catch (e) {
       console.error(e);
       setStatus("Sem conexão ou resposta inesperada — tente de novo.", "err");
+    }
+  }
+
+  // Leitura via servidor seguro (Vercel): o app envia só a imagem + o token
+  // de login; a chave da Anthropic nunca passa pelo navegador.
+  async function analyzeViaProxy(file) {
+    const token = (typeof Cloud !== "undefined" && Cloud.getToken) ? Cloud.getToken() : null;
+    if (!token) {
+      setStatus("Para ler comprovantes, entre na sua conta na seção “☁️ Sincronizar na nuvem” (é rápido).", "err");
+      return;
+    }
+    setStatus("Analisando comprovante… 🔎");
+    let image;
+    try { image = await prepareImage(file); }
+    catch { setStatus("Não consegui abrir essa imagem 😕", "err"); return; }
+
+    try {
+      const res = await fetch(PROXY_PATH, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer " + token },
+        body: JSON.stringify({
+          image: { media_type: image.mediaType, data: image.data },
+          categories: Dashboard.getCats(),
+        }),
+      });
+      if (res.status === 401) { setStatus("Sua sessão expirou. Entre novamente na seção nuvem.", "err"); return; }
+      if (res.status === 501) { setStatus("A leitura por IA ainda não foi ativada no servidor (falta configurar a chave na Vercel).", "err"); return; }
+      if (!res.ok) { setStatus(`A análise falhou (erro ${res.status}). Tente de novo.`, "err"); return; }
+      const data = await res.json();
+      if (data.error === "refusal") { setStatus("A IA não conseguiu ler esta imagem. Preencha manualmente.", "err"); return; }
+      if (data.error) { setStatus("Não deu para analisar agora. Tente de novo.", "err"); return; }
+      Dashboard.fillTxFromReceipt(data);
+      setStatus("Preenchido! Confira os campos antes de salvar ✔", "ok");
+    } catch (e) {
+      console.error(e);
+      setStatus("Sem conexão — tente de novo.", "err");
     }
   }
 
