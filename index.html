@@ -365,8 +365,14 @@
 
 <!-- Nova / editar meta -->
 <div class="modal-backdrop hidden" id="modal-meta">
-  <div class="modal modal-sm">
-    <h3 id="modal-meta-title">Nova Meta</h3>
+  <div class="modal modal-sm modal-meta">
+    <div class="meta-modal-head">
+      <div class="meta-modal-icon">🎯</div>
+      <div>
+        <h3 id="modal-meta-title">Nova Meta</h3>
+        <p class="meta-modal-sub">Defina o objetivo e veja a barrinha encher</p>
+      </div>
+    </div>
     <div class="form-grid">
       <label class="span2">Nome da meta
         <input type="text" id="meta-name" placeholder="Ex: Reserva de emergência">
@@ -377,10 +383,17 @@
       <label>Já guardado (R$)
         <input type="text" id="meta-saved" inputmode="decimal" placeholder="0,00">
       </label>
+      <div class="span2 meta-preview">
+        <div class="meta-preview-row">
+          <span id="meta-preview-txt">Preencha os valores para ver o progresso</span>
+          <span id="meta-preview-pct"></span>
+        </div>
+        <div class="progress"><div class="progress-bar meta-preview-bar" id="meta-preview-bar" style="width:0%"></div></div>
+      </div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="btn-meta-cancel">Cancelar</button>
-      <button class="btn btn-primary" id="btn-meta-save">Salvar</button>
+      <button class="btn btn-primary" id="btn-meta-save">Salvar meta 🎯</button>
     </div>
   </div>
 </div>

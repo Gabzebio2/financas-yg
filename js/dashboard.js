@@ -475,6 +475,28 @@ const Dashboard = (() => {
     }).join("");
   }
 
+  // Prévia ao vivo da barrinha dentro do modal de meta
+  function updateMetaPreview() {
+    const target = parseMoney($("#meta-target").value);
+    const saved = Math.abs(parseMoney($("#meta-saved").value) ?? 0);
+    const bar = $("#meta-preview-bar");
+    const txt = $("#meta-preview-txt");
+    const pctEl = $("#meta-preview-pct");
+    if (target == null || target <= 0) {
+      bar.style.width = "0%";
+      bar.classList.remove("done");
+      txt.textContent = "Preencha os valores para ver o progresso";
+      pctEl.textContent = "";
+      return;
+    }
+    const pct = (saved / target) * 100;
+    const done = saved >= target - 0.004;
+    bar.style.width = Math.min(100, pct) + "%";
+    bar.classList.toggle("done", done);
+    pctEl.textContent = pct.toFixed(0) + "%";
+    txt.textContent = done ? "Meta alcançada! 🎉" : `Faltam ${fmtBRL(target - saved)} para o objetivo`;
+  }
+
   function openMetaModal(id) {
     editingMetaId = id;
     const m = id ? ds.metas.find((x) => x.id === id) : null;
@@ -482,6 +504,7 @@ const Dashboard = (() => {
     $("#meta-name").value = m ? m.name : "";
     $("#meta-target").value = m ? m.target.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
     $("#meta-saved").value = m ? m.saved.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
+    updateMetaPreview();
     $("#modal-meta").classList.remove("hidden");
     setTimeout(() => $("#meta-name").focus(), 50);
   }
@@ -1059,6 +1082,8 @@ const Dashboard = (() => {
     // Modal de meta
     $("#btn-meta-save").addEventListener("click", saveMetaModal);
     $("#btn-meta-cancel").addEventListener("click", () => { $("#modal-meta").classList.add("hidden"); editingMetaId = null; });
+    $("#meta-target").addEventListener("input", updateMetaPreview);
+    $("#meta-saved").addEventListener("input", updateMetaPreview);
     $("#modal-meta").addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") saveMetaModal();
       if (ev.key === "Escape") { $("#modal-meta").classList.add("hidden"); editingMetaId = null; }

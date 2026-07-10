@@ -313,6 +313,32 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   background: var(--green-soft); color: var(--green); font-size: 12px; font-weight: 700;
 }
 .meta-add-btn { font-size: 12.5px !important; padding: 5px 10px !important; }
+
+/* Modal de meta */
+.modal-meta { padding-top: 0; }
+.meta-modal-head {
+  display: flex; gap: 14px; align-items: center;
+  background: linear-gradient(135deg, #f3efff 0%, #eef1fe 100%);
+  margin: 0 -24px 18px; padding: 20px 24px;
+  border-radius: 18px 18px 0 0;
+}
+.meta-modal-icon {
+  width: 48px; height: 48px; border-radius: 14px; flex-shrink: 0;
+  background: linear-gradient(135deg, #8b5cf6, #4a6cf7);
+  display: flex; align-items: center; justify-content: center; font-size: 24px;
+  box-shadow: 0 6px 16px rgba(139, 92, 246, .35);
+}
+.meta-modal-head h3 { margin: 0; }
+.meta-modal-sub { margin: 3px 0 0; font-size: 12.5px; color: var(--text-soft); }
+.meta-preview { background: var(--bg); border-radius: 12px; padding: 12px 14px; }
+.meta-preview-row {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: 12.5px; color: var(--text-soft); margin-bottom: 8px;
+}
+#meta-preview-pct { font-weight: 700; color: #8b5cf6; }
+.meta-preview .progress { margin: 0; }
+.meta-preview-bar { background: linear-gradient(90deg, #8b5cf6, #4a6cf7); }
+.meta-preview-bar.done { background: var(--green); }
 .limit-cats {
   display: grid; grid-template-columns: 1fr 1fr; gap: 4px; max-height: 220px; overflow: auto;
   border: 1px solid var(--border); border-radius: 10px; padding: 8px;

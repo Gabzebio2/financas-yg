@@ -11,7 +11,9 @@
 
 const SUPABASE_URL = "https://mhgagjhwsjjjwwvopjgu.supabase.co";
 const SUPABASE_ANON = "sb_publishable_fB3B_MW3VgJBcJpUbN1wvg_1Glbr2r5"; // pública por design
-const MODEL_GEMINI = "gemini-2.5-flash";
+// Tenta em ordem; se o Google aposentar um modelo, o próximo assume sozinho
+// ("gemini-flash-latest" é o apelido oficial que aponta sempre pro Flash atual)
+const MODELS_GEMINI = ["gemini-3.5-flash", "gemini-flash-latest"];
 const MODEL_ANTHROPIC = "claude-haiku-4-5";
 
 const PROMPT = `Analise a imagem: é um comprovante financeiro brasileiro (Pix, transferência bancária ou compra).
@@ -24,7 +26,7 @@ Extraia os dados da operação e responda SOMENTE com JSON. Regras:
 - "direcao": "recebido" apenas se o comprovante mostrar dinheiro RECEBIDO pelo dono do app; caso contrário "enviado".`;
 
 /* ---------- Gemini ---------- */
-async function geminiFetch(key, image, categories, withSchema) {
+async function geminiFetch(key, model, image, categories, withSchema) {
   const generationConfig = { temperature: 0, responseMimeType: "application/json" };
   if (withSchema) {
     generationConfig.responseSchema = {
@@ -41,7 +43,7 @@ async function geminiFetch(key, image, categories, withSchema) {
     };
   }
   return fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_GEMINI}:generateContent`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": key },
@@ -62,19 +64,7 @@ async function geminiFetch(key, image, categories, withSchema) {
   );
 }
 
-async function callGemini(key, image, categories) {
-  let r = await geminiFetch(key, image, categories, true);
-  if (r.status === 400) {
-    // Alguns projetos/versões rejeitam o responseSchema — tenta em modo JSON simples
-    r = await geminiFetch(key, image, categories, false);
-  }
-  if (!r.ok) {
-    let detail = "";
-    try { detail = (await r.json())?.error?.message || ""; } catch { /* corpo não-JSON */ }
-    console.error("gemini_falhou", r.status, detail);
-    return { httpStatus: r.status, detail: String(detail).slice(0, 300) };
-  }
-  const data = await r.json();
+function parseGeminiResponse(data) {
   if (data.promptFeedback?.blockReason) return { refusal: true };
   const cand = data.candidates?.[0];
   if (!cand || (cand.finishReason && cand.finishReason !== "STOP" && cand.finishReason !== "MAX_TOKENS")) {
@@ -85,6 +75,31 @@ async function callGemini(key, image, categories) {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenced) text = fenced[1].trim();
   return { text };
+}
+
+async function callGemini(key, image, categories) {
+  let fail = null;
+  for (const model of MODELS_GEMINI) {
+    let r = await geminiFetch(key, model, image, categories, true);
+    if (r.status === 400) {
+      // Alguns projetos/versões rejeitam o responseSchema — tenta em modo JSON simples
+      const r2 = await geminiFetch(key, model, image, categories, false);
+      if (r2.ok || r2.status !== 400) r = r2;
+    }
+    if (r.ok) return parseGeminiResponse(await r.json());
+
+    let detail = "";
+    try { detail = (await r.json())?.error?.message || ""; } catch { /* corpo não-JSON */ }
+    console.error("gemini_falhou", model, r.status, detail);
+    fail = { httpStatus: r.status, detail: String(detail).slice(0, 300) };
+
+    // Só vale trocar de modelo quando o problema é o próprio modelo
+    // (aposentado/inexistente); erros de chave/cota param aqui.
+    const modeloIndisponivel = r.status === 404 ||
+      /no longer available|not found|not supported|deprecated|does not exist/i.test(detail);
+    if (!modeloIndisponivel) break;
+  }
+  return fail;
 }
 
 /* ---------- Anthropic (reserva) ---------- */
