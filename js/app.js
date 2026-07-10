@@ -316,7 +316,23 @@ function sanitizeDataset(raw, opts) {
     categories: [],
     transactions: [],
     limits: [],
+    metas: [],
   };
+
+  // Metas de valor: nome texto puro, valores numéricos
+  if (Array.isArray(raw.metas)) {
+    raw.metas.slice(0, 100).forEach((m) => {
+      const name = cleanStr(m?.name, 60).trim();
+      const target = cleanNum(m?.target);
+      if (!name || target == null || target <= 0) return;
+      ds.metas.push({
+        id: keepOrNewId(m?.id, preserve),
+        name,
+        target,
+        saved: cleanNum(m?.saved) ?? 0,
+      });
+    });
+  }
 
   // Categorias: nome texto puro, cor só #hex
   if (Array.isArray(raw.categories)) {

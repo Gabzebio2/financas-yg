@@ -299,6 +299,20 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   text-align: center; color: var(--text-soft); padding: 18px 14px;
   border-radius: 12px; border: 2px dashed var(--border); font-size: 13.5px;
 }
+.limits-head-btns { display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+
+/* ===== Metas de valor ===== */
+.metas-sec { margin-top: 16px; border-top: 1px dashed var(--border); padding-top: 12px; }
+.metas-title { margin: 0 0 10px; font-size: 13px; color: var(--text-soft); text-transform: uppercase; letter-spacing: .04em; }
+#metas-groups { display: flex; flex-direction: column; gap: 10px; }
+.meta-row { border-left-color: #8b5cf6; }
+.meta-row.meta-done { border-left-color: var(--green); background: #f2fbf5; }
+.progress-bar.done { background: var(--green); }
+.meta-done-chip {
+  display: inline-block; padding: 2px 10px; border-radius: 12px; margin-left: 6px;
+  background: var(--green-soft); color: var(--green); font-size: 12px; font-weight: 700;
+}
+.meta-add-btn { font-size: 12.5px !important; padding: 5px 10px !important; }
 .limit-cats {
   display: grid; grid-template-columns: 1fr 1fr; gap: 4px; max-height: 220px; overflow: auto;
   border: 1px solid var(--border); border-radius: 10px; padding: 8px;

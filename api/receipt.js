@@ -24,20 +24,23 @@ Extraia os dados da operação e responda SOMENTE com JSON. Regras:
 - "direcao": "recebido" apenas se o comprovante mostrar dinheiro RECEBIDO pelo dono do app; caso contrário "enviado".`;
 
 /* ---------- Gemini ---------- */
-async function callGemini(key, image, categories) {
-  const schema = {
-    type: "OBJECT",
-    properties: {
-      valor: { type: "NUMBER", description: "Valor da operação em reais" },
-      data: { type: "STRING", description: "Data em AAAA-MM-DD, ou vazio" },
-      descricao: { type: "STRING", description: "Descrição curta" },
-      instituicao: { type: "STRING", description: "Banco/app do pagador, ou vazio" },
-      categoria: { type: "STRING", enum: categories },
-      direcao: { type: "STRING", enum: ["enviado", "recebido"] },
-    },
-    required: ["valor", "data", "descricao", "instituicao", "categoria", "direcao"],
-  };
-  const r = await fetch(
+async function geminiFetch(key, image, categories, withSchema) {
+  const generationConfig = { temperature: 0, responseMimeType: "application/json" };
+  if (withSchema) {
+    generationConfig.responseSchema = {
+      type: "OBJECT",
+      properties: {
+        valor: { type: "NUMBER", description: "Valor da operação em reais" },
+        data: { type: "STRING", description: "Data em AAAA-MM-DD, ou vazio" },
+        descricao: { type: "STRING", description: "Descrição curta" },
+        instituicao: { type: "STRING", description: "Banco/app do pagador, ou vazio" },
+        categoria: { type: "STRING", enum: categories },
+        direcao: { type: "STRING", enum: ["enviado", "recebido"] },
+      },
+      required: ["valor", "data", "descricao", "instituicao", "categoria", "direcao"],
+    };
+  }
+  return fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_GEMINI}:generateContent`,
     {
       method: "POST",
@@ -45,26 +48,42 @@ async function callGemini(key, image, categories) {
       body: JSON.stringify({
         contents: [{
           parts: [
-            { inline_data: { mime_type: image.media_type, data: image.data } },
-            { text: PROMPT + "\nLista permitida de categoria: " + categories.join(", ") },
+            { inlineData: { mimeType: image.media_type, data: image.data } },
+            {
+              text: PROMPT +
+                `\nLista permitida de "categoria": ${categories.join(", ")}.` +
+                `\nResponda apenas o objeto JSON com as chaves: valor, data, descricao, instituicao, categoria, direcao.`,
+            },
           ],
         }],
-        generationConfig: {
-          temperature: 0,
-          response_mime_type: "application/json",
-          response_schema: schema,
-        },
+        generationConfig,
       }),
     }
   );
-  if (!r.ok) return { httpStatus: r.status };
+}
+
+async function callGemini(key, image, categories) {
+  let r = await geminiFetch(key, image, categories, true);
+  if (r.status === 400) {
+    // Alguns projetos/versões rejeitam o responseSchema — tenta em modo JSON simples
+    r = await geminiFetch(key, image, categories, false);
+  }
+  if (!r.ok) {
+    let detail = "";
+    try { detail = (await r.json())?.error?.message || ""; } catch { /* corpo não-JSON */ }
+    console.error("gemini_falhou", r.status, detail);
+    return { httpStatus: r.status, detail: String(detail).slice(0, 300) };
+  }
   const data = await r.json();
   if (data.promptFeedback?.blockReason) return { refusal: true };
   const cand = data.candidates?.[0];
   if (!cand || (cand.finishReason && cand.finishReason !== "STOP" && cand.finishReason !== "MAX_TOKENS")) {
     return { refusal: true };
   }
-  const text = (cand.content?.parts || []).map((p) => p.text || "").join("");
+  // Tolerante a cercas de markdown quando vier sem schema
+  let text = (cand.content?.parts || []).map((p) => p.text || "").join("").trim();
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) text = fenced[1].trim();
   return { text };
 }
 
@@ -158,7 +177,10 @@ module.exports = async (req, res) => {
       : await callAnthropic(aKey, image, categories);
 
     if (out.httpStatus === 429) { res.status(429).json({ error: "limite_ia" }); return; }
-    if (out.httpStatus) { res.status(502).json({ error: "ia_falhou", status: out.httpStatus }); return; }
+    if (out.httpStatus) {
+      res.status(502).json({ error: "ia_falhou", status: out.httpStatus, detail: out.detail || "" });
+      return;
+    }
     if (out.refusal) { res.status(200).json({ error: "refusal" }); return; }
 
     let parsed;

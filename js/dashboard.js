@@ -19,6 +19,7 @@ const Dashboard = (() => {
     if (!loaded) { toast("Pasta não encontrada 😕"); goHome(); return; }
     ds = loaded;
     if (!Array.isArray(ds.limits)) ds.limits = [];
+    if (!Array.isArray(ds.metas)) ds.metas = [];
     // Migração: limites antigos ganham histórico de versões ("0000-00" = desde sempre)
     ds.limits.forEach((L) => {
       if (!Array.isArray(L.versions) || !L.versions.length) {
@@ -95,6 +96,7 @@ const Dashboard = (() => {
     renderCatFilter();
     renderSummary();
     renderLimits();
+    renderMetas();
     renderCharts();
     renderTable();
   }
@@ -439,6 +441,81 @@ const Dashboard = (() => {
         plugins: { legend: { position: "bottom" }, tooltip: moneyTip },
         scales: { x: { ticks: moneyTicks } },
       },
+    });
+  }
+
+  /* ---------- Metas de valor (independentes das transações) ---------- */
+  let editingMetaId = null;
+
+  function renderMetas() {
+    const metas = ds.metas || [];
+    $("#metas-sec").classList.toggle("hidden", !metas.length);
+    if (!metas.length) return;
+    $("#metas-groups").innerHTML = metas.map((m) => {
+      const pct = m.target > 0 ? (m.saved / m.target) * 100 : 0;
+      const done = m.saved >= m.target - 0.004;
+      return `
+      <div class="limit-row meta-row ${done ? "meta-done" : ""}" data-id="${escapeHtml(m.id)}">
+        <div class="limit-row-top">
+          <div class="limit-name">${done ? "🏆" : "🎯"} ${escapeHtml(m.name)}${done ? '<span class="meta-done-chip">Finalizada ✔</span>' : ""}</div>
+          <div class="limit-actions">
+            ${done ? "" : '<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-add">＋ Adicionar valor</button>'}
+            <button class="btn-icon" data-action="edit-meta" title="Editar meta">✎</button>
+            <button class="btn-icon" data-action="delete-meta" title="Excluir meta">🗑</button>
+          </div>
+        </div>
+        <div class="progress"><div class="progress-bar ${done ? "done" : ""}" style="width:${Math.min(100, pct)}%"></div></div>
+        <div class="limit-nums">
+          <span>Guardado: <b>${fmtBRL(m.saved)}</b> de ${fmtBRL(m.target)} <span class="limit-pct">(${pct.toFixed(0)}%)</span></span>
+          <span>${done
+            ? '<span class="limit-ok-txt">Meta alcançada! 🎉</span>'
+            : `<span>Falta ${fmtBRL(Math.max(0, m.target - m.saved))}</span>`}</span>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  function openMetaModal(id) {
+    editingMetaId = id;
+    const m = id ? ds.metas.find((x) => x.id === id) : null;
+    $("#modal-meta-title").textContent = m ? "Editar Meta" : "Nova Meta";
+    $("#meta-name").value = m ? m.name : "";
+    $("#meta-target").value = m ? m.target.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
+    $("#meta-saved").value = m ? m.saved.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
+    $("#modal-meta").classList.remove("hidden");
+    setTimeout(() => $("#meta-name").focus(), 50);
+  }
+
+  function saveMetaModal() {
+    const name = $("#meta-name").value.trim();
+    if (!name) { toast("Dê um nome para a meta 🎯"); $("#meta-name").focus(); return; }
+    const target = parseMoney($("#meta-target").value);
+    if (target == null || target <= 0) { toast("Informe o valor da meta 💰"); $("#meta-target").focus(); return; }
+    const saved = Math.abs(parseMoney($("#meta-saved").value) ?? 0);
+
+    if (editingMetaId) {
+      const m = ds.metas.find((x) => x.id === editingMetaId);
+      if (m) Object.assign(m, { name, target: Math.abs(target), saved });
+      toast("Meta atualizada ✔");
+    } else {
+      ds.metas.push({ id: uid(), name, target: Math.abs(target), saved });
+      toast("Meta criada ✔");
+    }
+    $("#modal-meta").classList.add("hidden");
+    editingMetaId = null;
+    saveCur();
+    renderMetas();
+  }
+
+  function addToMeta(m) {
+    askName(`Quanto adicionar em "${m.name}"? (R$)`, "", (v) => {
+      const n = parseMoney(v);
+      if (n == null || n <= 0) { toast("Valor inválido — use algo como 150,00 💰"); return; }
+      m.saved = Math.round((m.saved + n) * 100) / 100;
+      saveCur();
+      renderMetas();
+      if (m.saved >= m.target - 0.004) toast("🎉 Parabéns! Meta \"" + m.name + "\" alcançada!");
+      else toast(`${fmtBRL(n)} adicionados à meta ✔`);
     });
   }
 
@@ -940,10 +1017,30 @@ const Dashboard = (() => {
       if (ev.key === "Escape") { $("#modal-tx").classList.add("hidden"); editingId = null; }
     });
 
-    // Limites
+    // Limites e Metas
     $("#limits-block").addEventListener("click", (ev) => {
-      const addBtn = ev.target.closest('[data-action="add-limit"]');
-      if (addBtn) { openLimitModal(null); return; }
+      if (ev.target.closest('[data-action="add-limit"]')) { openLimitModal(null); return; }
+      if (ev.target.closest('[data-action="add-meta"]')) { openMetaModal(null); return; }
+
+      // Metas primeiro: .meta-row também tem a classe .limit-row (estilo compartilhado)
+      const metaRow = ev.target.closest(".meta-row[data-id]");
+      if (metaRow) {
+        const m = ds.metas.find((x) => x.id === metaRow.dataset.id);
+        if (!m) return;
+        const action = ev.target.closest("[data-action]")?.dataset.action;
+        if (action === "meta-add") addToMeta(m);
+        else if (action === "edit-meta") openMetaModal(m.id);
+        else if (action === "delete-meta") {
+          askConfirm("Excluir meta?", `A meta "${m.name}" será removida. Suas transações não são afetadas.`, () => {
+            ds.metas = ds.metas.filter((x) => x.id !== m.id);
+            saveCur();
+            renderMetas();
+            toast("Meta excluída.");
+          });
+        }
+        return;
+      }
+
       const card = ev.target.closest(".limit-row[data-id]");
       if (!card) return;
       const action = ev.target.closest("[data-action]")?.dataset.action;
@@ -957,6 +1054,14 @@ const Dashboard = (() => {
           toast("Limite excluído.");
         });
       }
+    });
+
+    // Modal de meta
+    $("#btn-meta-save").addEventListener("click", saveMetaModal);
+    $("#btn-meta-cancel").addEventListener("click", () => { $("#modal-meta").classList.add("hidden"); editingMetaId = null; });
+    $("#modal-meta").addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") saveMetaModal();
+      if (ev.key === "Escape") { $("#modal-meta").classList.add("hidden"); editingMetaId = null; }
     });
     $("#btn-limit-save").addEventListener("click", saveLimitModal);
     $("#btn-limit-cancel").addEventListener("click", () => { $("#modal-limit").classList.add("hidden"); editingLimitId = null; });

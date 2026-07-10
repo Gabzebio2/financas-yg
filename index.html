@@ -188,14 +188,22 @@
     <div class="card limits-block" id="limits-block">
       <div class="limits-block-head">
         <div>
-          <h3>🎯 Controle de Limites</h3>
+          <h3>🎯 Limites e Metas</h3>
           <span class="hint" id="limits-overview"></span>
         </div>
-        <button class="btn btn-primary btn-sm" data-action="add-limit">＋ Novo limite</button>
+        <div class="limits-head-btns">
+          <button class="btn btn-primary btn-sm" data-action="add-limit">＋ Novo limite</button>
+          <button class="btn btn-ghost btn-sm" data-action="add-meta">＋ Nova Meta</button>
+        </div>
       </div>
       <div class="limits-block-body" id="limits-body">
         <div id="limits-groups"></div>
         <div class="chart-box chart-box-limits" id="limits-chart-box"><canvas id="chart-limits"></canvas></div>
+      </div>
+      <!-- Metas de valor (independentes das transações) -->
+      <div class="metas-sec hidden" id="metas-sec">
+        <h4 class="metas-title">Minhas metas</h4>
+        <div id="metas-groups"></div>
       </div>
     </div>
 
@@ -351,6 +359,28 @@
       <button class="btn btn-ghost" id="btn-delparc-cancel">Cancelar</button>
       <button class="btn btn-ghost btn-ghost-danger" id="btn-delparc-one">Só esta parcela</button>
       <button class="btn btn-danger" id="btn-delparc-following">Esta e as seguintes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Nova / editar meta -->
+<div class="modal-backdrop hidden" id="modal-meta">
+  <div class="modal modal-sm">
+    <h3 id="modal-meta-title">Nova Meta</h3>
+    <div class="form-grid">
+      <label class="span2">Nome da meta
+        <input type="text" id="meta-name" placeholder="Ex: Reserva de emergência">
+      </label>
+      <label>Valor da meta (R$)
+        <input type="text" id="meta-target" inputmode="decimal" placeholder="0,00">
+      </label>
+      <label>Já guardado (R$)
+        <input type="text" id="meta-saved" inputmode="decimal" placeholder="0,00">
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-meta-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-meta-save">Salvar</button>
     </div>
   </div>
 </div>
