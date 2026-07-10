@@ -339,6 +339,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .meta-preview .progress { margin: 0; }
 .meta-preview-bar { background: linear-gradient(90deg, #8b5cf6, #4a6cf7); }
 .meta-preview-bar.done { background: var(--green); }
+.meta-mode-toggle { display: flex; background: var(--bg); border-radius: 10px; padding: 4px; gap: 4px; }
+.meta-mode-toggle button {
+  flex: 1; border: none; background: transparent; padding: 8px; border-radius: 8px;
+  font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text-soft);
+}
+.meta-mode-toggle button.active { background: var(--primary); color: #fff; }
 .limit-cats {
   display: grid; grid-template-columns: 1fr 1fr; gap: 4px; max-height: 220px; overflow: auto;
   border: 1px solid var(--border); border-radius: 10px; padding: 8px;

@@ -374,15 +374,23 @@
       </div>
     </div>
     <div class="form-grid">
+      <div class="span2 meta-mode-toggle" id="meta-mode-toggle">
+        <button type="button" data-mode="manual" class="active">💰 Poupança</button>
+        <button type="button" data-mode="linked">🤝 Cobrança de amigo</button>
+      </div>
       <label class="span2">Nome da meta
         <input type="text" id="meta-name" placeholder="Ex: Reserva de emergência">
       </label>
-      <label>Valor da meta (R$)
+      <label id="meta-f-target">Valor da meta (R$)
         <input type="text" id="meta-target" inputmode="decimal" placeholder="0,00">
       </label>
-      <label>Já guardado (R$)
+      <label id="meta-f-saved">Já guardado (R$)
         <input type="text" id="meta-saved" inputmode="decimal" placeholder="0,00">
       </label>
+      <label class="span2 hidden" id="meta-f-cat">Categoria do amigo/reembolso
+        <select id="meta-cat"></select>
+      </label>
+      <p class="hint span2 hidden" id="meta-linked-hint">O valor a receber é a soma das <b>despesas</b> dessa categoria; a barrinha enche com as <b>receitas</b> (pagamentos) da mesma categoria — inclusive as lidas de comprovante.</p>
       <div class="span2 meta-preview">
         <div class="meta-preview-row">
           <span id="meta-preview-txt">Preencha os valores para ver o progresso</span>

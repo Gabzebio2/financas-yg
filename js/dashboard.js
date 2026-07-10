@@ -444,57 +444,115 @@ const Dashboard = (() => {
     });
   }
 
-  /* ---------- Metas de valor (independentes das transações) ---------- */
+  /* ---------- Metas ----------
+     Dois tipos:
+     - Poupança (manual): { id, name, target, saved } — aportes à mão.
+     - Cobrança de amigo (vinculada): { id, name, category } — o valor devido
+       é a soma das DESPESAS da categoria; a barra enche com as RECEITAS
+       (pagamentos) da mesma categoria. Assim registrar um pagamento abate a
+       fatura de verdade, sem número duplicado. */
   let editingMetaId = null;
+  let metaMode = "manual";
+
+  // Calcula progresso da meta (vinculada = a partir das transações da categoria)
+  function metaStats(m) {
+    if (m.category) {
+      const k = stripAccents(m.category);
+      let owed = 0, paid = 0;
+      ds.transactions.forEach((t) => {
+        if (stripAccents(t.category) !== k) return;
+        if (t.type === "despesa") owed += t.amount; else paid += t.amount;
+      });
+      const target = Math.round(owed * 100) / 100;
+      const saved = Math.round(paid * 100) / 100;
+      return { linked: true, target, saved, done: target > 0 && saved >= target - 0.004, pct: target > 0 ? (saved / target) * 100 : 0 };
+    }
+    const done = m.target > 0 && m.saved >= m.target - 0.004;
+    return { linked: false, target: m.target, saved: m.saved, done, pct: m.target > 0 ? (m.saved / m.target) * 100 : 0 };
+  }
 
   function renderMetas() {
     const metas = ds.metas || [];
     $("#metas-sec").classList.toggle("hidden", !metas.length);
     if (!metas.length) return;
     $("#metas-groups").innerHTML = metas.map((m) => {
-      const pct = m.target > 0 ? (m.saved / m.target) * 100 : 0;
-      const done = m.saved >= m.target - 0.004;
+      const s = metaStats(m);
+      const empty = s.linked && s.target <= 0;
+      const icon = s.done ? "🏆" : (s.linked ? "🤝" : "🎯");
+      const catLine = s.linked ? `<span class="limit-cats-line">· cobrança de ${escapeHtml(m.category)}</span>` : "";
+      const addBtn = (s.done || empty) ? "" :
+        `<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-add">${s.linked ? "＋ Registrar pagamento" : "＋ Adicionar valor"}</button>`;
+      const leftNum = s.linked
+        ? `<span>Pagaram: <b class="${s.done ? "limit-ok-txt" : ""}">${fmtBRL(s.saved)}</b> de ${fmtBRL(s.target)} <span class="limit-pct">(${s.pct.toFixed(0)}%)</span></span>`
+        : `<span>Guardado: <b>${fmtBRL(s.saved)}</b> de ${fmtBRL(s.target)} <span class="limit-pct">(${s.pct.toFixed(0)}%)</span></span>`;
+      const rightNum = empty
+        ? `<span class="limit-cats-line">Sem despesas nessa categoria ainda</span>`
+        : s.done
+          ? `<span class="limit-ok-txt">${s.linked ? "Quitou tudo! 🎉" : "Meta alcançada! 🎉"}</span>`
+          : `<span>${s.linked ? "Falta receber" : "Falta"} ${fmtBRL(Math.max(0, s.target - s.saved))}</span>`;
       return `
-      <div class="limit-row meta-row ${done ? "meta-done" : ""}" data-id="${escapeHtml(m.id)}">
+      <div class="limit-row meta-row ${s.done ? "meta-done" : ""}" data-id="${escapeHtml(m.id)}">
         <div class="limit-row-top">
-          <div class="limit-name">${done ? "🏆" : "🎯"} ${escapeHtml(m.name)}${done ? '<span class="meta-done-chip">Finalizada ✔</span>' : ""}</div>
+          <div class="limit-name">${icon} ${escapeHtml(m.name)}${catLine}${s.done ? '<span class="meta-done-chip">Finalizada ✔</span>' : ""}</div>
           <div class="limit-actions">
-            ${done ? "" : '<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-add">＋ Adicionar valor</button>'}
+            ${addBtn}
             <button class="btn-icon" data-action="edit-meta" title="Editar meta">✎</button>
             <button class="btn-icon" data-action="delete-meta" title="Excluir meta">🗑</button>
           </div>
         </div>
-        <div class="progress"><div class="progress-bar ${done ? "done" : ""}" style="width:${Math.min(100, pct)}%"></div></div>
-        <div class="limit-nums">
-          <span>Guardado: <b>${fmtBRL(m.saved)}</b> de ${fmtBRL(m.target)} <span class="limit-pct">(${pct.toFixed(0)}%)</span></span>
-          <span>${done
-            ? '<span class="limit-ok-txt">Meta alcançada! 🎉</span>'
-            : `<span>Falta ${fmtBRL(Math.max(0, m.target - m.saved))}</span>`}</span>
-        </div>
+        <div class="progress"><div class="progress-bar ${s.done ? "done" : ""}" style="width:${Math.min(100, s.pct)}%"></div></div>
+        <div class="limit-nums">${leftNum}${rightNum}</div>
       </div>`;
     }).join("");
   }
 
+  function setMetaMode(mode) {
+    metaMode = mode;
+    $$("#meta-mode-toggle button").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+    const linked = mode === "linked";
+    $("#meta-f-target").classList.toggle("hidden", linked);
+    $("#meta-f-saved").classList.toggle("hidden", linked);
+    $("#meta-f-cat").classList.toggle("hidden", !linked);
+    $("#meta-linked-hint").classList.toggle("hidden", !linked);
+    $(".meta-modal-sub").textContent = linked
+      ? "Cobre o que um amigo te deve por gastos no seu cartão"
+      : "Defina o objetivo e veja a barrinha encher";
+    updateMetaPreview();
+  }
+
   // Prévia ao vivo da barrinha dentro do modal de meta
   function updateMetaPreview() {
-    const target = parseMoney($("#meta-target").value);
-    const saved = Math.abs(parseMoney($("#meta-saved").value) ?? 0);
     const bar = $("#meta-preview-bar");
     const txt = $("#meta-preview-txt");
     const pctEl = $("#meta-preview-pct");
-    if (target == null || target <= 0) {
-      bar.style.width = "0%";
-      bar.classList.remove("done");
-      txt.textContent = "Preencha os valores para ver o progresso";
-      pctEl.textContent = "";
-      return;
+    const empty = (msg) => { bar.style.width = "0%"; bar.classList.remove("done"); txt.textContent = msg; pctEl.textContent = ""; };
+    let target, saved;
+
+    if (metaMode === "linked") {
+      const cat = $("#meta-cat").value;
+      if (!cat) return empty("Escolha a categoria");
+      const k = stripAccents(cat);
+      let owed = 0, paid = 0;
+      ds.transactions.forEach((t) => {
+        if (stripAccents(t.category) !== k) return;
+        if (t.type === "despesa") owed += t.amount; else paid += t.amount;
+      });
+      if (owed <= 0) return empty("Ainda não há despesas nessa categoria");
+      target = owed; saved = paid;
+    } else {
+      target = parseMoney($("#meta-target").value);
+      saved = Math.abs(parseMoney($("#meta-saved").value) ?? 0);
+      if (target == null || target <= 0) return empty("Preencha os valores para ver o progresso");
     }
+
     const pct = (saved / target) * 100;
     const done = saved >= target - 0.004;
     bar.style.width = Math.min(100, pct) + "%";
     bar.classList.toggle("done", done);
     pctEl.textContent = pct.toFixed(0) + "%";
-    txt.textContent = done ? "Meta alcançada! 🎉" : `Faltam ${fmtBRL(target - saved)} para o objetivo`;
+    txt.textContent = metaMode === "linked"
+      ? (done ? "Quitou tudo! 🎉" : `Já pagaram ${fmtBRL(saved)} · falta ${fmtBRL(target - saved)}`)
+      : (done ? "Meta alcançada! 🎉" : `Faltam ${fmtBRL(target - saved)} para o objetivo`);
   }
 
   function openMetaModal(id) {
@@ -502,9 +560,14 @@ const Dashboard = (() => {
     const m = id ? ds.metas.find((x) => x.id === id) : null;
     $("#modal-meta-title").textContent = m ? "Editar Meta" : "Nova Meta";
     $("#meta-name").value = m ? m.name : "";
-    $("#meta-target").value = m ? m.target.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
-    $("#meta-saved").value = m ? m.saved.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
-    updateMetaPreview();
+    $("#meta-cat").innerHTML = ds.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("");
+    const linked = !!(m && m.category);
+    if (linked && ds.categories.some((c) => stripAccents(c.name) === stripAccents(m.category))) $("#meta-cat").value = m.category;
+    $("#meta-target").value = (m && !m.category) ? m.target.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
+    $("#meta-saved").value = (m && !m.category) ? m.saved.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
+    // Ao editar, o tipo é fixo (não converte poupança <-> cobrança)
+    $("#meta-mode-toggle").classList.toggle("hidden", !!m);
+    setMetaMode(linked ? "linked" : "manual");
     $("#modal-meta").classList.remove("hidden");
     setTimeout(() => $("#meta-name").focus(), 50);
   }
@@ -512,17 +575,30 @@ const Dashboard = (() => {
   function saveMetaModal() {
     const name = $("#meta-name").value.trim();
     if (!name) { toast("Dê um nome para a meta 🎯"); $("#meta-name").focus(); return; }
-    const target = parseMoney($("#meta-target").value);
-    if (target == null || target <= 0) { toast("Informe o valor da meta 💰"); $("#meta-target").focus(); return; }
-    const saved = Math.abs(parseMoney($("#meta-saved").value) ?? 0);
 
-    if (editingMetaId) {
-      const m = ds.metas.find((x) => x.id === editingMetaId);
-      if (m) Object.assign(m, { name, target: Math.abs(target), saved });
-      toast("Meta atualizada ✔");
+    if (metaMode === "linked") {
+      const category = $("#meta-cat").value;
+      if (!category) { toast("Escolha a categoria da cobrança 🏷️"); return; }
+      if (editingMetaId) {
+        const m = ds.metas.find((x) => x.id === editingMetaId);
+        if (m) { m.name = name; m.category = category; delete m.target; delete m.saved; }
+        toast("Meta atualizada ✔");
+      } else {
+        ds.metas.push({ id: uid(), name, category });
+        toast("Meta de cobrança criada ✔");
+      }
     } else {
-      ds.metas.push({ id: uid(), name, target: Math.abs(target), saved });
-      toast("Meta criada ✔");
+      const target = parseMoney($("#meta-target").value);
+      if (target == null || target <= 0) { toast("Informe o valor da meta 💰"); $("#meta-target").focus(); return; }
+      const saved = Math.abs(parseMoney($("#meta-saved").value) ?? 0);
+      if (editingMetaId) {
+        const m = ds.metas.find((x) => x.id === editingMetaId);
+        if (m) { m.name = name; m.target = Math.abs(target); m.saved = saved; delete m.category; }
+        toast("Meta atualizada ✔");
+      } else {
+        ds.metas.push({ id: uid(), name, target: Math.abs(target), saved });
+        toast("Meta criada ✔");
+      }
     }
     $("#modal-meta").classList.add("hidden");
     editingMetaId = null;
@@ -531,6 +607,24 @@ const Dashboard = (() => {
   }
 
   function addToMeta(m) {
+    // Meta vinculada: registrar pagamento = criar uma RECEITA na categoria
+    // (abate a fatura de verdade e enche a barra sozinho).
+    if (m.category) {
+      askName(`Quanto ${m.name} te pagou agora? (R$)`, "", (v) => {
+        const n = parseMoney(v);
+        if (n == null || n <= 0) { toast("Valor inválido — use algo como 150,00 💰"); return; }
+        ensureCat(ds, m.category);
+        ds.transactions.push({
+          id: uid(), date: todayISO(), desc: "Pagamento — " + m.name,
+          category: m.category, account: "", type: "receita",
+          amount: Math.round(n * 100) / 100, installment: null, totalValue: null,
+        });
+        saveCur();
+        renderAll();
+        toast(metaStats(m).done ? `🎉 ${m.name} quitou tudo!` : `Pagamento de ${fmtBRL(n)} registrado ✔`);
+      });
+      return;
+    }
     askName(`Quanto adicionar em "${m.name}"? (R$)`, "", (v) => {
       const n = parseMoney(v);
       if (n == null || n <= 0) { toast("Valor inválido — use algo como 150,00 💰"); return; }
@@ -1084,6 +1178,11 @@ const Dashboard = (() => {
     $("#btn-meta-cancel").addEventListener("click", () => { $("#modal-meta").classList.add("hidden"); editingMetaId = null; });
     $("#meta-target").addEventListener("input", updateMetaPreview);
     $("#meta-saved").addEventListener("input", updateMetaPreview);
+    $("#meta-cat").addEventListener("change", updateMetaPreview);
+    $("#meta-mode-toggle").addEventListener("click", (ev) => {
+      const b = ev.target.closest("button[data-mode]");
+      if (b) setMetaMode(b.dataset.mode);
+    });
     $("#modal-meta").addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") saveMetaModal();
       if (ev.key === "Escape") { $("#modal-meta").classList.add("hidden"); editingMetaId = null; }

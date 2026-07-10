@@ -319,18 +319,19 @@ function sanitizeDataset(raw, opts) {
     metas: [],
   };
 
-  // Metas de valor: nome texto puro, valores numéricos
+  // Metas: poupança (target/saved) ou cobrança vinculada a categoria
   if (Array.isArray(raw.metas)) {
     raw.metas.slice(0, 100).forEach((m) => {
       const name = cleanStr(m?.name, 60).trim();
-      const target = cleanNum(m?.target);
-      if (!name || target == null || target <= 0) return;
-      ds.metas.push({
-        id: keepOrNewId(m?.id, preserve),
-        name,
-        target,
-        saved: cleanNum(m?.saved) ?? 0,
-      });
+      if (!name) return;
+      const category = cleanStr(m?.category, 40).trim();
+      if (category) {
+        ds.metas.push({ id: keepOrNewId(m?.id, preserve), name, category });
+      } else {
+        const target = cleanNum(m?.target);
+        if (target == null || target <= 0) return;
+        ds.metas.push({ id: keepOrNewId(m?.id, preserve), name, target, saved: cleanNum(m?.saved) ?? 0 });
+      }
     });
   }
 
