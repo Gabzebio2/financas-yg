@@ -204,6 +204,10 @@ Extraia os dados da operação. Regras:
   document.addEventListener("DOMContentLoaded", () => {
     $("#btn-receipt-camera").addEventListener("click", () => $("#receipt-input-camera").click());
     $("#btn-receipt-file").addEventListener("click", () => $("#receipt-input-file").click());
+    $("#btn-receipt-batch").addEventListener("click", () => {
+      $("#modal-tx").classList.add("hidden");
+      Batch.open({ title: "Ler fatura ou lista" });
+    });
     ["receipt-input-camera", "receipt-input-file"].forEach((id) => {
       $("#" + id).addEventListener("change", (ev) => {
         const file = ev.target.files[0];
@@ -235,5 +239,5 @@ Extraia os dados da operação. Regras:
     refreshKeyUI();
   });
 
-  return { analyze };
+  return { analyze, prepareImage };
 })();

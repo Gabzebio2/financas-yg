@@ -482,6 +482,9 @@ const Dashboard = (() => {
       const catLine = s.linked ? `<span class="limit-cats-line">· cobrança de ${escapeHtml(m.category)}</span>` : "";
       const addBtn = (s.done || empty) ? "" :
         `<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-add">${s.linked ? "＋ Registrar pagamento" : "＋ Adicionar valor"}</button>`;
+      const importBtn = s.linked
+        ? `<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-import" title="Ler foto de fatura/planilha ou Excel e lançar todos os gastos nesta categoria">📄 Importar gastos</button>`
+        : "";
       const leftNum = s.linked
         ? `<span>Pagaram: <b class="${s.done ? "limit-ok-txt" : ""}">${fmtBRL(s.saved)}</b> de ${fmtBRL(s.target)} <span class="limit-pct">(${s.pct.toFixed(0)}%)</span></span>`
         : `<span>Guardado: <b>${fmtBRL(s.saved)}</b> de ${fmtBRL(s.target)} <span class="limit-pct">(${s.pct.toFixed(0)}%)</span></span>`;
@@ -495,6 +498,7 @@ const Dashboard = (() => {
         <div class="limit-row-top">
           <div class="limit-name">${icon} ${escapeHtml(m.name)}${catLine}${s.done ? '<span class="meta-done-chip">Finalizada ✔</span>' : ""}</div>
           <div class="limit-actions">
+            ${importBtn}
             ${addBtn}
             <button class="btn-icon" data-action="edit-meta" title="Editar meta">✎</button>
             <button class="btn-icon" data-action="delete-meta" title="Excluir meta">🗑</button>
@@ -1146,6 +1150,7 @@ const Dashboard = (() => {
         if (!m) return;
         const action = ev.target.closest("[data-action]")?.dataset.action;
         if (action === "meta-add") addToMeta(m);
+        else if (action === "meta-import") Batch.open({ category: m.category, title: `Importar gastos de ${m.name}` });
         else if (action === "edit-meta") openMetaModal(m.id);
         else if (action === "delete-meta") {
           askConfirm("Excluir meta?", `A meta "${m.name}" será removida. Suas transações não são afetadas.`, () => {
@@ -1195,5 +1200,31 @@ const Dashboard = (() => {
     });
   });
 
-  return { open, openTxModal, fillTxFromReceipt, getCats };
+  // Adiciona várias transações de uma vez (importação em lote).
+  // items: [{ date, desc, amount, type, category, account? }]
+  function addBulk(items) {
+    let n = 0;
+    (items || []).forEach((it) => {
+      const amount = Math.abs(Number(it.amount) || 0);
+      if (!it.date || amount <= 0) return;
+      const category = (it.category || "Outros").trim() || "Outros";
+      ensureCat(ds, category);
+      ds.transactions.push({
+        id: uid(),
+        date: it.date,
+        desc: (it.desc || "").trim() || "(sem descrição)",
+        category,
+        account: (it.account || "").trim(),
+        type: it.type === "receita" ? "receita" : "despesa",
+        amount, installment: null, totalValue: null,
+      });
+      n++;
+    });
+    if (n) { saveCur(); renderAll(); }
+    return n;
+  }
+
+  function currentDatasetName() { return ds ? ds.name : ""; }
+
+  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, currentDatasetName };
 })();

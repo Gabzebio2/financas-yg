@@ -102,6 +102,13 @@ function parseDateCell(v) {
     const [, y, mo, d] = m;
     return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   }
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})$/); // dd/mm (sem ano) -> ano atual (comum em faturas/planilhas)
+  if (m) {
+    const [, d, mo] = m;
+    if (Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= 31) {
+      return `${new Date().getFullYear()}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    }
+  }
   return null;
 }
 

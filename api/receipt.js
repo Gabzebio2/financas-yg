@@ -1,47 +1,79 @@
-/* ===== Finanças YG — leitura de comprovante (função serverless da Vercel) =====
+/* ===== Finanças YG — leitura por IA (função serverless da Vercel) =====
    A chave da IA vive SÓ aqui, no servidor, em variável de ambiente
    (painel da Vercel — NUNCA no código/repo). O navegador nunca vê a chave:
    ele fala com esta função, e esta função fala com a IA.
 
+   Dois modos:
+   - único (padrão): 1 comprovante -> 1 objeto.
+   - lote (multi:true): 1 foto de fatura/planilha -> lista de transações.
+
    Provedores: usa o Gemini (GEMINI_API_KEY) por padrão — mais barato e com
    cota gratuita. Se só houver ANTHROPIC_API_KEY, usa a Anthropic.
 
-   Acesso liberado apenas para quem está logado no Supabase (o dono do app),
-   evitando que estranhos gastem os créditos. */
+   Acesso liberado apenas para quem está logado no Supabase (o dono do app). */
 
 const SUPABASE_URL = "https://mhgagjhwsjjjwwvopjgu.supabase.co";
 const SUPABASE_ANON = "sb_publishable_fB3B_MW3VgJBcJpUbN1wvg_1Glbr2r5"; // pública por design
 // Tenta em ordem; se o Google aposentar um modelo, o próximo assume sozinho
-// ("gemini-flash-latest" é o apelido oficial que aponta sempre pro Flash atual)
 const MODELS_GEMINI = ["gemini-3.5-flash", "gemini-flash-latest"];
 const MODEL_ANTHROPIC = "claude-haiku-4-5";
 
-const PROMPT = `Analise a imagem: é um comprovante financeiro brasileiro (Pix, transferência bancária ou compra).
+const PROMPT_SINGLE = `Analise a imagem: é um comprovante financeiro brasileiro (Pix, transferência bancária ou compra).
 Extraia os dados da operação e responda SOMENTE com JSON. Regras:
 - "valor": o valor principal da operação, em reais, como número (ex: 150.75).
 - "data": a data em que a operação foi feita, no formato AAAA-MM-DD. Use "" se não estiver visível.
-- "descricao": curta e útil, ex: "Pix para João Silva", "Transferência para Maria", "Compra em Mercado X".
-- "instituicao": o banco ou app de ONDE SAIU o dinheiro (lado do pagador), ex: Nubank, C6, PicPay, Inter, Wise. Use "" se não der para identificar.
+- "descricao": curta e útil, ex: "Pix para João Silva", "Compra em Mercado X".
+- "instituicao": o banco/app de ONDE SAIU o dinheiro (pagador). Use "" se não der para identificar.
 - "categoria": escolha a mais adequada da lista permitida.
-- "direcao": "recebido" apenas se o comprovante mostrar dinheiro RECEBIDO pelo dono do app; caso contrário "enviado".`;
+- "direcao": "recebido" apenas se o comprovante mostrar dinheiro RECEBIDO; caso contrário "enviado".`;
+
+const PROMPT_BATCH = `A imagem é uma FATURA de cartão de crédito ou uma PLANILHA de gastos (pode ter muitas linhas).
+Extraia TODAS as linhas de transação, uma por item, e responda SOMENTE com JSON.
+Regras por item:
+- "data": data da compra no formato AAAA-MM-DD. Se só aparecer dia/mês (ex: 29/06), use o ano ${new Date().getFullYear()}.
+- "descricao": o nome do estabelecimento/local exatamente como aparece (ex: "CAPITAO BAR", "Supermercado").
+- "valor": o valor em REAIS (R$), como número positivo. Se houver dois valores (ex: R$ e PYG/dólar), use SEMPRE o valor em R$; ignore a moeda estrangeira.
+- "tipo": "receita" se a linha for um pagamento/estorno/valor negativo (ex: linha "Pagamento" ou valor com sinal de menos); senão "despesa".
+Ignore linhas de total, subtotal, saldo, cabeçalho e rodapé. Não invente itens que não estão na imagem.`;
 
 /* ---------- Gemini ---------- */
-async function geminiFetch(key, model, image, categories, withSchema) {
-  const generationConfig = { temperature: 0, responseMimeType: "application/json" };
-  if (withSchema) {
-    generationConfig.responseSchema = {
-      type: "OBJECT",
-      properties: {
-        valor: { type: "NUMBER", description: "Valor da operação em reais" },
-        data: { type: "STRING", description: "Data em AAAA-MM-DD, ou vazio" },
-        descricao: { type: "STRING", description: "Descrição curta" },
-        instituicao: { type: "STRING", description: "Banco/app do pagador, ou vazio" },
-        categoria: { type: "STRING", enum: categories },
-        direcao: { type: "STRING", enum: ["enviado", "recebido"] },
+function geminiSchema(multi, categories) {
+  if (multi) {
+    return {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          data: { type: "STRING", description: "Data AAAA-MM-DD" },
+          descricao: { type: "STRING", description: "Estabelecimento/local" },
+          valor: { type: "NUMBER", description: "Valor em reais (positivo)" },
+          tipo: { type: "STRING", enum: ["despesa", "receita"] },
+        },
+        required: ["data", "descricao", "valor", "tipo"],
       },
-      required: ["valor", "data", "descricao", "instituicao", "categoria", "direcao"],
     };
   }
+  return {
+    type: "OBJECT",
+    properties: {
+      valor: { type: "NUMBER" },
+      data: { type: "STRING" },
+      descricao: { type: "STRING" },
+      instituicao: { type: "STRING" },
+      categoria: { type: "STRING", enum: categories },
+      direcao: { type: "STRING", enum: ["enviado", "recebido"] },
+    },
+    required: ["valor", "data", "descricao", "instituicao", "categoria", "direcao"],
+  };
+}
+
+async function geminiFetch(key, model, image, categories, multi, withSchema) {
+  const generationConfig = { temperature: 0, responseMimeType: "application/json" };
+  if (multi) generationConfig.maxOutputTokens = 8192;
+  if (withSchema) generationConfig.responseSchema = geminiSchema(multi, categories);
+  const promptText = multi
+    ? PROMPT_BATCH
+    : PROMPT_SINGLE + `\nLista permitida de "categoria": ${categories.join(", ")}.`;
   return fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
@@ -51,11 +83,7 @@ async function geminiFetch(key, model, image, categories, withSchema) {
         contents: [{
           parts: [
             { inlineData: { mimeType: image.media_type, data: image.data } },
-            {
-              text: PROMPT +
-                `\nLista permitida de "categoria": ${categories.join(", ")}.` +
-                `\nResponda apenas o objeto JSON com as chaves: valor, data, descricao, instituicao, categoria, direcao.`,
-            },
+            { text: promptText },
           ],
         }],
         generationConfig,
@@ -70,20 +98,18 @@ function parseGeminiResponse(data) {
   if (!cand || (cand.finishReason && cand.finishReason !== "STOP" && cand.finishReason !== "MAX_TOKENS")) {
     return { refusal: true };
   }
-  // Tolerante a cercas de markdown quando vier sem schema
   let text = (cand.content?.parts || []).map((p) => p.text || "").join("").trim();
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenced) text = fenced[1].trim();
   return { text };
 }
 
-async function callGemini(key, image, categories) {
+async function callGemini(key, image, categories, multi) {
   let fail = null;
   for (const model of MODELS_GEMINI) {
-    let r = await geminiFetch(key, model, image, categories, true);
+    let r = await geminiFetch(key, model, image, categories, multi, true);
     if (r.status === 400) {
-      // Alguns projetos/versões rejeitam o responseSchema — tenta em modo JSON simples
-      const r2 = await geminiFetch(key, model, image, categories, false);
+      const r2 = await geminiFetch(key, model, image, categories, multi, false);
       if (r2.ok || r2.status !== 400) r = r2;
     }
     if (r.ok) return parseGeminiResponse(await r.json());
@@ -92,9 +118,6 @@ async function callGemini(key, image, categories) {
     try { detail = (await r.json())?.error?.message || ""; } catch { /* corpo não-JSON */ }
     console.error("gemini_falhou", model, r.status, detail);
     fail = { httpStatus: r.status, detail: String(detail).slice(0, 300) };
-
-    // Só vale trocar de modelo quando o problema é o próprio modelo
-    // (aposentado/inexistente); erros de chave/cota param aqui.
     const modeloIndisponivel = r.status === 404 ||
       /no longer available|not found|not supported|deprecated|does not exist/i.test(detail);
     if (!modeloIndisponivel) break;
@@ -103,36 +126,39 @@ async function callGemini(key, image, categories) {
 }
 
 /* ---------- Anthropic (reserva) ---------- */
-async function callAnthropic(key, image, categories) {
-  const schema = {
-    type: "object",
-    additionalProperties: false,
+async function callAnthropic(key, image, categories, multi) {
+  const itemSchema = {
+    type: "object", additionalProperties: false,
+    required: ["data", "descricao", "valor", "tipo"],
+    properties: {
+      data: { type: "string" }, descricao: { type: "string" },
+      valor: { type: "number" }, tipo: { type: "string", enum: ["despesa", "receita"] },
+    },
+  };
+  const singleSchema = {
+    type: "object", additionalProperties: false,
     required: ["valor", "data", "descricao", "instituicao", "categoria", "direcao"],
     properties: {
-      valor: { type: "number" },
-      data: { type: "string" },
-      descricao: { type: "string" },
-      instituicao: { type: "string" },
-      categoria: { type: "string", enum: categories },
+      valor: { type: "number" }, data: { type: "string" }, descricao: { type: "string" },
+      instituicao: { type: "string" }, categoria: { type: "string", enum: categories },
       direcao: { type: "string", enum: ["enviado", "recebido"] },
     },
   };
+  const schema = multi
+    ? { type: "object", additionalProperties: false, required: ["itens"], properties: { itens: { type: "array", items: itemSchema } } }
+    : singleSchema;
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-    },
+    headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: MODEL_ANTHROPIC,
-      max_tokens: 1024,
+      max_tokens: multi ? 4096 : 1024,
       output_config: { format: { type: "json_schema", schema } },
       messages: [{
         role: "user",
         content: [
           { type: "image", source: { type: "base64", media_type: image.media_type, data: image.data } },
-          { type: "text", text: PROMPT },
+          { type: "text", text: multi ? PROMPT_BATCH : PROMPT_SINGLE },
         ],
       }],
     }),
@@ -149,13 +175,8 @@ module.exports = async (req, res) => {
   const gKey = process.env.GEMINI_API_KEY;
   const aKey = process.env.ANTHROPIC_API_KEY;
 
-  // Ping de disponibilidade (o app usa para saber se a IA está ativa)
   if (req.method === "GET") {
-    res.status(200).json({
-      ok: true,
-      configured: !!(gKey || aKey),
-      provider: gKey ? "gemini" : (aKey ? "anthropic" : null),
-    });
+    res.status(200).json({ ok: true, configured: !!(gKey || aKey), provider: gKey ? "gemini" : (aKey ? "anthropic" : null) });
     return;
   }
   if (req.method !== "POST") { res.status(405).json({ error: "metodo" }); return; }
@@ -177,6 +198,7 @@ module.exports = async (req, res) => {
   // 2) Valida o corpo
   const body = req.body || {};
   const image = body.image;
+  const multi = body.multi === true;
   if (!image || typeof image.data !== "string" || !/^image\/(jpeg|png|webp|gif)$/.test(image.media_type || "")) {
     res.status(400).json({ error: "imagem" }); return;
   }
@@ -188,20 +210,24 @@ module.exports = async (req, res) => {
   // 3) Chama a IA com a chave secreta (só o resultado volta ao app)
   try {
     const out = gKey
-      ? await callGemini(gKey, image, categories)
-      : await callAnthropic(aKey, image, categories);
+      ? await callGemini(gKey, image, categories, multi)
+      : await callAnthropic(aKey, image, categories, multi);
 
     if (out.httpStatus === 429) { res.status(429).json({ error: "limite_ia" }); return; }
-    if (out.httpStatus) {
-      res.status(502).json({ error: "ia_falhou", status: out.httpStatus, detail: out.detail || "" });
-      return;
-    }
+    if (out.httpStatus) { res.status(502).json({ error: "ia_falhou", status: out.httpStatus, detail: out.detail || "" }); return; }
     if (out.refusal) { res.status(200).json({ error: "refusal" }); return; }
 
     let parsed;
     try { parsed = JSON.parse(out.text); }
     catch { res.status(502).json({ error: "resposta_invalida" }); return; }
-    res.status(200).json(parsed);
+
+    if (multi) {
+      // Aceita tanto array puro quanto { itens: [...] }
+      const itens = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.itens) ? parsed.itens : []);
+      res.status(200).json({ itens });
+    } else {
+      res.status(200).json(parsed);
+    }
   } catch {
     res.status(502).json({ error: "conexao" });
   }

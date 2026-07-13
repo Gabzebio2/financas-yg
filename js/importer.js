@@ -457,6 +457,43 @@ const Importer = (() => {
     showPreview([{ sheet: $("#map-sheet").value, format: "mapeamento manual", ...r }]);
   }
 
+  /* ---------- Leitura para o modo LOTE (não cria pasta) ----------
+     Lê um .xlsx e devolve só as transações detectadas, sem tela de
+     importação. Usado pela importação em lote (Batch). */
+  async function readForBatch(file) {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array", cellDates: false });
+    const txs = [];
+    for (const name of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
+      if (!rows.length) continue;
+
+      // 1) Formato matriz (meses em colunas) — o formato da planilha principal.
+      const ml = detectMatrix(rows);
+      if (ml) { const r = parseMatrix(rows, ml); if (r.txs.length) { txs.push(...r.txs); continue; } }
+
+      // 2) Tabela simples (Data, Descrição/Local, Valor). Convenção de LOTE
+      //    (fatura/cobrança): positivo = gasto (despesa); negativo = pagamento
+      //    ou estorno (receita) — oposto da convenção bancária do importador.
+      const sl = detectSimple(rows);
+      if (sl && sl.cols.date != null && sl.cols.amount != null) {
+        for (let i = sl.headerRow + 1; i < rows.length; i++) {
+          const row = rows[i] || [];
+          const date = parseDateCell(row[sl.cols.date]);
+          const amt = parseMoney(row[sl.cols.amount]);
+          if (!date || amt == null || Math.abs(amt) < 0.004) continue;
+          const desc = sl.cols.desc != null && row[sl.cols.desc] != null ? String(row[sl.cols.desc]).trim() : "";
+          txs.push({
+            date, desc: desc || "(sem descrição)",
+            amount: Math.abs(amt), type: amt < 0 ? "receita" : "despesa",
+            installment: null, totalValue: null,
+          });
+        }
+      }
+    }
+    return txs;
+  }
+
   /* ---------- Eventos ---------- */
   document.addEventListener("DOMContentLoaded", () => {
     $("#btn-import-save").addEventListener("click", savePending);
@@ -466,5 +503,5 @@ const Importer = (() => {
     $("#btn-apply-map").addEventListener("click", applyMapping);
   });
 
-  return { handleFile };
+  return { handleFile, readForBatch };
 })();

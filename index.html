@@ -10,7 +10,7 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style.css?v=20260713">
 </head>
 <body>
 
@@ -266,6 +266,7 @@
       <div class="receipt-btns">
         <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-camera">📷 Tirar foto</button>
         <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-file">🧾 Ler comprovante</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-batch" title="Ler foto de fatura/planilha (ou Excel) com vários itens de uma vez">📄 Fatura/lista</button>
         <span class="receipt-status hidden" id="receipt-status"></span>
         <button type="button" class="btn-link hidden" id="btn-apikey-remove"
           title="Apaga a chave de IA salva neste navegador">🔒 remover chave</button>
@@ -363,6 +364,49 @@
   </div>
 </div>
 
+<!-- Importação em lote (fatura/planilha/Excel) -->
+<div class="modal-backdrop hidden" id="modal-batch">
+  <div class="modal modal-batch">
+    <div class="meta-modal-head">
+      <div class="meta-modal-icon batch-icon">📄</div>
+      <div>
+        <h3 id="batch-title">Importar em lote</h3>
+        <p class="meta-modal-sub">Mande uma foto de fatura/planilha ou um Excel — o app lê tudo e você confirma</p>
+      </div>
+    </div>
+
+    <div class="batch-sources">
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-photo">📷 Foto (fatura/planilha)</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-file">📊 Arquivo Excel</button>
+      <span class="receipt-status hidden" id="batch-status"></span>
+    </div>
+    <input type="file" id="batch-input-photo" accept="image/*" hidden>
+    <input type="file" id="batch-input-file" accept=".xlsx,.xls" hidden>
+
+    <div id="batch-preview" class="hidden">
+      <div class="batch-controls">
+        <label>Categoria destino
+          <select id="batch-cat"></select>
+        </label>
+        <span class="hint" id="batch-count"></span>
+      </div>
+      <div class="table-wrap batch-table-wrap">
+        <table id="batch-table">
+          <thead>
+            <tr><th></th><th>Data</th><th>Descrição</th><th class="num">Valor</th><th>Tipo</th></tr>
+          </thead>
+          <tbody id="batch-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-batch-cancel">Cancelar</button>
+      <button class="btn btn-primary hidden" id="btn-batch-save">✅ Adicionar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Nova / editar meta -->
 <div class="modal-backdrop hidden" id="modal-meta">
   <div class="modal modal-sm modal-meta">
@@ -445,10 +489,11 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js"></script>
-<script src="js/importer.js"></script>
-<script src="js/dashboard.js"></script>
-<script src="js/receipt.js"></script>
-<script src="js/cloud.js"></script>
+<script src="js/app.js?v=20260713"></script>
+<script src="js/importer.js?v=20260713"></script>
+<script src="js/dashboard.js?v=20260713"></script>
+<script src="js/receipt.js?v=20260713"></script>
+<script src="js/batch.js?v=20260713"></script>
+<script src="js/cloud.js?v=20260713"></script>
 </body>
 </html>
