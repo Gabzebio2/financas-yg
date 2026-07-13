@@ -45,6 +45,14 @@ const Importer = (() => {
     for (const role of ["totalValue", "installment", "category", "date", "account", "desc", "income", "expense", "type", "amount"]) {
       if (SYN[role].includes(n)) return role;
     }
+    // Reconhecimento flexível para cabeçalhos compostos que fogem da lista
+    // exata (ex: "data de compra", "valor total (R$)", "cartão usado")
+    if (n.includes("valor total") || n.includes("monto total")) return "totalValue";
+    if (/^(data|fecha|date)\b/.test(n)) return "date";
+    if (/^(cartao|cartoes|tarjeta|conta|cuenta)\b/.test(n)) return "account";
+    if (n.includes("parcela") || n.includes("cuota")) return "installment";
+    if (n.includes("categoria")) return "category";
+    if (n.includes("descri") || n.includes("o que e") || n.includes("historic") || n.includes("detalle")) return "desc";
     return null;
   }
 
@@ -70,7 +78,7 @@ const Importer = (() => {
         const mh = parseMonthHeader(cell);
         if (mh) monthCols.push({ c, m: mh.m, y: mh.y });
       });
-      if (monthCols.length < 2) continue;
+      if (!monthCols.length) continue;
 
       const layout = { headerRow: r, monthCols, cols: {} };
       row.forEach((cell, c) => {
@@ -78,6 +86,10 @@ const Importer = (() => {
         const role = matchRole(cell);
         if (role && layout.cols[role] == null) layout.cols[role] = c;
       });
+
+      // Com um único mês, exige pelo menos 2 cabeçalhos reconhecidos
+      // (cartão/parcelas/categoria/etc.) para confirmar que é o formato matriz
+      if (monthCols.length === 1 && Object.keys(layout.cols).length < 2) continue;
 
       // Coluna de data pode não ter título: procura coluna à esquerda dos meses cujo conteúdo são datas
       if (layout.cols.date == null) {
@@ -114,7 +126,15 @@ const Importer = (() => {
         if (d) { const y = d.slice(0, 4); count[y] = (count[y] || 0) + 1; }
       }
       const years = Object.keys(count).sort((a, b) => count[b] - count[a]);
-      anchorYear = years.length ? Number(years[0]) : new Date().getFullYear();
+      if (years.length) {
+        anchorYear = Number(years[0]);
+      } else {
+        // Sem nenhuma data de compra na planilha: um mês que ainda não
+        // chegou neste ano só pode ser do ano passado (ex: "setembro"
+        // importado em julho/2026 é setembro/2025).
+        const now = new Date();
+        anchorYear = monthCols[0].m > now.getMonth() ? now.getFullYear() - 1 : now.getFullYear();
+      }
       anchorIdx = 0;
       monthCols[0].y = anchorYear;
     }
@@ -140,7 +160,10 @@ const Importer = (() => {
       if (!hasContent) continue;
 
       const rawDesc = cols.desc != null && row[cols.desc] != null ? String(row[cols.desc]).trim() : "";
-      if (FOOTER_WORDS.includes(stripAccents(rawDesc))) continue; // rodapé de totais
+      const account = cols.account != null && row[cols.account] != null ? String(row[cols.account]).trim() : "";
+      const rawCat = cols.category != null && row[cols.category] != null ? String(row[cols.category]).trim() : "";
+      // Rodapé de totais pode estar em qualquer uma dessas colunas
+      if ([rawDesc, account, rawCat].some((v) => FOOTER_WORDS.includes(stripAccents(v)))) continue;
 
       const valued = [];
       monthCols.forEach((mc) => {
@@ -150,18 +173,23 @@ const Importer = (() => {
       if (!valued.length) continue;
 
       const date = parseDateCell(row[cols.date]);
-      if (!date) { skipped++; continue; } // linha com valores mas sem data (provável rodapé)
+      // Linha sem data de compra (comum em recorrentes/assinaturas): mantém se
+      // tiver descrição ou cartão; sem nada disso é rodapé disfarçado — pula.
+      if (!date && !rawDesc && !account) { skipped++; continue; }
 
-      const purchaseDay = Number(date.slice(8, 10));
-      const category = cols.category != null && row[cols.category] != null && String(row[cols.category]).trim() !== ""
-        ? String(row[cols.category]).trim() : "Outros";
-      const account = cols.account != null && row[cols.account] != null ? String(row[cols.account]).trim() : "";
+      const purchaseDay = date ? Number(date.slice(8, 10)) : 1;
+      const category = rawCat || "Outros";
       const totalValue = cols.totalValue != null ? parseMoney(row[cols.totalValue]) : null;
 
-      let parcStart = null, parcTotal = null;
+      // "Recorrente"/"Fixa"/"Mensal" na coluna de parcelas = despesa fixa
+      let parcStart = null, parcTotal = null, isFixed = false;
       if (cols.installment != null && row[cols.installment] != null) {
-        const pm = String(row[cols.installment]).match(/(\d+)\s*\/\s*(\d+)/);
-        if (pm) { parcStart = Number(pm[1]); parcTotal = Number(pm[2]); }
+        const rawParc = stripAccents(row[cols.installment]);
+        if (/recorrente|fixa|fixo|mensal|assinatura/.test(rawParc)) isFixed = true;
+        else {
+          const pm = String(row[cols.installment]).match(/(\d+)\s*\/\s*(\d+)/);
+          if (pm) { parcStart = Number(pm[1]); parcTotal = Number(pm[2]); }
+        }
       }
 
       const groupId = valued.length > 1 ? uid() : null; // liga as parcelas da mesma compra
@@ -169,11 +197,14 @@ const Importer = (() => {
         const y = v.mc.y, m = v.mc.m + 1;
         const day = Math.min(purchaseDay, daysInMonth(y, m));
         let installment = null;
-        if (parcTotal) installment = `${Math.min(parcStart + idx, parcTotal)}/${parcTotal}`;
-        else if (valued.length > 1) installment = `${idx + 1}/${valued.length}`;
+        if (!isFixed) {
+          if (parcTotal) installment = `${Math.min(parcStart + idx, parcTotal)}/${parcTotal}`;
+          else if (valued.length > 1) installment = `${idx + 1}/${valued.length}`;
+        }
         txs.push({
           id: uid(),
           groupId,
+          fixed: isFixed,
           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
           desc: rawDesc || "(sem descrição)",
           category, account,
@@ -239,8 +270,12 @@ const Importer = (() => {
         totalValue: null,
       };
       if (cols.installment != null && row[cols.installment] != null) {
-        const pm = String(row[cols.installment]).match(/(\d+)\s*\/\s*(\d+)/);
-        if (pm) base.installment = `${pm[1]}/${pm[2]}`;
+        const rawParc = stripAccents(row[cols.installment]);
+        if (/recorrente|fixa|fixo|mensal|assinatura/.test(rawParc)) base.fixed = true;
+        else {
+          const pm = String(row[cols.installment]).match(/(\d+)\s*\/\s*(\d+)/);
+          if (pm) base.installment = `${pm[1]}/${pm[2]}`;
+        }
       }
       if (cols.totalValue != null) {
         const tv = parseMoney(row[cols.totalValue]);

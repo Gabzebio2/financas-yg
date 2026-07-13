@@ -41,8 +41,10 @@ const Batch = (() => {
   function renderPreview() {
     const cats = Dashboard.getCats();
     const sel = $("#batch-cat");
+    const escolhaAtual = sel.value; // preserva a escolha do usuário entre leituras
     sel.innerHTML = cats.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
-    if (presetCat && cats.some((c) => stripAccents(c) === stripAccents(presetCat))) sel.value = presetCat;
+    if (escolhaAtual && cats.includes(escolhaAtual)) sel.value = escolhaAtual;
+    else if (presetCat && cats.some((c) => stripAccents(c) === stripAccents(presetCat))) sel.value = presetCat;
 
     if (!rows.length) {
       $("#batch-preview").classList.remove("hidden");
@@ -93,8 +95,17 @@ const Batch = (() => {
     }).filter((r) => r.amount > 0);
   }
 
-  /* ---------- Origem: FOTO (IA no servidor) ---------- */
-  async function fromPhoto(file) {
+  // Mensagem de sucesso do acúmulo (menciona o total quando já havia itens)
+  function statusAcumulo(added) {
+    if (!added) return;
+    const extra = rows.length !== added ? ` (total na lista: ${rows.length})` : "";
+    setStatus(`${added} itens reconhecidos${extra} — confira e ajuste abaixo ✔`, "ok");
+  }
+
+  /* ---------- Origem: FOTO(s) — fatura/planilha via IA no servidor ----------
+     Aceita várias imagens de uma vez (ex: 4 prints da fatura); lê em
+     sequência e ACUMULA tudo numa lista só, para um único OK. */
+  async function fromPhotos(files) {
     if (!proxyAvailable()) {
       setStatus("Leitura de foto funciona no endereço da nuvem (Vercel). Para uso local, use o Arquivo Excel.", "err");
       return;
@@ -102,52 +113,83 @@ const Batch = (() => {
     const token = (typeof Cloud !== "undefined" && Cloud.getToken) ? Cloud.getToken() : null;
     if (!token) { setStatus("Entre na sua conta (seção nuvem) para usar a leitura por foto.", "err"); return; }
 
-    setStatus("Lendo a imagem… isso pode levar alguns segundos 🔎");
-    let image;
-    try { image = await Receipt.prepareImage(file); }
-    catch { setStatus("Não consegui abrir essa imagem 😕", "err"); return; }
+    let added = 0;
+    let falhas = [];
+    for (let i = 0; i < files.length; i++) {
+      setStatus(files.length > 1
+        ? `Lendo imagem ${i + 1} de ${files.length}… 🔎`
+        : "Lendo a imagem… isso pode levar alguns segundos 🔎");
+      let image;
+      try { image = await Receipt.prepareImage(files[i]); }
+      catch { falhas.push(`imagem ${i + 1} ilegível`); continue; }
 
-    try {
-      const res = await fetch(PROXY_PATH, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer " + token },
-        body: JSON.stringify({ image: { media_type: image.mediaType, data: image.data }, multi: true }),
-      });
-      if (res.status === 401) { setStatus("Sua sessão expirou. Entre novamente na seção nuvem.", "err"); return; }
-      if (res.status === 429) { setStatus("Muitas leituras em sequência — aguarde um minuto e tente de novo.", "err"); return; }
-      if (res.status === 501) { setStatus("A leitura por IA ainda não foi ativada no servidor.", "err"); return; }
-      if (!res.ok) {
-        let detail = "";
-        try { const j = await res.json(); detail = j?.detail || j?.error || ""; } catch { /* sem corpo */ }
-        setStatus(`A leitura falhou (erro ${res.status}${detail ? " — " + detail : ""}).`, "err");
+      try {
+        const res = await fetch(PROXY_PATH, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: "Bearer " + token },
+          body: JSON.stringify({ image: { media_type: image.mediaType, data: image.data }, multi: true }),
+        });
+        // Erros de conta/servidor interrompem tudo (repetir não resolveria)
+        if (res.status === 401) { setStatus("Sua sessão expirou. Entre novamente na seção nuvem.", "err"); renderIfAny(added); return; }
+        if (res.status === 429) { setStatus("Limite de leituras atingido — aguarde um minuto e tente as imagens restantes.", "err"); renderIfAny(added); return; }
+        if (res.status === 501) { setStatus("A leitura por IA ainda não foi ativada no servidor.", "err"); return; }
+        if (!res.ok) {
+          let detail = "";
+          try { const j = await res.json(); detail = j?.detail || j?.error || ""; } catch { /* sem corpo */ }
+          falhas.push(`imagem ${i + 1} falhou (${res.status}${detail ? " — " + detail : ""})`);
+          continue;
+        }
+        const data = await res.json();
+        if (data.error === "refusal") { falhas.push(`imagem ${i + 1} não pôde ser lida`); continue; }
+        const novos = normalize(data.itens);
+        if (!novos.length) { falhas.push(`imagem ${i + 1} sem itens reconhecidos`); continue; }
+        rows.push(...novos);
+        added += novos.length;
+      } catch (e) {
+        console.error(e);
+        setStatus("Sem conexão — tente de novo.", "err");
+        renderIfAny(added);
         return;
       }
-      const data = await res.json();
-      if (data.error === "refusal") { setStatus("A IA não conseguiu ler esta imagem. Tente uma foto mais nítida.", "err"); return; }
-      rows = normalize(data.itens);
-      setStatus(rows.length ? `${rows.length} itens reconhecidos — confira e ajuste abaixo ✔` : "", rows.length ? "ok" : "err");
-      if (!rows.length) setStatus("Não reconheci itens nessa imagem. Tente uma foto mais nítida.", "err");
-      renderPreview();
-    } catch (e) {
-      console.error(e);
-      setStatus("Sem conexão — tente de novo.", "err");
     }
+    if (added) {
+      statusAcumulo(added);
+      if (falhas.length) setStatus(`${added} itens lidos, mas: ${falhas.join("; ")}. Confira abaixo ✔`, "ok");
+    } else {
+      setStatus(falhas.length ? `Nada reconhecido: ${falhas.join("; ")}.` : "Não reconheci itens nessas imagens. Tente fotos mais nítidas.", "err");
+    }
+    renderPreview();
   }
 
-  /* ---------- Origem: ARQUIVO EXCEL (local, offline) ---------- */
-  async function fromFile(file) {
-    if (file.size > 30 * 1024 * 1024) { setStatus("Arquivo grande demais (máx. 30 MB).", "err"); return; }
-    setStatus("Lendo a planilha…");
-    try {
-      const txs = await Importer.readForBatch(file);
-      rows = normalize(txs.map((t) => ({ date: t.date, desc: t.desc, amount: t.amount, type: t.type })));
-      if (!rows.length) { setStatus("Não reconheci transações nessa planilha. Confira o formato (Data, Descrição, Valor).", "err"); renderPreview(); return; }
-      setStatus(`${rows.length} itens lidos — confira e ajuste abaixo ✔`, "ok");
-      renderPreview();
-    } catch (e) {
-      console.error(e);
-      setStatus("Não consegui ler esse arquivo. Confira se é um .xlsx válido.", "err");
+  function renderIfAny(added) {
+    if (added) renderPreview();
+  }
+
+  /* ---------- Origem: ARQUIVO(s) EXCEL (local, offline) ---------- */
+  async function fromFiles(files) {
+    let added = 0;
+    let falhas = [];
+    for (const file of files) {
+      if (file.size > 30 * 1024 * 1024) { falhas.push(`"${file.name}" grande demais (máx. 30 MB)`); continue; }
+      setStatus(files.length > 1 ? `Lendo "${file.name}"…` : "Lendo a planilha…");
+      try {
+        const txs = await Importer.readForBatch(file);
+        const novos = normalize(txs.map((t) => ({ date: t.date, desc: t.desc, amount: t.amount, type: t.type })));
+        if (!novos.length) { falhas.push(`"${file.name}" sem transações reconhecidas`); continue; }
+        rows.push(...novos);
+        added += novos.length;
+      } catch (e) {
+        console.error(e);
+        falhas.push(`"${file.name}" inválido`);
+      }
     }
+    if (added) {
+      statusAcumulo(added);
+      if (falhas.length) setStatus(`${added} itens lidos, mas: ${falhas.join("; ")}. Confira abaixo ✔`, "ok");
+    } else {
+      setStatus(falhas.length ? `Nada lido: ${falhas.join("; ")}.` : "Não reconheci transações. Confira o formato (Data, Descrição, Valor).", "err");
+    }
+    renderPreview();
   }
 
   function save() {
@@ -165,8 +207,16 @@ const Batch = (() => {
   document.addEventListener("DOMContentLoaded", () => {
     $("#btn-batch-photo").addEventListener("click", () => $("#batch-input-photo").click());
     $("#btn-batch-file").addEventListener("click", () => $("#batch-input-file").click());
-    $("#batch-input-photo").addEventListener("change", (ev) => { const f = ev.target.files[0]; if (f) fromPhoto(f); ev.target.value = ""; });
-    $("#batch-input-file").addEventListener("change", (ev) => { const f = ev.target.files[0]; if (f) fromFile(f); ev.target.value = ""; });
+    $("#batch-input-photo").addEventListener("change", (ev) => {
+      const fs = Array.from(ev.target.files || []).slice(0, 15);
+      if (fs.length) fromPhotos(fs);
+      ev.target.value = "";
+    });
+    $("#batch-input-file").addEventListener("change", (ev) => {
+      const fs = Array.from(ev.target.files || []).slice(0, 15);
+      if (fs.length) fromFiles(fs);
+      ev.target.value = "";
+    });
     $("#btn-batch-cancel").addEventListener("click", close);
     $("#btn-batch-save").addEventListener("click", save);
 

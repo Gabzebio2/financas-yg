@@ -10,7 +10,7 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260713">
+<link rel="stylesheet" href="css/style.css?v=20260713c">
 </head>
 <body>
 
@@ -371,7 +371,7 @@
       <div class="meta-modal-icon batch-icon">📄</div>
       <div>
         <h3 id="batch-title">Importar em lote</h3>
-        <p class="meta-modal-sub">Mande uma foto de fatura/planilha ou um Excel — o app lê tudo e você confirma</p>
+        <p class="meta-modal-sub">Mande uma ou várias fotos de fatura/planilha (ou Excel) — o app lê tudo e você dá um só OK</p>
       </div>
     </div>
 
@@ -380,8 +380,8 @@
       <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-file">📊 Arquivo Excel</button>
       <span class="receipt-status hidden" id="batch-status"></span>
     </div>
-    <input type="file" id="batch-input-photo" accept="image/*" hidden>
-    <input type="file" id="batch-input-file" accept=".xlsx,.xls" hidden>
+    <input type="file" id="batch-input-photo" accept="image/*" multiple hidden>
+    <input type="file" id="batch-input-file" accept=".xlsx,.xls" multiple hidden>
 
     <div id="batch-preview" class="hidden">
       <div class="batch-controls">
@@ -425,10 +425,10 @@
       <label class="span2">Nome da meta
         <input type="text" id="meta-name" placeholder="Ex: Reserva de emergência">
       </label>
-      <label id="meta-f-target">Valor da meta (R$)
+      <label class="span2" id="meta-f-target">Valor da meta (R$)
         <input type="text" id="meta-target" inputmode="decimal" placeholder="0,00">
       </label>
-      <label id="meta-f-saved">Já guardado (R$)
+      <label class="span2" id="meta-f-saved">Já guardado (R$)
         <input type="text" id="meta-saved" inputmode="decimal" placeholder="0,00">
       </label>
       <label class="span2 hidden" id="meta-f-cat">Categoria do amigo/reembolso
@@ -489,11 +489,11 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20260713"></script>
-<script src="js/importer.js?v=20260713"></script>
-<script src="js/dashboard.js?v=20260713"></script>
-<script src="js/receipt.js?v=20260713"></script>
-<script src="js/batch.js?v=20260713"></script>
-<script src="js/cloud.js?v=20260713"></script>
+<script src="js/app.js?v=20260713c"></script>
+<script src="js/importer.js?v=20260713c"></script>
+<script src="js/dashboard.js?v=20260713c"></script>
+<script src="js/receipt.js?v=20260713c"></script>
+<script src="js/batch.js?v=20260713c"></script>
+<script src="js/cloud.js?v=20260713c"></script>
 </body>
 </html>
