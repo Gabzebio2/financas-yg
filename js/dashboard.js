@@ -37,14 +37,51 @@ const Dashboard = (() => {
     sort = { key: "date", dir: -1 };
     rowLimit = 100;
     selectedTx.clear();
+    undoStack.length = 0;
+    updateUndoBtn();
     $("#tx-search").value = "";
     $("#filter-mode").value = "month";
     showScreen("screen-dash");
     renderAll();
   }
 
+  // Guarda o estado ANTES de cada alteração (para o botão Desfazer).
+  // Lê o que está salvo agora (estado antigo) e empilha, depois grava o novo.
+  const undoStack = [];
+  const UNDO_MAX = 25;
   function saveCur() {
+    if (ds) {
+      const prev = localStorage.getItem("fyg:ds:" + ds.id);
+      if (prev) {
+        undoStack.push(prev);
+        if (undoStack.length > UNDO_MAX) undoStack.shift();
+      }
+    }
     Store.saveDataset(ds);
+    updateUndoBtn();
+  }
+
+  function updateUndoBtn() {
+    const btn = $("#btn-undo");
+    if (btn) btn.classList.toggle("hidden", undoStack.length === 0);
+  }
+
+  function undo() {
+    const snap = undoStack.pop();
+    if (!snap) { toast("Nada para desfazer."); updateUndoBtn(); return; }
+    let prev;
+    try { prev = JSON.parse(snap); } catch { toast("Não consegui desfazer 😕"); return; }
+    ds = prev;
+    Store.saveDataset(ds);   // persiste, atualiza índice e sincroniza na nuvem
+    selectedTx.clear();
+    // não navega pra um mês inexistente após reverter
+    const months = allMonths();
+    if (fil.mode === "month" && fil.month && !months.includes(fil.month) && months.length) {
+      fil.month = months[months.length - 1];
+    }
+    renderAll();
+    updateUndoBtn();
+    toast("Última alteração desfeita ↩");
   }
 
   /* ---------- Filtros ---------- */
@@ -1220,6 +1257,19 @@ const Dashboard = (() => {
     };
     $("#ds-name").addEventListener("click", renameDs);
     $("#btn-rename-ds").addEventListener("click", renameDs);
+
+    // Desfazer última alteração
+    $("#btn-undo").addEventListener("click", undo);
+    document.addEventListener("keydown", (ev) => {
+      // Ctrl/Cmd+Z no painel, fora de campos de texto (lá o desfazer é do navegador)
+      if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && (ev.key === "z" || ev.key === "Z")) {
+        const el = document.activeElement;
+        const editando = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
+        const noPainel = !$("#screen-dash").classList.contains("hidden");
+        const modalAberto = $$(".modal-backdrop").some((m) => !m.classList.contains("hidden"));
+        if (noPainel && !editando && !modalAberto) { ev.preventDefault(); undo(); }
+      }
+    });
 
     // Modal de transação
     $("#btn-add-tx").addEventListener("click", () => openTxModal(null));

@@ -146,6 +146,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 24px 20px 60px; }
 
 /* ===== Painel ===== */
 .dash-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; flex-wrap: wrap; }
+.dash-header-btns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ds-name-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .ds-name-wrap h1 { font-size: 22px; margin: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-name-input { font-size: 20px; font-weight: 700; font-family: inherit; border: 1px solid var(--primary); border-radius: 8px; padding: 4px 10px; }
