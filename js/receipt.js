@@ -181,6 +181,7 @@ Extraia os dados da operação. Regras:
         }),
       });
       if (res.status === 401) { setStatus("Sua sessão expirou. Entre novamente na seção nuvem.", "err"); return; }
+      if (res.status === 503) { setStatus("A IA está sobrecarregada agora (pico de uso do Google). Aguarde alguns segundos e clique de novo.", "err"); return; }
       if (res.status === 429) { setStatus("Muitas leituras em sequência — aguarde um minuto e tente de novo.", "err"); return; }
       if (res.status === 501) { setStatus("A leitura por IA ainda não foi ativada no servidor (falta configurar a chave na Vercel).", "err"); return; }
       if (!res.ok) {

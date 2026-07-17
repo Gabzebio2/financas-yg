@@ -15,7 +15,9 @@
 const SUPABASE_URL = "https://mhgagjhwsjjjwwvopjgu.supabase.co";
 const SUPABASE_ANON = "sb_publishable_fB3B_MW3VgJBcJpUbN1wvg_1Glbr2r5"; // pública por design
 // Tenta em ordem; se o Google aposentar um modelo, o próximo assume sozinho
-const MODELS_GEMINI = ["gemini-3.5-flash", "gemini-flash-latest"];
+// Vários modelos: se um estiver aposentado ou sobrecarregado, o próximo assume.
+// O "-lite" costuma ter mais folga na cota gratuita em picos de demanda.
+const MODELS_GEMINI = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"];
 const MODEL_ANTHROPIC = "claude-haiku-4-5";
 
 const PROMPT_SINGLE = `Analise a imagem: é um comprovante financeiro brasileiro (Pix, transferência bancária ou compra).
@@ -104,23 +106,53 @@ function parseGeminiResponse(data) {
   return { text };
 }
 
-async function callGemini(key, image, categories, multi) {
-  let fail = null;
-  for (const model of MODELS_GEMINI) {
-    let r = await geminiFetch(key, model, image, categories, multi, true);
-    if (r.status === 400) {
-      const r2 = await geminiFetch(key, model, image, categories, multi, false);
-      if (r2.ok || r2.status !== 400) r = r2;
-    }
-    if (r.ok) return parseGeminiResponse(await r.json());
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    let detail = "";
-    try { detail = (await r.json())?.error?.message || ""; } catch { /* corpo não-JSON */ }
-    console.error("gemini_falhou", model, r.status, detail);
-    fail = { httpStatus: r.status, detail: String(detail).slice(0, 300) };
-    const modeloIndisponivel = r.status === 404 ||
-      /no longer available|not found|not supported|deprecated|does not exist/i.test(detail);
-    if (!modeloIndisponivel) break;
+// Sobrecarga temporária do provedor (não é erro de chave/cota nem de entrada)
+function isOverloaded(status, detail) {
+  const d = (detail || "").toLowerCase();
+  if (status === 503) return true;
+  return /high demand|overloaded|model is overloaded|try again later|temporarily unavailable|unavailable/.test(d);
+}
+
+async function tryGeminiOnce(key, model, image, categories, multi) {
+  let r = await geminiFetch(key, model, image, categories, multi, true);
+  if (r.status === 400) {
+    // Alguns projetos rejeitam o responseSchema — tenta em modo JSON simples
+    const r2 = await geminiFetch(key, model, image, categories, multi, false);
+    if (r2.ok || r2.status !== 400) r = r2;
+  }
+  if (r.ok) return { ok: true, data: await r.json() };
+  let detail = "";
+  try { detail = (await r.json())?.error?.message || ""; } catch { /* corpo não-JSON */ }
+  return { ok: false, status: r.status, detail: String(detail).slice(0, 300) };
+}
+
+async function callGemini(key, image, categories, multi) {
+  let fail = null, sawOverload = false;
+
+  for (const model of MODELS_GEMINI) {
+    const res = await tryGeminiOnce(key, model, image, categories, multi);
+    if (res.ok) return parseGeminiResponse(res.data);
+
+    console.error("gemini_falhou", model, res.status, res.detail);
+    fail = { httpStatus: res.status, detail: res.detail };
+    if (isOverloaded(res.status, res.detail)) sawOverload = true;
+
+    // Modelo aposentado OU sobrecarga -> tenta o próximo modelo já em seguida.
+    // Erro de chave/cota/entrada -> não adianta trocar de modelo, para aqui.
+    const retirado = res.status === 404 ||
+      /no longer available|not found|not supported|deprecated|does not exist/i.test(res.detail);
+    if (!retirado && !isOverloaded(res.status, res.detail)) break;
+  }
+
+  // Todos os modelos sobrecarregados: uma última tentativa após pausa curta
+  // (picos de demanda costumam durar poucos segundos).
+  if (sawOverload) {
+    await sleep(1500);
+    const res = await tryGeminiOnce(key, MODELS_GEMINI[0], image, categories, multi);
+    if (res.ok) return parseGeminiResponse(res.data);
+    fail = { httpStatus: res.status, detail: res.detail, overloaded: true };
   }
   return fail;
 }
@@ -213,6 +245,7 @@ module.exports = async (req, res) => {
       ? await callGemini(gKey, image, categories, multi)
       : await callAnthropic(aKey, image, categories, multi);
 
+    if (out.overloaded) { res.status(503).json({ error: "sobrecarga_ia" }); return; }
     if (out.httpStatus === 429) { res.status(429).json({ error: "limite_ia" }); return; }
     if (out.httpStatus) { res.status(502).json({ error: "ia_falhou", status: out.httpStatus, detail: out.detail || "" }); return; }
     if (out.refusal) { res.status(200).json({ error: "refusal" }); return; }

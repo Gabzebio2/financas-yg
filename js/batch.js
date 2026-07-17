@@ -131,6 +131,7 @@ const Batch = (() => {
         });
         // Erros de conta/servidor interrompem tudo (repetir não resolveria)
         if (res.status === 401) { setStatus("Sua sessão expirou. Entre novamente na seção nuvem.", "err"); renderIfAny(added); return; }
+        if (res.status === 503) { setStatus("A IA está sobrecarregada agora (pico de uso do Google). Aguarde alguns segundos e clique de novo.", "err"); renderIfAny(added); return; }
         if (res.status === 429) { setStatus("Limite de leituras atingido — aguarde um minuto e tente as imagens restantes.", "err"); renderIfAny(added); return; }
         if (res.status === 501) { setStatus("A leitura por IA ainda não foi ativada no servidor.", "err"); return; }
         if (!res.ok) {
