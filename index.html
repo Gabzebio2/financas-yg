@@ -10,7 +10,7 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260717">
+<link rel="stylesheet" href="css/style.css?v=20260717b">
 </head>
 <body>
 
@@ -235,10 +235,19 @@
         <h3>Transações <span id="tx-count" class="badge"></span></h3>
         <input type="search" id="tx-search" placeholder="Buscar por descrição, categoria, cartão...">
       </div>
+      <div class="bulk-bar hidden" id="tx-bulk-bar">
+        <span id="tx-bulk-count">0 selecionadas</span>
+        <div class="bulk-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-bulk-edit">✎ Editar selecionadas</button>
+          <button class="btn btn-danger btn-sm" id="btn-bulk-delete">🗑 Excluir selecionadas</button>
+          <button class="btn-link" id="btn-bulk-clear">limpar seleção</button>
+        </div>
+      </div>
       <div class="table-wrap">
         <table id="tx-table">
           <thead>
             <tr>
+              <th class="tx-check-col"><input type="checkbox" id="tx-sel-all" title="Selecionar todas as visíveis"></th>
               <th data-sort="date">Data <span class="sort-ind"></span></th>
               <th data-sort="desc">Descrição <span class="sort-ind"></span></th>
               <th data-sort="category">Categoria <span class="sort-ind"></span></th>
@@ -411,6 +420,32 @@
   </div>
 </div>
 
+<!-- Edição em lote de transações selecionadas -->
+<div class="modal-backdrop hidden" id="modal-bulk-edit">
+  <div class="modal modal-sm">
+    <h3 id="bulk-edit-title">Editar selecionadas</h3>
+    <p class="hint">Marque o que quer alterar. Só os campos marcados serão aplicados a todas as selecionadas.</p>
+    <div class="form-grid">
+      <label class="span2 checkline"><input type="checkbox" id="bulk-cat-on"> Mudar categoria</label>
+      <label class="span2" id="bulk-cat-wrap">
+        <select id="bulk-cat"></select>
+      </label>
+      <label class="span2 checkline"><input type="checkbox" id="bulk-acc-on"> Mudar cartão/conta</label>
+      <label class="span2" id="bulk-acc-wrap">
+        <select id="bulk-acc"></select>
+      </label>
+      <label class="span2 checkline"><input type="checkbox" id="bulk-type-on"> Mudar tipo</label>
+      <label class="span2" id="bulk-type-wrap">
+        <select id="bulk-type"><option value="despesa">Despesa</option><option value="receita">Receita</option></select>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="btn-bulk-edit-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="btn-bulk-edit-save">Aplicar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Nova / editar meta -->
 <div class="modal-backdrop hidden" id="modal-meta">
   <div class="modal modal-sm modal-meta">
@@ -493,11 +528,11 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20260717"></script>
-<script src="js/importer.js?v=20260717"></script>
-<script src="js/dashboard.js?v=20260717"></script>
-<script src="js/receipt.js?v=20260717"></script>
-<script src="js/batch.js?v=20260717"></script>
-<script src="js/cloud.js?v=20260717"></script>
+<script src="js/app.js?v=20260717b"></script>
+<script src="js/importer.js?v=20260717b"></script>
+<script src="js/dashboard.js?v=20260717b"></script>
+<script src="js/receipt.js?v=20260717b"></script>
+<script src="js/batch.js?v=20260717b"></script>
+<script src="js/cloud.js?v=20260717b"></script>
 </body>
 </html>

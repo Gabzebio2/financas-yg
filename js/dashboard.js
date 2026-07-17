@@ -10,6 +10,7 @@ const Dashboard = (() => {
   let editingId = null;
   let editingLimitId = null;
   let pendingParcTx = null; // transação parcelada aguardando escolha de exclusão
+  const selectedTx = new Set(); // ids das transações marcadas (seleção em lote)
 
   const FIXA_MESES = 12; // quantos meses uma despesa fixa gera
 
@@ -35,6 +36,7 @@ const Dashboard = (() => {
     };
     sort = { key: "date", dir: -1 };
     rowLimit = 100;
+    selectedTx.clear();
     $("#tx-search").value = "";
     $("#filter-mode").value = "month";
     showScreen("screen-dash");
@@ -480,10 +482,15 @@ const Dashboard = (() => {
       const empty = s.linked && s.target <= 0;
       const icon = s.done ? "🏆" : (s.linked ? "🤝" : "🎯");
       const catLine = s.linked ? `<span class="limit-cats-line">· cobrança de ${escapeHtml(m.category)}</span>` : "";
-      const addBtn = (s.done || empty) ? "" :
-        `<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-add">${s.linked ? "＋ Registrar pagamento" : "＋ Adicionar valor"}</button>`;
+      // Meta de amigo: lançar gasto (dívida) + registrar pagamento + importar.
+      // Meta de poupança: só o aporte.
+      const chargeBtn = s.linked
+        ? `<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-charge" title="Adicionar manualmente um gasto que ${escapeHtml(m.name)} deve">＋ Gasto</button>`
+        : "";
+      const addBtn = (s.done && s.linked) ? "" :
+        `<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-add">${s.linked ? "＋ Pagamento" : "＋ Adicionar valor"}</button>`;
       const importBtn = s.linked
-        ? `<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-import" title="Ler foto de fatura/planilha ou Excel e lançar todos os gastos nesta categoria">📄 Importar gastos</button>`
+        ? `<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-import" title="Ler foto de fatura/planilha ou Excel e lançar todos os gastos nesta categoria">📄 Importar</button>`
         : "";
       const leftNum = s.linked
         ? `<span>Pagaram: <b class="${s.done ? "limit-ok-txt" : ""}">${fmtBRL(s.saved)}</b> de ${fmtBRL(s.target)} <span class="limit-pct">(${s.pct.toFixed(0)}%)</span></span>`
@@ -498,6 +505,7 @@ const Dashboard = (() => {
         <div class="limit-row-top">
           <div class="limit-name">${icon} ${escapeHtml(m.name)}${catLine}${s.done ? '<span class="meta-done-chip">Finalizada ✔</span>' : ""}</div>
           <div class="limit-actions">
+            ${chargeBtn}
             ${importBtn}
             ${addBtn}
             <button class="btn-icon" data-action="edit-meta" title="Editar meta">✎</button>
@@ -567,8 +575,8 @@ const Dashboard = (() => {
     $("#meta-cat").innerHTML = ds.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("");
     const linked = !!(m && m.category);
     if (linked && ds.categories.some((c) => stripAccents(c.name) === stripAccents(m.category))) $("#meta-cat").value = m.category;
-    $("#meta-target").value = (m && !m.category) ? m.target.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
-    $("#meta-saved").value = (m && !m.category) ? m.saved.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
+    $("#meta-target").value = (m && !m.category) ? fmtMoneyInput(m.target) : "";
+    $("#meta-saved").value = (m && !m.category) ? fmtMoneyInput(m.saved) : "";
     // Ao editar, o tipo é fixo (não converte poupança <-> cobrança)
     $("#meta-mode-toggle").classList.toggle("hidden", !!m);
     setMetaMode(linked ? "linked" : "manual");
@@ -610,34 +618,39 @@ const Dashboard = (() => {
     renderMetas();
   }
 
+  // Meta vinculada: registrar PAGAMENTO recebido = receita na categoria do amigo
+  function addPaymentToMeta(m) {
+    ensureCat(ds, m.category);
+    openTxModal(null, {
+      title: `Pagamento de ${m.name}`,
+      type: "receita",
+      category: m.category,
+      desc: "Pagamento — " + m.name,
+    });
+  }
+
+  // Meta vinculada: lançar um GASTO manual (dívida) = despesa na categoria do amigo
+  function addChargeToMeta(m) {
+    ensureCat(ds, m.category);
+    openTxModal(null, {
+      title: `Gasto de ${m.name}`,
+      type: "despesa",
+      category: m.category,
+    });
+  }
+
+  // Meta de poupança: aporte manual (só atualiza o guardado, sem virar transação)
   function addToMeta(m) {
-    // Meta vinculada: registrar pagamento = criar uma RECEITA na categoria
-    // (abate a fatura de verdade e enche a barra sozinho).
-    if (m.category) {
-      askName(`Quanto ${m.name} te pagou agora? (R$)`, "", (v) => {
-        const n = parseMoney(v);
-        if (n == null || n <= 0) { toast("Valor inválido — use algo como 150,00 💰"); return; }
-        ensureCat(ds, m.category);
-        ds.transactions.push({
-          id: uid(), date: todayISO(), desc: "Pagamento — " + m.name,
-          category: m.category, account: "", type: "receita",
-          amount: Math.round(n * 100) / 100, installment: null, totalValue: null,
-        });
-        saveCur();
-        renderAll();
-        toast(metaStats(m).done ? `🎉 ${m.name} quitou tudo!` : `Pagamento de ${fmtBRL(n)} registrado ✔`);
-      });
-      return;
-    }
-    askName(`Quanto adicionar em "${m.name}"? (R$)`, "", (v) => {
+    if (m.category) { addPaymentToMeta(m); return; }
+    askName(`Quanto adicionar em "${m.name}"?`, "", (v) => {
       const n = parseMoney(v);
-      if (n == null || n <= 0) { toast("Valor inválido — use algo como 150,00 💰"); return; }
+      if (n == null || n <= 0) { toast("Valor inválido — use algo como R$ 150,00 💰"); return; }
       m.saved = Math.round((m.saved + n) * 100) / 100;
       saveCur();
       renderMetas();
       if (m.saved >= m.target - 0.004) toast("🎉 Parabéns! Meta \"" + m.name + "\" alcançada!");
       else toast(`${fmtBRL(n)} adicionados à meta ✔`);
-    });
+    }, { money: true });
   }
 
   /* ---------- Modal de limite ---------- */
@@ -647,7 +660,7 @@ const Dashboard = (() => {
     const v = L ? versionFor(L, refMonth()) : null; // valores vigentes no mês em vista
     $("#modal-limit-title").textContent = L ? "Editar limite" : "Novo limite";
     $("#limit-name").value = L ? L.name : "";
-    $("#limit-amount").value = v ? v.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
+    $("#limit-amount").value = v ? fmtMoneyInput(v.amount) : "";
     $("#limit-cats").innerHTML = ds.categories.map((c) => {
       const checked = v && v.categories.some((x) => stripAccents(x) === stripAccents(c.name));
       return `<label><input type="checkbox" value="${escapeHtml(c.name)}" ${checked ? "checked" : ""}>
@@ -737,13 +750,17 @@ const Dashboard = (() => {
 
     const tbody = $("#tx-tbody");
     if (!list.length) {
-      tbody.innerHTML = `<tr><td colspan="7" class="empty-table">Nenhuma transação no filtro atual.<br>Clique em <b>＋ Nova transação</b> para adicionar.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-table">Nenhuma transação no filtro atual.<br>Clique em <b>＋ Nova transação</b> para adicionar.</td></tr>`;
       $("#btn-more-rows").classList.add("hidden");
+      updateBulkBar();
       return;
     }
     const visible = list.slice(0, rowLimit);
-    tbody.innerHTML = visible.map((t) => `
-      <tr data-id="${escapeHtml(t.id)}">
+    tbody.innerHTML = visible.map((t) => {
+      const sel = selectedTx.has(t.id);
+      return `
+      <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}">
+        <td class="tx-check-col"><input type="checkbox" class="tx-sel" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
         <td style="white-space:nowrap">${fmtDate(t.date)}</td>
         <td>${escapeHtml(t.desc)}</td>
         <td><span class="cat-chip" style="background:${catColor(ds, t.category)}">${escapeHtml(t.category)}</span></td>
@@ -754,9 +771,56 @@ const Dashboard = (() => {
           <button class="btn-icon" data-action="edit" title="Editar">✎</button>
           <button class="btn-icon" data-action="delete" title="Excluir">🗑</button>
         </td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
     $("#btn-more-rows").classList.toggle("hidden", list.length <= rowLimit);
     $("#btn-more-rows").textContent = `Mostrar mais (${list.length - visible.length} restantes)`;
+
+    // "selecionar todas" reflete o estado das visíveis
+    const allSel = visible.length > 0 && visible.every((t) => selectedTx.has(t.id));
+    $("#tx-sel-all").checked = allSel;
+    updateBulkBar();
+  }
+
+  // Mostra/atualiza a barra de ações em lote conforme a seleção
+  function updateBulkBar() {
+    // Remove da seleção ids que não existem mais
+    const existing = new Set(ds ? ds.transactions.map((t) => t.id) : []);
+    [...selectedTx].forEach((id) => { if (!existing.has(id)) selectedTx.delete(id); });
+    const n = selectedTx.size;
+    $("#tx-bulk-bar").classList.toggle("hidden", n === 0);
+    if (n) $("#tx-bulk-count").textContent = `${n} selecionada${n === 1 ? "" : "s"}`;
+  }
+
+  function openBulkEdit() {
+    if (!selectedTx.size) return;
+    $("#bulk-edit-title").textContent = `Editar ${selectedTx.size} selecionada${selectedTx.size === 1 ? "" : "s"}`;
+    $("#bulk-cat").innerHTML = ds.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("");
+    const accounts = Array.from(new Set([...CARDS, ...ds.transactions.map((t) => t.account).filter(Boolean)]));
+    $("#bulk-acc").innerHTML = accounts.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("")
+      + `<option value="">(sem cartão)</option>`;
+    ["bulk-cat", "bulk-acc", "bulk-type"].forEach((f) => { $(`#${f}-on`).checked = false; $(`#${f}-wrap`).classList.add("hidden"); });
+    $("#modal-bulk-edit").classList.remove("hidden");
+  }
+
+  function saveBulkEdit() {
+    const changes = {};
+    if ($("#bulk-cat-on").checked) changes.category = $("#bulk-cat").value;
+    if ($("#bulk-acc-on").checked) changes.account = $("#bulk-acc").value;
+    if ($("#bulk-type-on").checked) changes.type = $("#bulk-type").value;
+    if (!Object.keys(changes).length) { toast("Marque ao menos um campo para alterar ✎"); return; }
+    if (changes.category) ensureCat(ds, changes.category);
+    let n = 0;
+    ds.transactions.forEach((t) => {
+      if (!selectedTx.has(t.id)) return;
+      Object.assign(t, changes);
+      n++;
+    });
+    $("#modal-bulk-edit").classList.add("hidden");
+    selectedTx.clear();
+    saveCur();
+    renderAll();
+    toast(`${n} transaç${n === 1 ? "ão atualizada" : "ões atualizadas"} ✔`);
   }
 
   /* ---------- Exclusão inteligente (fixas e parceladas) ---------- */
@@ -834,14 +898,17 @@ const Dashboard = (() => {
     $("#tx-account-other").value = "";
   }
 
-  function openTxModal(txId) {
+  // opts (opcional, só para nova transação): { category, type, desc, title }
+  // usado pelos atalhos de "Adicionar gasto/pagamento" nas metas de amigo.
+  function openTxModal(txId, opts) {
+    opts = opts || {};
     editingId = txId;
     const isEdit = !!txId;
     const tx = isEdit ? ds.transactions.find((t) => t.id === txId) : null;
     if (isEdit && !tx) return;
 
-    $("#modal-tx-title").textContent = isEdit ? "Editar transação" : "Nova transação";
-    txType = isEdit ? tx.type : "despesa";
+    $("#modal-tx-title").textContent = isEdit ? "Editar transação" : (opts.title || "Nova transação");
+    txType = isEdit ? tx.type : (opts.type === "receita" ? "receita" : "despesa");
     updateTypeToggle();
 
     // Reseta o leitor de comprovante
@@ -850,8 +917,8 @@ const Dashboard = (() => {
     rs.textContent = "";
     rs.className = "receipt-status hidden";
 
-    $("#tx-amount").value = isEdit ? tx.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) : "";
-    $("#tx-desc").value = isEdit ? tx.desc : "";
+    $("#tx-amount").value = isEdit ? fmtMoneyInput(tx.amount) : "";
+    $("#tx-desc").value = isEdit ? tx.desc : (opts.desc || "");
     populateAccountSelect(isEdit ? (tx.account || "") : null);
 
     // Data padrão: hoje se estiver no mês filtrado, senão o dia 1º do mês filtrado
@@ -863,7 +930,9 @@ const Dashboard = (() => {
     const catSel = $("#tx-cat");
     catSel.innerHTML = ds.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("") +
       `<option value="__new__">➕ Nova categoria…</option>`;
-    catSel.value = isEdit && ds.categories.some((c) => c.name === tx.category) ? tx.category : (ds.categories[0]?.name || "__new__");
+    catSel.value = isEdit && ds.categories.some((c) => c.name === tx.category) ? tx.category
+      : (opts.category && ds.categories.some((c) => c.name === opts.category) ? opts.category
+        : (ds.categories[0]?.name || "__new__"));
     $("#tx-newcat-wrap").classList.add("hidden");
     $("#tx-newcat").value = "";
 
@@ -986,7 +1055,7 @@ const Dashboard = (() => {
     txType = d.direcao === "recebido" ? "receita" : "despesa";
     updateTypeToggle();
     if (typeof d.valor === "number" && d.valor > 0) {
-      $("#tx-amount").value = d.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+      $("#tx-amount").value = fmtMoneyInput(d.valor);
       $("#tx-amount").dispatchEvent(new Event("input"));
     }
     if (typeof d.data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.data)) $("#tx-date").value = d.data;
@@ -1011,6 +1080,9 @@ const Dashboard = (() => {
 
   /* ---------- Eventos ---------- */
   document.addEventListener("DOMContentLoaded", () => {
+    // Máscara de moeda (R$ 10,25) em todos os campos fixos de valor
+    ["#tx-amount", "#meta-target", "#meta-saved", "#limit-amount"].forEach((s) => attachMoneyMask($(s)));
+
     // Filtro de período
     $("#filter-mode").addEventListener("change", (ev) => {
       fil.mode = ev.target.value;
@@ -1073,8 +1145,51 @@ const Dashboard = (() => {
       else if (action === "edit") openTxModal(tr.dataset.id);
     });
     $("#tx-tbody").addEventListener("dblclick", (ev) => {
+      if (ev.target.classList.contains("tx-sel")) return;
       const tr = ev.target.closest("tr[data-id]");
       if (tr) openTxModal(tr.dataset.id);
+    });
+
+    // Seleção em lote: caixinha por linha
+    $("#tx-tbody").addEventListener("change", (ev) => {
+      if (!ev.target.classList.contains("tx-sel")) return;
+      const id = ev.target.dataset.id;
+      if (ev.target.checked) selectedTx.add(id); else selectedTx.delete(id);
+      ev.target.closest("tr")?.classList.toggle("tx-selected", ev.target.checked);
+      // atualiza "selecionar todas" e a barra sem re-renderizar a tabela toda
+      const visibleIds = $$("#tx-tbody .tx-sel").map((c) => c.dataset.id);
+      $("#tx-sel-all").checked = visibleIds.length > 0 && visibleIds.every((v) => selectedTx.has(v));
+      updateBulkBar();
+    });
+    // "selecionar todas as visíveis"
+    $("#tx-sel-all").addEventListener("change", (ev) => {
+      const on = ev.target.checked;
+      $$("#tx-tbody .tx-sel").forEach((c) => {
+        c.checked = on;
+        if (on) selectedTx.add(c.dataset.id); else selectedTx.delete(c.dataset.id);
+        c.closest("tr")?.classList.toggle("tx-selected", on);
+      });
+      updateBulkBar();
+    });
+    // Ações em lote
+    $("#btn-bulk-clear").addEventListener("click", () => { selectedTx.clear(); renderTable(); });
+    $("#btn-bulk-delete").addEventListener("click", () => {
+      const ids = [...selectedTx];
+      if (!ids.length) return;
+      askConfirm("Excluir selecionadas?", `${ids.length} transaç${ids.length === 1 ? "ão" : "ões"} selecionada(s) serão removidas. Essa ação não pode ser desfeita.`, () => {
+        const set = new Set(ids);
+        ds.transactions = ds.transactions.filter((t) => !set.has(t.id));
+        selectedTx.clear();
+        saveCur();
+        renderAll();
+        toast(`${ids.length} transaç${ids.length === 1 ? "ão excluída" : "ões excluídas"}.`);
+      });
+    });
+    $("#btn-bulk-edit").addEventListener("click", openBulkEdit);
+    $("#btn-bulk-edit-cancel").addEventListener("click", () => $("#modal-bulk-edit").classList.add("hidden"));
+    $("#btn-bulk-edit-save").addEventListener("click", saveBulkEdit);
+    ["bulk-cat", "bulk-acc", "bulk-type"].forEach((f) => {
+      $(`#${f}-on`).addEventListener("change", (ev) => $(`#${f}-wrap`).classList.toggle("hidden", !ev.target.checked));
     });
 
     // Modal de exclusão de parcelada
@@ -1150,6 +1265,7 @@ const Dashboard = (() => {
         if (!m) return;
         const action = ev.target.closest("[data-action]")?.dataset.action;
         if (action === "meta-add") addToMeta(m);
+        else if (action === "meta-charge") addChargeToMeta(m);
         else if (action === "meta-import") Batch.open({ category: m.category, title: `Importar gastos de ${m.name}` });
         else if (action === "edit-meta") openMetaModal(m.id);
         else if (action === "delete-meta") {

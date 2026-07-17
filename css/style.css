@@ -376,6 +376,23 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .batch-check { width: 17px; height: 17px; }
 
 .import-target-name { font-size: 18px; font-weight: 700; color: var(--primary); margin-top: 4px; }
+
+/* ===== Seleção em lote na tabela ===== */
+.bulk-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--primary-soft); border-radius: 10px; padding: 8px 14px; margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.bulk-bar #tx-bulk-count { font-weight: 600; color: var(--primary); font-size: 14px; }
+.bulk-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tx-check-col { width: 34px; text-align: center; }
+#tx-table .tx-check-col input, .tx-sel { width: 16px; height: 16px; cursor: pointer; }
+#tx-tbody tr.tx-selected { background: var(--primary-soft) !important; }
+#modal-bulk-edit .form-grid label.checkline { margin-top: 2px; }
+#modal-bulk-edit select {
+  font-family: inherit; font-size: 14px; padding: 9px 12px; width: 100%;
+  border: 1px solid var(--border); border-radius: 10px; background: #fff;
+}
 .limit-cats {
   display: grid; grid-template-columns: 1fr 1fr; gap: 4px; max-height: 220px; overflow: auto;
   border: 1px solid var(--border); border-radius: 10px; padding: 8px;

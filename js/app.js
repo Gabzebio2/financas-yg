@@ -43,6 +43,27 @@ function fmtDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
+// Número -> texto de campo já em reais: 10.25 -> "R$ 10,25"
+function fmtMoneyInput(n) {
+  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// Máscara de moeda ao vivo: os dígitos digitados formam os centavos.
+// Digitar 1,0,2,5 mostra R$ 0,01 -> R$ 0,10 -> R$ 1,02 -> R$ 10,25.
+function maskMoneyEl(el) {
+  const digits = el.value.replace(/\D/g, "").slice(0, 13);
+  el.value = digits ? (parseInt(digits, 10) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "";
+}
+
+// Liga a máscara num input (idempotente). Retorna o próprio elemento.
+function attachMoneyMask(el) {
+  if (!el || el.dataset.moneyMask) return el;
+  el.dataset.moneyMask = "1";
+  el.setAttribute("inputmode", "decimal");
+  el.addEventListener("input", () => maskMoneyEl(el));
+  return el;
+}
+
 // 'YYYY-MM' -> 'set/2025'
 function fmtMonth(ym) {
   const [y, m] = ym.split("-");
@@ -202,9 +223,13 @@ function goHome() {
 
 /* ---------- Modal de nome (prompt) ---------- */
 let nameCallback = null;
-function askName(title, initial, cb) {
+function askName(title, initial, cb, opts) {
+  opts = opts || {};
   $("#modal-name-title").textContent = title;
   const input = $("#modal-name-input");
+  // Flag "money": o listener único (ver DOMContentLoaded) mascara em R$ só
+  // quando ligado — o mesmo input serve para renomear pastas (texto normal).
+  input.dataset.money = opts.money ? "1" : "";
   input.value = initial || "";
   nameCallback = cb;
   $("#modal-name").classList.remove("hidden");
@@ -542,6 +567,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (cb) cb(name);
   });
   $("#btn-name-cancel").addEventListener("click", closeNameModal);
+  // Máscara de moeda condicional: só quando o prompt está em modo dinheiro
+  $("#modal-name-input").addEventListener("input", (ev) => {
+    if (ev.target.dataset.money === "1") maskMoneyEl(ev.target);
+  });
   $("#modal-name-input").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") $("#btn-name-ok").click();
     if (ev.key === "Escape") closeNameModal();

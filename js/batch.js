@@ -59,7 +59,7 @@ const Batch = (() => {
         <td><input type="checkbox" class="batch-check" data-i="${i}" ${r.on ? "checked" : ""}></td>
         <td><input type="date" data-f="date" data-i="${i}" value="${escapeHtml(r.date)}"></td>
         <td><input type="text" data-f="desc" data-i="${i}" value="${escapeHtml(r.desc)}"></td>
-        <td class="num"><input type="text" class="batch-val" data-f="amount" data-i="${i}" value="${r.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}"></td>
+        <td class="num"><input type="text" class="batch-val" data-f="amount" data-i="${i}" value="${fmtMoneyInput(r.amount)}"></td>
         <td>
           <select data-f="type" data-i="${i}">
             <option value="despesa" ${r.type === "despesa" ? "selected" : ""}>Despesa</option>
@@ -240,7 +240,7 @@ const Batch = (() => {
       const f = el.dataset.f;
       if (f === "date") rows[i].date = el.value;
       else if (f === "desc") rows[i].desc = el.value;
-      else if (f === "amount") rows[i].amount = Math.abs(parseMoney(el.value) || 0);
+      else if (f === "amount") { maskMoneyEl(el); rows[i].amount = Math.abs(parseMoney(el.value) || 0); }
       else if (f === "type") rows[i].type = el.value === "receita" ? "receita" : "despesa";
       if (f === "amount" || f === "type") updateCount();
     });
