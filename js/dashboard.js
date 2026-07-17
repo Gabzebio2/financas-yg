@@ -1226,5 +1226,38 @@ const Dashboard = (() => {
 
   function currentDatasetName() { return ds ? ds.name : ""; }
 
-  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, currentDatasetName };
+  // Injeta na pasta atual transações JÁ no formato interno (vindas do
+  // importador completo: preservam categoria, cartão, parcela, recorrente,
+  // valor total e o vínculo entre parcelas). IDs são regerados.
+  function appendImported(txs) {
+    if (!ds || !Array.isArray(txs)) return 0;
+    const groupMap = new Map();
+    let n = 0;
+    txs.forEach((t) => {
+      if (!t || !t.date || !(Math.abs(t.amount) > 0)) return;
+      const category = (t.category || "Outros").trim() || "Outros";
+      ensureCat(ds, category);
+      let groupId = null;
+      if (t.groupId) {
+        if (!groupMap.has(t.groupId)) groupMap.set(t.groupId, uid());
+        groupId = groupMap.get(t.groupId);
+      }
+      ds.transactions.push({
+        id: uid(), groupId, fixed: t.fixed === true,
+        date: t.date,
+        desc: (t.desc || "").trim() || "(sem descrição)",
+        category,
+        account: (t.account || "").trim(),
+        type: t.type === "receita" ? "receita" : "despesa",
+        amount: Math.abs(t.amount),
+        installment: t.installment || null,
+        totalValue: t.totalValue != null ? Math.abs(t.totalValue) : null,
+      });
+      n++;
+    });
+    if (n) { saveCur(); renderAll(); }
+    return n;
+  }
+
+  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName };
 })();

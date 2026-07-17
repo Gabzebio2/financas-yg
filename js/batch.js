@@ -213,9 +213,19 @@ const Batch = (() => {
       ev.target.value = "";
     });
     $("#batch-input-file").addEventListener("change", (ev) => {
-      const fs = Array.from(ev.target.files || []).slice(0, 15);
-      if (fs.length) fromFiles(fs);
+      const fs = Array.from(ev.target.files || []);
       ev.target.value = "";
+      if (!fs.length) return;
+      // Contexto geral (Nova transação → Fatura/lista): usa o motor COMPLETO
+      // da importação inicial (categoria/cartão/parcela/recorrente por linha),
+      // adicionando à pasta atual. Contexto de amigo (categoria pré-definida):
+      // mantém o modo simples que joga tudo na categoria do amigo.
+      if (!presetCat) {
+        close();
+        Importer.handleFile(fs[0], { addToCurrent: true });
+        return;
+      }
+      fromFiles(fs.slice(0, 15));
     });
     $("#btn-batch-cancel").addEventListener("click", close);
     $("#btn-batch-save").addEventListener("click", save);

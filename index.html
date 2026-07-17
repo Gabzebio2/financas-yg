@@ -10,7 +10,7 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260713c">
+<link rel="stylesheet" href="css/style.css?v=20260713d">
 </head>
 <body>
 
@@ -123,9 +123,13 @@
 
     <!-- Pré-visualização -->
     <div id="preview-box" class="hidden">
-      <div class="card">
+      <div class="card" id="import-name-card">
         <label class="field-label" for="import-name">Nome desta pasta de dados</label>
         <input type="text" id="import-name" class="input-lg" placeholder="Ex: Cartões 2025">
+      </div>
+      <div class="card hidden" id="import-target-card">
+        <span class="field-label">Adicionando à pasta atual</span>
+        <div class="import-target-name" id="import-target-name">—</div>
       </div>
       <div class="summary-grid" id="import-stats"></div>
       <div class="card">
@@ -489,11 +493,11 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20260713c"></script>
-<script src="js/importer.js?v=20260713c"></script>
-<script src="js/dashboard.js?v=20260713c"></script>
-<script src="js/receipt.js?v=20260713c"></script>
-<script src="js/batch.js?v=20260713c"></script>
-<script src="js/cloud.js?v=20260713c"></script>
+<script src="js/app.js?v=20260713d"></script>
+<script src="js/importer.js?v=20260713d"></script>
+<script src="js/dashboard.js?v=20260713d"></script>
+<script src="js/receipt.js?v=20260713d"></script>
+<script src="js/batch.js?v=20260713d"></script>
+<script src="js/cloud.js?v=20260713d"></script>
 </body>
 </html>

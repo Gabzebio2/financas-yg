@@ -310,7 +310,10 @@ const Importer = (() => {
   }
 
   /* ---------- Fluxo principal ---------- */
-  async function handleFile(file) {
+  let addToCurrent = false; // true = adicionar à pasta aberta, sem criar nova
+
+  async function handleFile(file, opts) {
+    addToCurrent = !!(opts && opts.addToCurrent);
     if (file.size > 30 * 1024 * 1024) { toast("Arquivo grande demais (máx. 30 MB)."); return; }
     try {
       const buf = await file.arrayBuffer();
@@ -341,7 +344,9 @@ const Importer = (() => {
     }
 
     const all = results.flatMap((r) => r.txs);
-    $("#import-title").textContent = `Importar: ${file.name}`;
+    $("#import-title").textContent = addToCurrent
+      ? `Adicionar à pasta "${Dashboard.currentDatasetName()}"`
+      : `Importar: ${file.name}`;
     showScreen("screen-import");
     if (all.length) showPreview(results);
     else showMapping();
@@ -367,6 +372,12 @@ const Importer = (() => {
     $("#map-box").classList.add("hidden");
     $("#preview-box").classList.remove("hidden");
     $("#import-name").value = fileName || "Minhas finanças";
+
+    // Modo "adicionar à pasta atual": esconde o nome, mostra a pasta destino
+    $("#import-name-card").classList.toggle("hidden", addToCurrent);
+    $("#import-target-card").classList.toggle("hidden", !addToCurrent);
+    if (addToCurrent) $("#import-target-name").textContent = Dashboard.currentDatasetName();
+    $("#btn-import-save").textContent = addToCurrent ? "➕ Adicionar à pasta atual" : "💾 Salvar e abrir painel";
 
     // Cartões de resumo
     const receitas = txs.filter((t) => t.type === "receita").reduce((s, t) => s + t.amount, 0);
@@ -408,6 +419,17 @@ const Importer = (() => {
 
   function savePending() {
     if (!pending || !pending.txs.length) return;
+
+    // Modo "adicionar à pasta atual": não cria pasta, injeta no dataset aberto
+    if (addToCurrent) {
+      const n = Dashboard.appendImported(pending.txs);
+      pending = null;
+      addToCurrent = false;
+      showScreen("screen-dash");
+      toast(`${n} transaç${n === 1 ? "ão adicionada" : "ões adicionadas"} à pasta atual ✔`);
+      return;
+    }
+
     const name = $("#import-name").value.trim() || fileName || "Minhas finanças";
     const now = new Date().toISOString();
     const ds = { id: uid(), name, createdAt: now, updatedAt: now, categories: [], transactions: pending.txs };
@@ -532,7 +554,11 @@ const Importer = (() => {
   /* ---------- Eventos ---------- */
   document.addEventListener("DOMContentLoaded", () => {
     $("#btn-import-save").addEventListener("click", savePending);
-    $("#btn-import-cancel").addEventListener("click", () => { pending = null; goHome(); });
+    $("#btn-import-cancel").addEventListener("click", () => {
+      pending = null;
+      if (addToCurrent) { addToCurrent = false; showScreen("screen-dash"); }
+      else goHome();
+    });
     $("#map-sheet").addEventListener("change", () => { populateHeaderRowSelect(); renderMapTable(); });
     $("#map-header-row").addEventListener("change", renderMapTable);
     $("#btn-apply-map").addEventListener("click", applyMapping);
