@@ -61,22 +61,24 @@ const Receipt = (() => {
     return {
       type: "object",
       additionalProperties: false,
-      required: ["valor", "data", "descricao", "instituicao", "categoria", "direcao"],
+      required: ["valor", "data", "descricao", "instituicao", "categoria", "direcao", "moeda"],
       properties: {
-        valor: { type: "number", description: "Valor da operação em reais" },
+        valor: { type: "number", description: "Valor da operação, na moeda mostrada" },
         data: { type: "string", description: "Data da operação em AAAA-MM-DD, ou string vazia se não visível" },
         descricao: { type: "string", description: "Descrição curta, ex: 'Pix para João Silva'" },
         instituicao: { type: "string", description: "Banco/app de ONDE SAIU o dinheiro (pagador), ou string vazia" },
         categoria: { type: "string", enum: categories },
         direcao: { type: "string", enum: ["enviado", "recebido"] },
+        moeda: { type: "string", enum: ["BRL", "CLP", "PYG", "USD"], description: "Moeda do valor" },
       },
     };
   }
 
   function buildPrompt() {
-    return `Analise a imagem: é um comprovante financeiro brasileiro (Pix, transferência bancária ou compra).
+    return `Analise a imagem: é um comprovante financeiro (Pix, transferência bancária ou compra), do Brasil, Chile, Paraguai ou em dólar.
 Extraia os dados da operação. Regras:
-- "valor": o valor principal da operação, em reais, como número (ex: 150.75).
+- "valor": o valor principal da operação, como número (ex: 150.75).
+- "moeda": a moeda mostrada no comprovante — "BRL" (Real, R$), "CLP" (peso chileno, $/CLP), "PYG" (guarani, ₲/Gs/Gs.) ou "USD" (dólar, US$/USD). Se houver dúvida entre $ de peso chileno e dólar, prefira o país do banco/comprovante.
 - "data": a data em que a operação foi feita, no formato AAAA-MM-DD. Use "" se não estiver visível.
 - "descricao": curta e útil, ex: "Pix para João Silva", "Transferência para Maria", "Compra em Mercado X".
 - "instituicao": o banco ou app de ONDE SAIU o dinheiro (lado do pagador), ex: Nubank, C6, PicPay, Inter, Wise. Use "" se não der para identificar.

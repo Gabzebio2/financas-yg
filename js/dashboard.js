@@ -13,14 +13,34 @@ const Dashboard = (() => {
   const selectedTx = new Set(); // ids das transações marcadas (seleção em lote)
 
   const FIXA_MESES = 12; // quantos meses uma despesa fixa gera
+  let ratesHooked = false; // registra o ouvinte de cotação uma única vez
+
+  /* ---------- Moeda de exibição ----------
+     Cada transação guarda a moeda em que foi lançada (t.currency). O painel
+     exibe tudo em ds.displayCurrency, convertendo pela cotação atual só quando
+     as moedas diferem (dispAmount). */
+  function dispCur() { return normCur(ds && ds.displayCurrency); }
+  function dispAmount(t) { return Rates.convert(t.amount, normCur(t.currency), dispCur()); }
+  function fmtD(v) { return fmtMoney(v, dispCur()); }
 
   /* ---------- Abertura ---------- */
   function open(id) {
     const loaded = Store.loadDataset(id);
     if (!loaded) { toast("Pasta não encontrada 😕"); goHome(); return; }
     ds = loaded;
+    // Migração para multi-moeda: pastas antigas eram 100% em Real
+    ds.displayCurrency = normCur(ds.displayCurrency);
+    ds.transactions.forEach((t) => { if (!t.currency) t.currency = "BRL"; });
     if (!Array.isArray(ds.limits)) ds.limits = [];
     if (!Array.isArray(ds.metas)) ds.metas = [];
+    // Cotação: carrega o cache e revalida; re-renderiza quando chegar cotação nova
+    Rates.load();
+    if (!ratesHooked) {
+      ratesHooked = true;
+      Rates.onUpdate(() => {
+        if (ds && !$("#screen-dash").classList.contains("hidden")) renderAll();
+      });
+    }
     // Migração: limites antigos ganham histórico de versões ("0000-00" = desde sempre)
     ds.limits.forEach((L) => {
       if (!Array.isArray(L.versions) || !L.versions.length) {
@@ -132,12 +152,38 @@ const Dashboard = (() => {
   function renderAll() {
     $("#ds-name").textContent = ds.name;
     renderPeriodControls();
+    renderCurrencyControl();
     renderCatFilter();
     renderSummary();
     renderLimits();
     renderMetas();
     renderCharts();
     renderTable();
+  }
+
+  // Seletor da moeda de exibição do painel + linha de status da cotação
+  function renderCurrencyControl() {
+    const sel = $("#disp-currency");
+    if (sel) {
+      sel.innerHTML = CURRENCY_CODES.map((c) =>
+        `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
+      sel.value = dispCur();
+    }
+    renderRatesHint();
+  }
+
+  function renderRatesHint() {
+    const el = $("#rates-hint");
+    if (!el) return;
+    const at = Rates.updatedAt();
+    if (!at) {
+      el.innerHTML = `buscando cotação… <button type="button" class="btn-link" id="btn-rates-refresh">tentar de novo</button>`;
+      return;
+    }
+    const d = new Date(at);
+    const p2 = (n) => String(n).padStart(2, "0");
+    const when = `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    el.innerHTML = `cotação de ${when} · <button type="button" class="btn-link" id="btn-rates-refresh">atualizar</button>`;
   }
 
   function renderPeriodControls() {
@@ -175,32 +221,32 @@ const Dashboard = (() => {
   /* ---------- Resumo ---------- */
   function renderSummary() {
     const txs = filteredTxs();
-    const receitas = txs.filter((t) => t.type === "receita").reduce((s, t) => s + t.amount, 0);
-    const despesas = txs.filter((t) => t.type === "despesa").reduce((s, t) => s + t.amount, 0);
+    const receitas = txs.filter((t) => t.type === "receita").reduce((s, t) => s + dispAmount(t), 0);
+    const despesas = txs.filter((t) => t.type === "despesa").reduce((s, t) => s + dispAmount(t), 0);
     const saldo = receitas - despesas;
 
     const p = periodRange();
     const acumulado = ds.transactions
       .filter((t) => inCats(t) && (!p || !p.to || t.date <= p.to))
-      .reduce((s, t) => s + (t.type === "receita" ? t.amount : -t.amount), 0);
+      .reduce((s, t) => s + (t.type === "receita" ? dispAmount(t) : -dispAmount(t)), 0);
 
     const label = fil.mode === "month" ? "do mês" : fil.mode === "range" ? "do período" : "total";
     $("#summary-cards").innerHTML = `
       <div class="sum-card">
         <span class="sum-label"><span class="sum-dot" style="background:var(--green)"></span>Receitas ${label}</span>
-        <span class="sum-value pos">${fmtBRL(receitas)}</span>
+        <span class="sum-value pos">${fmtD(receitas)}</span>
       </div>
       <div class="sum-card">
         <span class="sum-label"><span class="sum-dot" style="background:var(--red)"></span>Despesas ${label}</span>
-        <span class="sum-value neg">${fmtBRL(despesas)}</span>
+        <span class="sum-value neg">${fmtD(despesas)}</span>
       </div>
       <div class="sum-card">
         <span class="sum-label"><span class="sum-dot" style="background:var(--primary)"></span>Saldo ${label}</span>
-        <span class="sum-value ${saldo >= 0 ? "pos" : "neg"}">${fmtBRL(saldo)}</span>
+        <span class="sum-value ${saldo >= 0 ? "pos" : "neg"}">${fmtD(saldo)}</span>
       </div>
       <div class="sum-card">
         <span class="sum-label"><span class="sum-dot" style="background:#8b5cf6"></span>Saldo acumulado</span>
-        <span class="sum-value ${acumulado >= 0 ? "pos" : "neg"}">${fmtBRL(acumulado)}</span>
+        <span class="sum-value ${acumulado >= 0 ? "pos" : "neg"}">${fmtD(acumulado)}</span>
       </div>`;
   }
 
@@ -229,10 +275,13 @@ const Dashboard = (() => {
 
   const moneyTip = {
     callbacks: {
-      label: (ctx) => ` ${ctx.dataset.label || ctx.label}: ${fmtBRL(Math.abs(ctx.parsed.y ?? ctx.parsed.x ?? ctx.parsed))}`,
+      label: (ctx) => ` ${ctx.dataset.label || ctx.label}: ${fmtD(Math.abs(ctx.parsed.y ?? ctx.parsed.x ?? ctx.parsed))}`,
     },
   };
-  const moneyTicks = { callback: (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 }) };
+  // Ticks compactos (sem casas decimais) na moeda de exibição
+  const moneyTicks = {
+    callback: (v) => (Number(v) || 0).toLocaleString(CURRENCIES[dispCur()].locale, { style: "currency", currency: dispCur(), maximumFractionDigits: 0 }),
+  };
 
   // Meses exibidos nos gráficos de evolução
   function chartMonths() {
@@ -250,7 +299,7 @@ const Dashboard = (() => {
 
     /* 1. Rosca — gastos por categoria */
     const byCat = {};
-    txs.filter((t) => t.type === "despesa").forEach((t) => { byCat[t.category] = (byCat[t.category] || 0) + t.amount; });
+    txs.filter((t) => t.type === "despesa").forEach((t) => { byCat[t.category] = (byCat[t.category] || 0) + dispAmount(t); });
     const catEntries = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
     setEmpty("chart-cat", !catEntries.length, "Sem despesas no período selecionado");
     mkChart("chart-cat", {
@@ -267,7 +316,7 @@ const Dashboard = (() => {
         responsive: true, maintainAspectRatio: false, cutout: "62%",
         plugins: {
           legend: { position: "right" },
-          tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${fmtBRL(ctx.parsed)}` } },
+          tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${fmtD(ctx.parsed)}` } },
         },
       },
     });
@@ -277,8 +326,8 @@ const Dashboard = (() => {
     const recM = {}, despM = {};
     ds.transactions.filter(inCats).forEach((t) => {
       const ym = t.date.slice(0, 7);
-      if (t.type === "receita") recM[ym] = (recM[ym] || 0) + t.amount;
-      else despM[ym] = (despM[ym] || 0) + t.amount;
+      if (t.type === "receita") recM[ym] = (recM[ym] || 0) + dispAmount(t);
+      else despM[ym] = (despM[ym] || 0) + dispAmount(t);
     });
     const labels = months.map(fmtMonth);
     const recData = months.map((ym) => recM[ym] || 0);
@@ -333,7 +382,7 @@ const Dashboard = (() => {
     const byAcc = {};
     txs.filter((t) => t.type === "despesa").forEach((t) => {
       const a = t.account || "(sem cartão)";
-      byAcc[a] = (byAcc[a] || 0) + t.amount;
+      byAcc[a] = (byAcc[a] || 0) + dispAmount(t);
     });
     const accEntries = Object.entries(byAcc).sort((a, b) => b[1] - a[1]).slice(0, 8);
     setEmpty("chart-conta", !accEntries.length, "Sem despesas no período selecionado");
@@ -348,7 +397,7 @@ const Dashboard = (() => {
       },
       options: {
         indexAxis: "y", responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` ${fmtBRL(ctx.parsed.x)}` } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` ${fmtD(ctx.parsed.x)}` } } },
         scales: { x: { ticks: moneyTicks } },
       },
     });
@@ -378,11 +427,13 @@ const Dashboard = (() => {
       .filter((t) => t.type === "despesa" && inPeriod(t, p))
       .forEach((t) => {
         const k = stripAccents(t.category);
-        spentByCat[k] = (spentByCat[k] || 0) + t.amount;
+        spentByCat[k] = (spentByCat[k] || 0) + dispAmount(t);
       });
     return (ds.limits || []).map((base) => {
       const v = versionFor(base, ym);
-      const L = { ...base, amount: v.amount, categories: v.categories, since: v.from !== "0000-00" ? v.from : null };
+      // Valor do limite convertido da moeda em que foi definido para a do painel
+      const amount = Rates.convert(v.amount, normCur(base.currency), dispCur());
+      const L = { ...base, amount, categories: v.categories, since: v.from !== "0000-00" ? v.from : null };
       // O filtro de categorias do painel também filtra os limites:
       // grupos sem nenhuma categoria selecionada somem; nos demais, só somam as categorias visíveis
       const visibleCats = L.categories.filter((c) => !fil.cats || fil.cats.has(stripAccents(c)));
@@ -413,7 +464,7 @@ const Dashboard = (() => {
       const totSpent = groups.reduce((s, g) => s + g.spent, 0);
       const nOver = groups.filter((g) => g.remaining < 0).length;
       const pct = totLim > 0 ? Math.round((totSpent / totLim) * 100) : 0;
-      ov.innerHTML = `${fmtBRL(totSpent)} gastos de ${fmtBRL(totLim)} ${label} (${pct}%)` +
+      ov.innerHTML = `${fmtD(totSpent)} gastos de ${fmtD(totLim)} ${label} (${pct}%)` +
         (nOver
           ? ` · <span class="limit-over-txt">${nOver} limite(s) estourado(s) ⚠</span>`
           : ` · <span class="limit-ok-txt">tudo dentro do limite ✔</span>`);
@@ -443,10 +494,10 @@ const Dashboard = (() => {
           </div>
           <div class="progress"><div class="progress-bar ${barCls}" style="width:${Math.min(100, g.pct)}%"></div></div>
           <div class="limit-nums">
-            <span>Gasto: <b class="${over ? "limit-over-txt" : ""}">${fmtBRL(g.spent)}</b> de ${fmtBRL(g.amount)} <span class="limit-pct">(${g.pct.toFixed(0)}%)</span></span>
+            <span>Gasto: <b class="${over ? "limit-over-txt" : ""}">${fmtD(g.spent)}</b> de ${fmtD(g.amount)} <span class="limit-pct">(${g.pct.toFixed(0)}%)</span></span>
             <span>${over
-              ? `<span class="limit-over-txt">⚠ Ultrapassou em ${fmtBRL(-g.remaining)}</span>`
-              : `<span class="limit-ok-txt">Falta ${fmtBRL(g.remaining)}</span>`}</span>
+              ? `<span class="limit-over-txt">⚠ Ultrapassou em ${fmtD(-g.remaining)}</span>`
+              : `<span class="limit-ok-txt">Falta ${fmtD(g.remaining)}</span>`}</span>
           </div>
         </div>`;
       }).join("");
@@ -500,14 +551,18 @@ const Dashboard = (() => {
       let owed = 0, paid = 0;
       ds.transactions.forEach((t) => {
         if (stripAccents(t.category) !== k) return;
-        if (t.type === "despesa") owed += t.amount; else paid += t.amount;
+        if (t.type === "despesa") owed += dispAmount(t); else paid += dispAmount(t);
       });
       const target = Math.round(owed * 100) / 100;
       const saved = Math.round(paid * 100) / 100;
       return { linked: true, target, saved, done: target > 0 && saved >= target - 0.004, pct: target > 0 ? (saved / target) * 100 : 0 };
     }
-    const done = m.target > 0 && m.saved >= m.target - 0.004;
-    return { linked: false, target: m.target, saved: m.saved, done, pct: m.target > 0 ? (m.saved / m.target) * 100 : 0 };
+    // Meta de poupança: valores guardados na moeda em que foram digitados,
+    // convertidos para a moeda do painel só na exibição.
+    const target = Rates.convert(m.target, normCur(m.currency), dispCur());
+    const saved = Rates.convert(m.saved, normCur(m.currency), dispCur());
+    const done = target > 0 && saved >= target - 0.004;
+    return { linked: false, target, saved, done, pct: target > 0 ? (saved / target) * 100 : 0 };
   }
 
   function renderMetas() {
@@ -530,13 +585,13 @@ const Dashboard = (() => {
         ? `<button class="btn btn-ghost btn-sm meta-add-btn" data-action="meta-import" title="Ler foto de fatura/planilha ou Excel e lançar todos os gastos nesta categoria">📄 Importar</button>`
         : "";
       const leftNum = s.linked
-        ? `<span>Pagaram: <b class="${s.done ? "limit-ok-txt" : ""}">${fmtBRL(s.saved)}</b> de ${fmtBRL(s.target)} <span class="limit-pct">(${s.pct.toFixed(0)}%)</span></span>`
-        : `<span>Guardado: <b>${fmtBRL(s.saved)}</b> de ${fmtBRL(s.target)} <span class="limit-pct">(${s.pct.toFixed(0)}%)</span></span>`;
+        ? `<span>Pagaram: <b class="${s.done ? "limit-ok-txt" : ""}">${fmtD(s.saved)}</b> de ${fmtD(s.target)} <span class="limit-pct">(${s.pct.toFixed(0)}%)</span></span>`
+        : `<span>Guardado: <b>${fmtD(s.saved)}</b> de ${fmtD(s.target)} <span class="limit-pct">(${s.pct.toFixed(0)}%)</span></span>`;
       const rightNum = empty
         ? `<span class="limit-cats-line">Sem despesas nessa categoria ainda</span>`
         : s.done
           ? `<span class="limit-ok-txt">${s.linked ? "Quitou tudo! 🎉" : "Meta alcançada! 🎉"}</span>`
-          : `<span>${s.linked ? "Falta receber" : "Falta"} ${fmtBRL(Math.max(0, s.target - s.saved))}</span>`;
+          : `<span>${s.linked ? "Falta receber" : "Falta"} ${fmtD(Math.max(0, s.target - s.saved))}</span>`;
       return `
       <div class="limit-row meta-row ${s.done ? "meta-done" : ""}" data-id="${escapeHtml(m.id)}">
         <div class="limit-row-top">
@@ -584,13 +639,13 @@ const Dashboard = (() => {
       let owed = 0, paid = 0;
       ds.transactions.forEach((t) => {
         if (stripAccents(t.category) !== k) return;
-        if (t.type === "despesa") owed += t.amount; else paid += t.amount;
+        if (t.type === "despesa") owed += dispAmount(t); else paid += dispAmount(t);
       });
       if (owed <= 0) return empty("Ainda não há despesas nessa categoria");
       target = owed; saved = paid;
     } else {
-      target = parseMoney($("#meta-target").value);
-      saved = Math.abs(parseMoney($("#meta-saved").value) ?? 0);
+      target = moneyInputValue($("#meta-target"), dispCur());
+      saved = Math.abs(moneyInputValue($("#meta-saved"), dispCur()) ?? 0);
       if (target == null || target <= 0) return empty("Preencha os valores para ver o progresso");
     }
 
@@ -600,8 +655,8 @@ const Dashboard = (() => {
     bar.classList.toggle("done", done);
     pctEl.textContent = pct.toFixed(0) + "%";
     txt.textContent = metaMode === "linked"
-      ? (done ? "Quitou tudo! 🎉" : `Já pagaram ${fmtBRL(saved)} · falta ${fmtBRL(target - saved)}`)
-      : (done ? "Meta alcançada! 🎉" : `Faltam ${fmtBRL(target - saved)} para o objetivo`);
+      ? (done ? "Quitou tudo! 🎉" : `Já pagaram ${fmtD(saved)} · falta ${fmtD(target - saved)}`)
+      : (done ? "Meta alcançada! 🎉" : `Faltam ${fmtD(target - saved)} para o objetivo`);
   }
 
   function openMetaModal(id) {
@@ -612,8 +667,16 @@ const Dashboard = (() => {
     $("#meta-cat").innerHTML = ds.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("");
     const linked = !!(m && m.category);
     if (linked && ds.categories.some((c) => stripAccents(c.name) === stripAccents(m.category))) $("#meta-cat").value = m.category;
-    $("#meta-target").value = (m && !m.category) ? fmtMoneyInput(m.target) : "";
-    $("#meta-saved").value = (m && !m.category) ? fmtMoneyInput(m.saved) : "";
+    // Metas são editadas na moeda atual do painel; valores salvos em outra
+    // moeda são convertidos para prefill e recarimbados ao salvar.
+    const dc = dispCur();
+    const sym = CURRENCIES[dc].symbol;
+    $("#meta-f-target").childNodes[0].nodeValue = `Valor da meta (${sym}) `;
+    $("#meta-f-saved").childNodes[0].nodeValue = `Já guardado (${sym}) `;
+    setMoneyMaskCurrency($("#meta-target"), dc);
+    setMoneyMaskCurrency($("#meta-saved"), dc);
+    $("#meta-target").value = (m && !m.category) ? fmtMoneyInput(Rates.convert(m.target, normCur(m.currency), dc), dc) : "";
+    $("#meta-saved").value = (m && !m.category) ? fmtMoneyInput(Rates.convert(m.saved, normCur(m.currency), dc), dc) : "";
     // Ao editar, o tipo é fixo (não converte poupança <-> cobrança)
     $("#meta-mode-toggle").classList.toggle("hidden", !!m);
     setMetaMode(linked ? "linked" : "manual");
@@ -637,15 +700,16 @@ const Dashboard = (() => {
         toast("Meta de cobrança criada ✔");
       }
     } else {
-      const target = parseMoney($("#meta-target").value);
+      const dc = dispCur();
+      const target = moneyInputValue($("#meta-target"), dc);
       if (target == null || target <= 0) { toast("Informe o valor da meta 💰"); $("#meta-target").focus(); return; }
-      const saved = Math.abs(parseMoney($("#meta-saved").value) ?? 0);
+      const saved = Math.abs(moneyInputValue($("#meta-saved"), dc) ?? 0);
       if (editingMetaId) {
         const m = ds.metas.find((x) => x.id === editingMetaId);
-        if (m) { m.name = name; m.target = Math.abs(target); m.saved = saved; delete m.category; }
+        if (m) { m.name = name; m.target = Math.abs(target); m.saved = saved; m.currency = dc; delete m.category; }
         toast("Meta atualizada ✔");
       } else {
-        ds.metas.push({ id: uid(), name, target: Math.abs(target), saved });
+        ds.metas.push({ id: uid(), name, target: Math.abs(target), saved, currency: dc });
         toast("Meta criada ✔");
       }
     }
@@ -679,15 +743,18 @@ const Dashboard = (() => {
   // Meta de poupança: aporte manual (só atualiza o guardado, sem virar transação)
   function addToMeta(m) {
     if (m.category) { addPaymentToMeta(m); return; }
+    const dc = dispCur();
     askName(`Quanto adicionar em "${m.name}"?`, "", (v) => {
-      const n = parseMoney(v);
-      if (n == null || n <= 0) { toast("Valor inválido — use algo como R$ 150,00 💰"); return; }
-      m.saved = Math.round((m.saved + n) * 100) / 100;
+      const n = moneyStrValue(v, dc); // valor digitado na moeda do painel
+      if (n == null || n <= 0) { toast("Valor inválido 💰"); return; }
+      // Converte para a moeda em que a meta está guardada antes de somar
+      const add = Rates.convert(n, dc, normCur(m.currency));
+      m.saved = Math.round((m.saved + add) * 100) / 100;
       saveCur();
       renderMetas();
       if (m.saved >= m.target - 0.004) toast("🎉 Parabéns! Meta \"" + m.name + "\" alcançada!");
-      else toast(`${fmtBRL(n)} adicionados à meta ✔`);
-    }, { money: true });
+      else toast(`${fmtMoney(n, dc)} adicionados à meta ✔`);
+    }, { money: true, currency: dc });
   }
 
   /* ---------- Modal de limite ---------- */
@@ -697,7 +764,11 @@ const Dashboard = (() => {
     const v = L ? versionFor(L, refMonth()) : null; // valores vigentes no mês em vista
     $("#modal-limit-title").textContent = L ? "Editar limite" : "Novo limite";
     $("#limit-name").value = L ? L.name : "";
-    $("#limit-amount").value = v ? fmtMoneyInput(v.amount) : "";
+    // Limite editado na moeda atual do painel (valor convertido no prefill)
+    const dc = dispCur();
+    $("#limit-amount").parentElement.childNodes[0].nodeValue = `Valor do limite (${CURRENCIES[dc].symbol}) `;
+    setMoneyMaskCurrency($("#limit-amount"), dc);
+    $("#limit-amount").value = v ? fmtMoneyInput(Rates.convert(v.amount, normCur(L.currency), dc), dc) : "";
     $("#limit-cats").innerHTML = ds.categories.map((c) => {
       const checked = v && v.categories.some((x) => stripAccents(x) === stripAccents(c.name));
       return `<label><input type="checkbox" value="${escapeHtml(c.name)}" ${checked ? "checked" : ""}>
@@ -717,7 +788,8 @@ const Dashboard = (() => {
   }
 
   function saveLimitModal() {
-    const amount = parseMoney($("#limit-amount").value);
+    const dc = dispCur();
+    const amount = moneyInputValue($("#limit-amount"), dc);
     if (amount == null || amount <= 0) { toast("Informe o valor do limite 💰"); $("#limit-amount").focus(); return; }
     const cats = $$("#limit-cats input:checked").map((i) => i.value);
     if (!cats.length) { toast("Selecione pelo menos uma categoria 🏷️"); return; }
@@ -728,14 +800,17 @@ const Dashboard = (() => {
     if (editingLimitId) {
       const L = ds.limits.find((x) => x.id === editingLimitId);
       if (L) {
+        const oldCur = normCur(L.currency);
         L.name = name;
         const scopeFrom = fil.mode === "month" && fil.month &&
           $('input[name="limit-scope"]:checked')?.value === "from";
         if (scopeFrom) {
           // Deste mês em diante: meses anteriores mantêm as versões antigas
+          // (convertidas para a moeda atual, já que o limite passa a ser nela)
           const M = fil.month;
           L.versions = (L.versions || [])
             .filter((vv) => vv.from < M)
+            .map((vv) => ({ ...vv, amount: Rates.convert(vv.amount, oldCur, dc) }))
             .concat([{ from: M, ...newVals }])
             .sort((a, b) => a.from.localeCompare(b.from));
           toast(`Limite atualizado a partir de ${fmtMonthLong(M)} ✔`);
@@ -743,6 +818,7 @@ const Dashboard = (() => {
           L.versions = [{ from: "0000-00", ...newVals }];
           toast("Limite atualizado em todos os meses ✔");
         }
+        L.currency = dc;
         // Campos de topo refletem a versão mais recente (compatibilidade)
         const last = L.versions[L.versions.length - 1];
         L.amount = last.amount;
@@ -750,7 +826,7 @@ const Dashboard = (() => {
       }
     } else {
       ds.limits.push({
-        id: uid(), name, ...newVals,
+        id: uid(), name, ...newVals, currency: dc,
         versions: [{ from: "0000-00", ...newVals }],
       });
       toast("Limite criado ✔");
@@ -803,7 +879,7 @@ const Dashboard = (() => {
         <td><span class="cat-chip" style="background:${catColor(ds, t.category)}">${escapeHtml(t.category)}</span></td>
         <td>${escapeHtml(t.account || "—")}</td>
         <td>${t.installment ? escapeHtml(t.installment) : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
-        <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtBRL(t.amount)}</td>
+        <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtD(dispAmount(t))}</td>
         <td class="tx-actions">
           <button class="btn-icon" data-action="edit" title="Editar">✎</button>
           <button class="btn-icon" data-action="delete" title="Excluir">🗑</button>
@@ -832,25 +908,55 @@ const Dashboard = (() => {
   function openBulkEdit() {
     if (!selectedTx.size) return;
     $("#bulk-edit-title").textContent = `Editar ${selectedTx.size} selecionada${selectedTx.size === 1 ? "" : "s"}`;
-    $("#bulk-cat").innerHTML = ds.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("");
+
+    // Mapa de categorias: uma linha por categoria presente na seleção (com a
+    // contagem) e um destino próprio — assim dá para mexer só num grupo.
+    const counts = {};
+    ds.transactions.forEach((t) => { if (selectedTx.has(t.id)) counts[t.category] = (counts[t.category] || 0) + 1; });
+    const optsCat = ds.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("");
+    const groups = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    $("#bulk-cat-map").innerHTML = groups.map((cat) => `
+      <div class="bulk-map-row">
+        <span class="bulk-map-from"><span class="cat-chip" style="background:${catColor(ds, cat)}">${escapeHtml(cat)}</span><span class="bulk-map-count">${counts[cat]}</span></span>
+        <span class="bulk-map-arrow">→</span>
+        <select data-from="${escapeHtml(cat)}"><option value="">Manter</option>${optsCat}</select>
+      </div>`).join("");
+
+    // Moeda: destino único aplicado a todas as selecionadas (corrige detecção errada)
+    $("#bulk-cur").innerHTML = CURRENCY_CODES.map((c) =>
+      `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
+    $("#bulk-cur").value = dispCur();
+
     const accounts = Array.from(new Set([...CARDS, ...ds.transactions.map((t) => t.account).filter(Boolean)]));
     $("#bulk-acc").innerHTML = accounts.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("")
       + `<option value="">(sem cartão)</option>`;
-    ["bulk-cat", "bulk-acc", "bulk-type"].forEach((f) => { $(`#${f}-on`).checked = false; $(`#${f}-wrap`).classList.add("hidden"); });
+    ["bulk-cat", "bulk-cur", "bulk-acc", "bulk-type"].forEach((f) => { $(`#${f}-on`).checked = false; $(`#${f}-wrap`).classList.add("hidden"); });
     $("#modal-bulk-edit").classList.remove("hidden");
   }
 
   function saveBulkEdit() {
-    const changes = {};
-    if ($("#bulk-cat-on").checked) changes.category = $("#bulk-cat").value;
-    if ($("#bulk-acc-on").checked) changes.account = $("#bulk-acc").value;
-    if ($("#bulk-type-on").checked) changes.type = $("#bulk-type").value;
-    if (!Object.keys(changes).length) { toast("Marque ao menos um campo para alterar ✎"); return; }
-    if (changes.category) ensureCat(ds, changes.category);
+    // Remapeamento de categoria por grupo: { categoria atual → destino }
+    let catMap = null;
+    if ($("#bulk-cat-on").checked) {
+      catMap = {};
+      $$("#bulk-cat-map select").forEach((sel) => {
+        if (sel.value) { catMap[sel.dataset.from] = sel.value; ensureCat(ds, sel.value); }
+      });
+      if (!Object.keys(catMap).length) catMap = null; // nada além de "Manter"
+    }
+    // Campos aplicados igualmente a todas as selecionadas
+    const common = {};
+    if ($("#bulk-cur-on").checked) common.currency = normCur($("#bulk-cur").value);
+    if ($("#bulk-acc-on").checked) common.account = $("#bulk-acc").value;
+    if ($("#bulk-type-on").checked) common.type = $("#bulk-type").value;
+
+    if (!catMap && !Object.keys(common).length) { toast("Marque ao menos um campo para alterar ✎"); return; }
+
     let n = 0;
     ds.transactions.forEach((t) => {
       if (!selectedTx.has(t.id)) return;
-      Object.assign(t, changes);
+      if (catMap && catMap[t.category]) t.category = catMap[t.category];
+      Object.assign(t, common);
       n++;
     });
     $("#modal-bulk-edit").classList.add("hidden");
@@ -906,12 +1012,12 @@ const Dashboard = (() => {
 
     if (installmentTotal(tx) > 1) {
       pendingParcTx = tx;
-      $("#modal-del-parc-text").textContent = `"${tx.desc}" — parcela ${tx.installment} de ${fmtBRL(tx.amount)} em ${fmtDate(tx.date)}. O que você quer excluir?`;
+      $("#modal-del-parc-text").textContent = `"${tx.desc}" — parcela ${tx.installment} de ${fmtD(dispAmount(tx))} em ${fmtDate(tx.date)}. O que você quer excluir?`;
       $("#modal-del-parc").classList.remove("hidden");
       return;
     }
 
-    askConfirm("Excluir transação?", `"${tx.desc}" de ${fmtBRL(tx.amount)} será removida.`, () =>
+    askConfirm("Excluir transação?", `"${tx.desc}" de ${fmtD(dispAmount(tx))} será removida.`, () =>
       removeTxs([tx.id], "Transação excluída."));
   }
 
@@ -935,6 +1041,13 @@ const Dashboard = (() => {
     $("#tx-account-other").value = "";
   }
 
+  // Atualiza o rótulo (símbolo) e a máscara do campo de valor conforme a moeda
+  function applyTxCurrency(code) {
+    code = normCur(code);
+    $("#tx-amount-label").childNodes[0].nodeValue = `Valor (${CURRENCIES[code].symbol}) `;
+    setMoneyMaskCurrency($("#tx-amount"), code);
+  }
+
   // opts (opcional, só para nova transação): { category, type, desc, title }
   // usado pelos atalhos de "Adicionar gasto/pagamento" nas metas de amigo.
   function openTxModal(txId, opts) {
@@ -954,7 +1067,15 @@ const Dashboard = (() => {
     rs.textContent = "";
     rs.className = "receipt-status hidden";
 
-    $("#tx-amount").value = isEdit ? fmtMoneyInput(tx.amount) : "";
+    // Moeda: ao editar, a da transação; nova, a do painel (a IA pode trocar via comprovante)
+    const curSel = $("#tx-currency");
+    curSel.innerHTML = CURRENCY_CODES.map((c) =>
+      `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
+    const txCurCode = isEdit ? normCur(tx.currency) : dispCur();
+    curSel.value = txCurCode;
+    applyTxCurrency(txCurCode);
+
+    $("#tx-amount").value = isEdit ? fmtMoneyInput(tx.amount, txCurCode) : "";
     $("#tx-desc").value = isEdit ? tx.desc : (opts.desc || "");
     populateAccountSelect(isEdit ? (tx.account || "") : null);
 
@@ -995,14 +1116,16 @@ const Dashboard = (() => {
     const fixaOn = $("#tx-fixa").checked;
     $("#tx-nparc-wrap").classList.toggle("hidden", !parcOn);
     const hint = $("#tx-parc-hint");
-    const total = parseMoney($("#tx-amount").value);
+    const code = normCur($("#tx-currency").value);
+    const total = moneyInputValue($("#tx-amount"), code);
+    const f = (v) => fmtMoney(v, code);
 
     if (parcOn && total && total > 0) {
       const n = Math.max(2, Number($("#tx-nparc").value) || 2);
-      hint.textContent = `Será criado 1 lançamento por mês: ${n}x de ${fmtBRL(Math.round((total / n) * 100) / 100)} (valor total ${fmtBRL(total)}).`;
+      hint.textContent = `Será criado 1 lançamento por mês: ${n}x de ${f(Math.round((total / n) * 100) / 100)} (valor total ${f(total)}).`;
       hint.classList.remove("hidden");
     } else if (fixaOn) {
-      hint.textContent = `Serão criados ${FIXA_MESES} lançamentos mensais${total && total > 0 ? ` de ${fmtBRL(total)}` : ""}, a partir da data escolhida. Para encerrar, exclua a partir de um mês.`;
+      hint.textContent = `Serão criados ${FIXA_MESES} lançamentos mensais${total && total > 0 ? ` de ${f(total)}` : ""}, a partir da data escolhida. Para encerrar, exclua a partir de um mês.`;
       hint.classList.remove("hidden");
     } else {
       hint.classList.add("hidden");
@@ -1010,7 +1133,8 @@ const Dashboard = (() => {
   }
 
   function saveTxModal() {
-    const amount = parseMoney($("#tx-amount").value);
+    const currency = normCur($("#tx-currency").value);
+    const amount = moneyInputValue($("#tx-amount"), currency);
     if (amount == null || amount <= 0) { toast("Informe um valor válido 💰"); $("#tx-amount").focus(); return; }
     const date = $("#tx-date").value;
     if (!date) { toast("Informe a data 📅"); $("#tx-date").focus(); return; }
@@ -1038,7 +1162,7 @@ const Dashboard = (() => {
 
     if (editingId) {
       const tx = ds.transactions.find((t) => t.id === editingId);
-      if (tx) Object.assign(tx, { amount: Math.abs(amount), date, desc, category, account, type: txType });
+      if (tx) Object.assign(tx, { amount: Math.abs(amount), date, desc, category, account, type: txType, currency });
       toast("Transação atualizada ✔");
     } else if ($("#tx-parcelado").checked && Number($("#tx-nparc").value) > 1) {
       const n = Math.min(48, Math.max(2, Number($("#tx-nparc").value)));
@@ -1051,6 +1175,7 @@ const Dashboard = (() => {
           date: monthlyDate(i),
           desc, category, account, type: txType,
           amount: i === n - 1 ? last : per,
+          currency,
           installment: `${i + 1}/${n}`,
           totalValue: amount,
         });
@@ -1064,6 +1189,7 @@ const Dashboard = (() => {
           date: monthlyDate(i),
           desc, category, account, type: txType,
           amount: Math.abs(amount),
+          currency,
           installment: null, totalValue: null,
         });
       }
@@ -1071,7 +1197,7 @@ const Dashboard = (() => {
     } else {
       ds.transactions.push({
         id: uid(), date, desc, category, account, type: txType,
-        amount: Math.abs(amount), installment: null, totalValue: null,
+        amount: Math.abs(amount), currency, installment: null, totalValue: null,
       });
       toast("Transação adicionada ✔");
     }
@@ -1091,8 +1217,14 @@ const Dashboard = (() => {
     // Pix/transferência enviada = despesa (débito); comprovante de recebimento = receita
     txType = d.direcao === "recebido" ? "receita" : "despesa";
     updateTypeToggle();
+    // Moeda detectada pela IA — define antes de formatar o valor
+    if (d.moeda && CURRENCY_CODES.includes(d.moeda)) {
+      $("#tx-currency").value = d.moeda;
+      applyTxCurrency(d.moeda);
+    }
+    const code = normCur($("#tx-currency").value);
     if (typeof d.valor === "number" && d.valor > 0) {
-      $("#tx-amount").value = fmtMoneyInput(d.valor);
+      $("#tx-amount").value = fmtMoneyInput(d.valor, code);
       $("#tx-amount").dispatchEvent(new Event("input"));
     }
     if (typeof d.data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.data)) $("#tx-date").value = d.data;
@@ -1138,6 +1270,17 @@ const Dashboard = (() => {
     $("#month-next").addEventListener("click", () => stepMonth(1));
     $("#range-from").addEventListener("change", (ev) => { fil.from = ev.target.value; renderAll(); });
     $("#range-to").addEventListener("change", (ev) => { fil.to = ev.target.value; renderAll(); });
+
+    // Moeda de exibição do painel (preferência de visualização por pasta)
+    $("#disp-currency").addEventListener("change", (ev) => {
+      ds.displayCurrency = normCur(ev.target.value);
+      Store.saveDataset(ds); // preferência: não empilha no "Desfazer"
+      renderAll();
+    });
+    // Atualizar cotação manualmente (o botão é recriado a cada render → delegação)
+    $("#fg-moeda").addEventListener("click", (ev) => {
+      if (ev.target.closest("#btn-rates-refresh")) { Rates.refresh(); toast("Buscando a cotação mais recente… 🌐"); }
+    });
 
     // Filtro de categorias
     $("#cat-filter-btn").addEventListener("click", (ev) => {
@@ -1225,7 +1368,7 @@ const Dashboard = (() => {
     $("#btn-bulk-edit").addEventListener("click", openBulkEdit);
     $("#btn-bulk-edit-cancel").addEventListener("click", () => $("#modal-bulk-edit").classList.add("hidden"));
     $("#btn-bulk-edit-save").addEventListener("click", saveBulkEdit);
-    ["bulk-cat", "bulk-acc", "bulk-type"].forEach((f) => {
+    ["bulk-cat", "bulk-cur", "bulk-acc", "bulk-type"].forEach((f) => {
       $(`#${f}-on`).addEventListener("change", (ev) => $(`#${f}-wrap`).classList.toggle("hidden", !ev.target.checked));
     });
 
@@ -1287,6 +1430,8 @@ const Dashboard = (() => {
       $("#tx-account-other-wrap").classList.toggle("hidden", !other);
       if (other) $("#tx-account-other").focus();
     });
+    // Trocar a moeda da transação reformata o campo de valor e os avisos
+    $("#tx-currency").addEventListener("change", (ev) => { applyTxCurrency(ev.target.value); updateTxHints(); });
     // Parcelada e fixa são mutuamente exclusivas
     $("#tx-parcelado").addEventListener("change", () => {
       if ($("#tx-parcelado").checked) $("#tx-fixa").checked = false;
@@ -1382,7 +1527,7 @@ const Dashboard = (() => {
         category,
         account: (it.account || "").trim(),
         type: it.type === "receita" ? "receita" : "despesa",
-        amount, installment: null, totalValue: null,
+        amount, currency: normCur(it.currency), installment: null, totalValue: null,
       });
       n++;
     });
@@ -1416,6 +1561,7 @@ const Dashboard = (() => {
         account: (t.account || "").trim(),
         type: t.type === "receita" ? "receita" : "despesa",
         amount: Math.abs(t.amount),
+        currency: normCur(t.currency),
         installment: t.installment || null,
         totalValue: t.totalValue != null ? Math.abs(t.totalValue) : null,
       });

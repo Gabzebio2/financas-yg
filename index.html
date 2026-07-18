@@ -6,11 +6,11 @@
 <!-- Segurança: só scripts do próprio app e conexões aos serviços autorizados
      (api.anthropic.com p/ leitura de comprovante; *.supabase.co p/ nuvem).
      "file:" mantém o app funcionando quando aberto localmente com dois cliques. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://*.supabase.co wss://*.supabase.co; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://*.supabase.co wss://*.supabase.co https://open.er-api.com https://cdn.jsdelivr.net; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260717c">
+<link rel="stylesheet" href="css/style.css?v=20260718a">
 </head>
 <body>
 
@@ -131,6 +131,11 @@
         <span class="field-label">Adicionando à pasta atual</span>
         <div class="import-target-name" id="import-target-name">—</div>
       </div>
+      <div class="card" id="import-currency-card">
+        <label class="field-label" for="import-currency">Moeda destas transações</label>
+        <select id="import-currency" class="input-lg"></select>
+        <p class="hint" id="import-currency-hint"></p>
+      </div>
       <div class="summary-grid" id="import-stats"></div>
       <div class="card">
         <h3>Total por mês encontrado</h3>
@@ -185,6 +190,13 @@
         <div class="cat-filter" id="cat-filter">
           <button class="btn btn-ghost" id="cat-filter-btn">Todas as categorias ▾</button>
           <div class="cat-dropdown hidden" id="cat-dropdown"></div>
+        </div>
+      </div>
+      <div class="filter-group" id="fg-moeda">
+        <label class="field-label" for="disp-currency">Moeda do painel</label>
+        <div class="currency-controls">
+          <select id="disp-currency"></select>
+          <span class="rates-hint" id="rates-hint" title="Cotação usada para converter as moedas"></span>
         </div>
       </div>
     </div>
@@ -304,11 +316,14 @@
       <button data-type="receita">Receita</button>
     </div>
     <div class="form-grid">
-      <label>Valor (R$)
+      <label id="tx-amount-label">Valor
         <input type="text" id="tx-amount" inputmode="decimal" placeholder="0,00">
       </label>
       <label>Data
         <input type="date" id="tx-date">
+      </label>
+      <label>Moeda
+        <select id="tx-currency"></select>
       </label>
       <label class="span2">Descrição
         <input type="text" id="tx-desc" placeholder="Ex: Supermercado">
@@ -404,6 +419,9 @@
         <label>Categoria destino
           <select id="batch-cat"></select>
         </label>
+        <label>Moeda
+          <select id="batch-cur"></select>
+        </label>
         <span class="hint" id="batch-count"></span>
       </div>
       <div class="table-wrap batch-table-wrap">
@@ -427,18 +445,23 @@
 <div class="modal-backdrop hidden" id="modal-bulk-edit">
   <div class="modal modal-sm">
     <h3 id="bulk-edit-title">Editar selecionadas</h3>
-    <p class="hint">Marque o que quer alterar. Só os campos marcados serão aplicados a todas as selecionadas.</p>
+    <p class="hint">Marque o que quer alterar. Só os campos marcados serão aplicados às selecionadas.</p>
     <div class="form-grid">
       <label class="span2 checkline"><input type="checkbox" id="bulk-cat-on"> Mudar categoria</label>
-      <label class="span2" id="bulk-cat-wrap">
-        <select id="bulk-cat"></select>
+      <div class="span2 hidden" id="bulk-cat-wrap">
+        <p class="hint">Escolha o novo destino de cada categoria da seleção. Deixe em <b>Manter</b> para não mexer naquele grupo.</p>
+        <div id="bulk-cat-map" class="bulk-cat-map"></div>
+      </div>
+      <label class="span2 checkline"><input type="checkbox" id="bulk-cur-on"> Mudar moeda</label>
+      <label class="span2 hidden" id="bulk-cur-wrap">
+        <select id="bulk-cur"></select>
       </label>
       <label class="span2 checkline"><input type="checkbox" id="bulk-acc-on"> Mudar cartão/conta</label>
-      <label class="span2" id="bulk-acc-wrap">
+      <label class="span2 hidden" id="bulk-acc-wrap">
         <select id="bulk-acc"></select>
       </label>
       <label class="span2 checkline"><input type="checkbox" id="bulk-type-on"> Mudar tipo</label>
-      <label class="span2" id="bulk-type-wrap">
+      <label class="span2 hidden" id="bulk-type-wrap">
         <select id="bulk-type"><option value="despesa">Despesa</option><option value="receita">Receita</option></select>
       </label>
     </div>
@@ -531,11 +554,12 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20260717c"></script>
-<script src="js/importer.js?v=20260717c"></script>
-<script src="js/dashboard.js?v=20260717c"></script>
-<script src="js/receipt.js?v=20260717c"></script>
-<script src="js/batch.js?v=20260717c"></script>
+<script src="js/app.js?v=20260718a"></script>
+<script src="js/rates.js?v=20260718a"></script>
+<script src="js/importer.js?v=20260718a"></script>
+<script src="js/dashboard.js?v=20260718a"></script>
+<script src="js/receipt.js?v=20260718a"></script>
+<script src="js/batch.js?v=20260718a"></script>
 <script src="js/cloud.js?v=20260717c"></script>
 </body>
 </html>

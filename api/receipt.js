@@ -20,9 +20,10 @@ const SUPABASE_ANON = "sb_publishable_fB3B_MW3VgJBcJpUbN1wvg_1Glbr2r5"; // públ
 const MODELS_GEMINI = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"];
 const MODEL_ANTHROPIC = "claude-haiku-4-5";
 
-const PROMPT_SINGLE = `Analise a imagem: é um comprovante financeiro brasileiro (Pix, transferência bancária ou compra).
+const PROMPT_SINGLE = `Analise a imagem: é um comprovante financeiro (Pix, transferência bancária ou compra), do Brasil, Chile, Paraguai ou em dólar.
 Extraia os dados da operação e responda SOMENTE com JSON. Regras:
-- "valor": o valor principal da operação, em reais, como número (ex: 150.75).
+- "valor": o valor principal da operação, como número (ex: 150.75), na moeda mostrada.
+- "moeda": a moeda do valor — "BRL" (Real, R$), "CLP" (peso chileno, $/CLP), "PYG" (guarani, ₲/Gs) ou "USD" (dólar, US$/USD). Se o símbolo "$" for ambíguo entre peso chileno e dólar, decida pelo país do banco/comprovante.
 - "data": a data em que a operação foi feita, no formato AAAA-MM-DD. Use "" se não estiver visível.
 - "descricao": curta e útil, ex: "Pix para João Silva", "Compra em Mercado X".
 - "instituicao": o banco/app de ONDE SAIU o dinheiro (pagador). Use "" se não der para identificar.
@@ -34,7 +35,8 @@ Extraia TODAS as linhas de transação, uma por item, e responda SOMENTE com JSO
 Regras por item:
 - "data": data da compra no formato AAAA-MM-DD. Se só aparecer dia/mês (ex: 29/06), use o ano ${new Date().getFullYear()}.
 - "descricao": o nome do estabelecimento/local exatamente como aparece (ex: "CAPITAO BAR", "Supermercado").
-- "valor": o valor em REAIS (R$), como número positivo. Se houver dois valores (ex: R$ e PYG/dólar), use SEMPRE o valor em R$; ignore a moeda estrangeira.
+- "valor": o valor da linha, como número positivo. Se a linha mostrar dois valores em moedas diferentes, use o valor na MOEDA PRINCIPAL do documento (a mesma da maioria das linhas) e informe essa moeda.
+- "moeda": a moeda desse valor — "BRL" (R$), "CLP" (peso chileno $), "PYG" (guarani ₲/Gs) ou "USD" (US$). Em geral é a mesma para o documento inteiro.
 - "tipo": "receita" se a linha for um pagamento/estorno/valor negativo (ex: linha "Pagamento" ou valor com sinal de menos); senão "despesa".
 Ignore linhas de total, subtotal, saldo, cabeçalho e rodapé. Não invente itens que não estão na imagem.`;
 
@@ -48,10 +50,11 @@ function geminiSchema(multi, categories) {
         properties: {
           data: { type: "STRING", description: "Data AAAA-MM-DD" },
           descricao: { type: "STRING", description: "Estabelecimento/local" },
-          valor: { type: "NUMBER", description: "Valor em reais (positivo)" },
+          valor: { type: "NUMBER", description: "Valor (positivo) na moeda do documento" },
+          moeda: { type: "STRING", enum: ["BRL", "CLP", "PYG", "USD"], description: "Moeda do valor" },
           tipo: { type: "STRING", enum: ["despesa", "receita"] },
         },
-        required: ["data", "descricao", "valor", "tipo"],
+        required: ["data", "descricao", "valor", "moeda", "tipo"],
       },
     };
   }
@@ -59,13 +62,14 @@ function geminiSchema(multi, categories) {
     type: "OBJECT",
     properties: {
       valor: { type: "NUMBER" },
+      moeda: { type: "STRING", enum: ["BRL", "CLP", "PYG", "USD"] },
       data: { type: "STRING" },
       descricao: { type: "STRING" },
       instituicao: { type: "STRING" },
       categoria: { type: "STRING", enum: categories },
       direcao: { type: "STRING", enum: ["enviado", "recebido"] },
     },
-    required: ["valor", "data", "descricao", "instituicao", "categoria", "direcao"],
+    required: ["valor", "moeda", "data", "descricao", "instituicao", "categoria", "direcao"],
   };
 }
 
@@ -161,17 +165,19 @@ async function callGemini(key, image, categories, multi) {
 async function callAnthropic(key, image, categories, multi) {
   const itemSchema = {
     type: "object", additionalProperties: false,
-    required: ["data", "descricao", "valor", "tipo"],
+    required: ["data", "descricao", "valor", "moeda", "tipo"],
     properties: {
       data: { type: "string" }, descricao: { type: "string" },
-      valor: { type: "number" }, tipo: { type: "string", enum: ["despesa", "receita"] },
+      valor: { type: "number" }, moeda: { type: "string", enum: ["BRL", "CLP", "PYG", "USD"] },
+      tipo: { type: "string", enum: ["despesa", "receita"] },
     },
   };
   const singleSchema = {
     type: "object", additionalProperties: false,
-    required: ["valor", "data", "descricao", "instituicao", "categoria", "direcao"],
+    required: ["valor", "moeda", "data", "descricao", "instituicao", "categoria", "direcao"],
     properties: {
-      valor: { type: "number" }, data: { type: "string" }, descricao: { type: "string" },
+      valor: { type: "number" }, moeda: { type: "string", enum: ["BRL", "CLP", "PYG", "USD"] },
+      data: { type: "string" }, descricao: { type: "string" },
       instituicao: { type: "string" }, categoria: { type: "string", enum: categories },
       direcao: { type: "string", enum: ["enviado", "recebido"] },
     },

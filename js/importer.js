@@ -5,6 +5,7 @@ const Importer = (() => {
   let workbook = null;
   let fileName = "";
   let pending = null; // { txs, notes }
+  let importCurrency = "BRL"; // moeda escolhida para as transações importadas
 
   /* Meses em PT/ES (sem acento — comparação via stripAccents) */
   const MONTH_MAP = {
@@ -379,17 +380,50 @@ const Importer = (() => {
     if (addToCurrent) $("#import-target-name").textContent = Dashboard.currentDatasetName();
     $("#btn-import-save").textContent = addToCurrent ? "➕ Adicionar à pasta atual" : "💾 Salvar e abrir painel";
 
-    // Cartões de resumo
+    // Moeda: palpite pelos símbolos da planilha; o usuário confirma/ajusta
+    importCurrency = guessCurrency();
+    const csel = $("#import-currency");
+    csel.innerHTML = CURRENCY_CODES.map((c) =>
+      `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
+    csel.value = importCurrency;
+    $("#import-currency-hint").textContent =
+      `Detectei ${CURRENCIES[importCurrency].name}. Se não for essa, escolha a moeda certa — os valores serão lançados nela.`;
+
+    renderImportStats();
+  }
+
+  // Palpite da moeda da planilha pelos símbolos/códigos presentes nas células.
+  // "$" sozinho é ambíguo (peso chileno × dólar), então não decide por ele.
+  function guessCurrency() {
+    let txt = "";
+    for (const name of workbook.SheetNames) {
+      const rows = sheetRows(name);
+      for (let i = 0; i < Math.min(rows.length, 60); i++) txt += " " + (rows[i] || []).join(" ");
+      if (txt.length > 20000) break;
+    }
+    const t = stripAccents(txt);
+    if (/₲|guaran|\bpyg\b/.test(t)) return "PYG";
+    if (/\bclp\b|peso chilen/.test(t)) return "CLP";
+    if (/us\$|\busd\b|dolar|dollar/.test(t)) return "USD";
+    if (/r\$|\bbrl\b|reais|\breal\b/.test(t)) return "BRL";
+    return "BRL";
+  }
+
+  // Renderiza resumo/meses/amostra na moeda escolhida (importCurrency)
+  function renderImportStats() {
+    if (!pending) return;
+    const txs = pending.txs;
+    const f = (v) => fmtMoney(v, importCurrency);
+
     const receitas = txs.filter((t) => t.type === "receita").reduce((s, t) => s + t.amount, 0);
     const despesas = txs.filter((t) => t.type === "despesa").reduce((s, t) => s + t.amount, 0);
     const periodo = txs.length ? `${fmtDate(txs[0].date)} a ${fmtDate(txs[txs.length - 1].date)}` : "—";
     $("#import-stats").innerHTML = `
       <div class="sum-card"><span class="sum-label">Transações</span><span class="sum-value">${txs.length}</span></div>
       <div class="sum-card"><span class="sum-label">Período</span><span class="sum-value" style="font-size:15px">${periodo}</span></div>
-      <div class="sum-card"><span class="sum-label">Receitas</span><span class="sum-value pos">${fmtBRL(receitas)}</span></div>
-      <div class="sum-card"><span class="sum-label">Despesas</span><span class="sum-value neg">${fmtBRL(despesas)}</span></div>`;
+      <div class="sum-card"><span class="sum-label">Receitas</span><span class="sum-value pos">${f(receitas)}</span></div>
+      <div class="sum-card"><span class="sum-label">Despesas</span><span class="sum-value neg">${f(despesas)}</span></div>`;
 
-    // Totais por mês
     const byMonth = {};
     txs.forEach((t) => {
       const ym = t.date.slice(0, 7);
@@ -400,25 +434,27 @@ const Importer = (() => {
     $("#import-months").innerHTML =
       `<thead><tr><th>Mês</th><th class="num">Receitas</th><th class="num">Despesas</th></tr></thead><tbody>` +
       months.map((ym) => `<tr><td>${fmtMonthLong(ym)}</td>
-        <td class="num">${byMonth[ym].receita ? fmtBRL(byMonth[ym].receita) : "—"}</td>
-        <td class="num">${byMonth[ym].despesa ? fmtBRL(byMonth[ym].despesa) : "—"}</td></tr>`).join("") +
+        <td class="num">${byMonth[ym].receita ? f(byMonth[ym].receita) : "—"}</td>
+        <td class="num">${byMonth[ym].despesa ? f(byMonth[ym].despesa) : "—"}</td></tr>`).join("") +
       `</tbody>`;
 
-    // Amostra
     const sample = txs.slice(0, 15);
     $("#import-sample").innerHTML =
       `<thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Cartão/Conta</th><th>Parcela</th><th class="num">Valor</th></tr></thead><tbody>` +
       sample.map((t) => `<tr>
         <td>${fmtDate(t.date)}</td><td>${escapeHtml(t.desc)}</td><td>${escapeHtml(t.category)}</td>
         <td>${escapeHtml(t.account)}</td><td>${t.installment || "—"}</td>
-        <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtBRL(t.amount)}</td></tr>`).join("") +
+        <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${f(t.amount)}</td></tr>`).join("") +
       `</tbody>`;
 
-    $("#import-note").textContent = notes.join(" ");
+    $("#import-note").textContent = pending.notes.join(" ");
   }
 
   function savePending() {
     if (!pending || !pending.txs.length) return;
+
+    // Carimba a moeda escolhida em cada transação lida
+    pending.txs.forEach((t) => { t.currency = importCurrency; });
 
     // Modo "adicionar à pasta atual": não cria pasta, injeta no dataset aberto
     if (addToCurrent) {
@@ -432,7 +468,7 @@ const Importer = (() => {
 
     const name = $("#import-name").value.trim() || fileName || "Minhas finanças";
     const now = new Date().toISOString();
-    const ds = { id: uid(), name, createdAt: now, updatedAt: now, categories: [], transactions: pending.txs };
+    const ds = { id: uid(), name, createdAt: now, updatedAt: now, displayCurrency: importCurrency, categories: [], transactions: pending.txs };
     ds.transactions.forEach((t) => ensureCat(ds, t.category));
     ensureCat(ds, "Outros");
     Store.saveDataset(ds);
@@ -562,6 +598,7 @@ const Importer = (() => {
     $("#map-sheet").addEventListener("change", () => { populateHeaderRowSelect(); renderMapTable(); });
     $("#map-header-row").addEventListener("change", renderMapTable);
     $("#btn-apply-map").addEventListener("click", applyMapping);
+    $("#import-currency").addEventListener("change", (ev) => { importCurrency = normCur(ev.target.value); renderImportStats(); });
   });
 
   return { handleFile, readForBatch };

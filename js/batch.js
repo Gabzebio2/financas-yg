@@ -46,6 +46,12 @@ const Batch = (() => {
     if (escolhaAtual && cats.includes(escolhaAtual)) sel.value = escolhaAtual;
     else if (presetCat && cats.some((c) => stripAccents(c) === stripAccents(presetCat))) sel.value = presetCat;
 
+    // Moeda destino: padrão = a moeda mais comum detectada pela IA (preserva escolha)
+    const curSel = $("#batch-cur");
+    const curPrev = curSel.value;
+    curSel.innerHTML = CURRENCY_CODES.map((c) => `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
+    curSel.value = (curPrev && CURRENCY_CODES.includes(curPrev)) ? curPrev : majorityCurrency();
+
     if (!rows.length) {
       $("#batch-preview").classList.remove("hidden");
       $("#btn-batch-save").classList.add("hidden");
@@ -54,12 +60,13 @@ const Batch = (() => {
       return;
     }
 
+    const cur = normCur($("#batch-cur").value);
     $("#batch-tbody").innerHTML = rows.map((r, i) => `
       <tr data-i="${i}" class="${r.on ? "" : "batch-off"}">
         <td><input type="checkbox" class="batch-check" data-i="${i}" ${r.on ? "checked" : ""}></td>
         <td><input type="date" data-f="date" data-i="${i}" value="${escapeHtml(r.date)}"></td>
         <td><input type="text" data-f="desc" data-i="${i}" value="${escapeHtml(r.desc)}"></td>
-        <td class="num"><input type="text" class="batch-val" data-f="amount" data-i="${i}" value="${fmtMoneyInput(r.amount)}"></td>
+        <td class="num"><input type="text" class="batch-val" data-f="amount" data-i="${i}" data-cur="${cur}" value="${fmtMoneyInput(r.amount, cur)}"></td>
         <td>
           <select data-f="type" data-i="${i}">
             <option value="despesa" ${r.type === "despesa" ? "selected" : ""}>Despesa</option>
@@ -76,7 +83,8 @@ const Batch = (() => {
   function updateCount() {
     const on = rows.filter((r) => r.on);
     const total = on.reduce((s, r) => s + (r.type === "despesa" ? r.amount : -r.amount), 0);
-    $("#batch-count").textContent = `${on.length} de ${rows.length} selecionadas · líquido ${fmtBRL(total)}`;
+    const cur = normCur($("#batch-cur").value);
+    $("#batch-count").textContent = `${on.length} de ${rows.length} selecionadas · líquido ${fmtMoney(total, cur)}`;
     $("#btn-batch-save").textContent = `✅ Adicionar ${on.length} transaç${on.length === 1 ? "ão" : "ões"}`;
     $("#btn-batch-save").disabled = on.length === 0;
   }
@@ -91,8 +99,15 @@ const Batch = (() => {
       if (y < 2000 || y > cur + 1) date = cur + date.slice(4); // conserta ano implausível
       const amount = Math.abs(Number(it.amount ?? it.valor) || 0);
       const type = (it.type === "receita" || it.tipo === "receita") ? "receita" : "despesa";
-      return { date, desc: String(it.desc ?? it.descricao ?? "").slice(0, 120), amount, type, on: amount > 0 };
+      return { date, desc: String(it.desc ?? it.descricao ?? "").slice(0, 120), amount, type, currency: normCur(it.moeda ?? it.currency), on: amount > 0 };
     }).filter((r) => r.amount > 0);
+  }
+
+  // Moeda mais frequente entre as linhas lidas (default p/ o seletor)
+  function majorityCurrency() {
+    const count = {};
+    rows.forEach((r) => { const c = normCur(r.currency); count[c] = (count[c] || 0) + 1; });
+    return Object.keys(count).sort((a, b) => count[b] - count[a])[0] || "BRL";
   }
 
   // Mensagem de sucesso do acúmulo (menciona o total quando já havia itens)
@@ -195,8 +210,9 @@ const Batch = (() => {
 
   function save() {
     const category = $("#batch-cat").value;
+    const currency = normCur($("#batch-cur").value);
     const items = rows.filter((r) => r.on).map((r) => ({
-      date: r.date, desc: r.desc, amount: r.amount, type: r.type, category,
+      date: r.date, desc: r.desc, amount: r.amount, type: r.type, category, currency,
     }));
     if (!items.length) { toast("Selecione pelo menos um item ✔"); return; }
     const n = Dashboard.addBulk(items);
@@ -230,6 +246,8 @@ const Batch = (() => {
     });
     $("#btn-batch-cancel").addEventListener("click", close);
     $("#btn-batch-save").addEventListener("click", save);
+    // Trocar a moeda do lote reformata os valores das linhas e o total
+    $("#batch-cur").addEventListener("change", renderPreview);
 
     // Edição inline da lista
     const tbody = $("#batch-tbody");
@@ -240,7 +258,7 @@ const Batch = (() => {
       const f = el.dataset.f;
       if (f === "date") rows[i].date = el.value;
       else if (f === "desc") rows[i].desc = el.value;
-      else if (f === "amount") { maskMoneyEl(el); rows[i].amount = Math.abs(parseMoney(el.value) || 0); }
+      else if (f === "amount") { maskMoneyEl(el); rows[i].amount = Math.abs(moneyInputValue(el) || 0); }
       else if (f === "type") rows[i].type = el.value === "receita" ? "receita" : "despesa";
       if (f === "amount" || f === "type") updateCount();
     });

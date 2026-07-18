@@ -11,7 +11,31 @@ if (window.top !== window.self) {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-const fmtBRL = (v) => (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+/* ---------- Moedas ----------
+   O app guarda em cada transação a MOEDA em que ela foi lançada e exibe o
+   painel numa moeda escolhida (ds.displayCurrency). A conversão só acontece
+   quando a moeda exibida é diferente da moeda da transação (ver js/rates.js). */
+const CURRENCIES = {
+  BRL: { code: "BRL", name: "Real brasileiro", short: "Real", locale: "pt-BR", symbol: "R$", frac: 2 },
+  CLP: { code: "CLP", name: "Peso chileno", short: "Peso CL", locale: "es-CL", symbol: "$", frac: 0 },
+  PYG: { code: "PYG", name: "Guarani", short: "Guarani", locale: "es-PY", symbol: "₲", frac: 0 },
+  USD: { code: "USD", name: "Dólar", short: "Dólar", locale: "en-US", symbol: "US$", frac: 2 },
+};
+const CURRENCY_CODES = ["BRL", "CLP", "PYG", "USD"];
+function normCur(code) { return CURRENCY_CODES.includes(code) ? code : "BRL"; }
+function curFrac(code) { return (CURRENCIES[normCur(code)]).frac; }
+
+// Formata um valor numérico na moeda indicada (padrão Real)
+function fmtMoney(v, code) {
+  code = normCur(code);
+  const c = CURRENCIES[code];
+  try {
+    return (Number(v) || 0).toLocaleString(c.locale, { style: "currency", currency: code });
+  } catch {
+    return `${c.symbol} ${(Number(v) || 0).toFixed(c.frac)}`;
+  }
+}
+const fmtBRL = (v) => fmtMoney(v, "BRL");
 
 const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 const MESES_ABREV = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
@@ -43,16 +67,39 @@ function fmtDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
-// Número -> texto de campo já em reais: 10.25 -> "R$ 10,25"
-function fmtMoneyInput(n) {
-  return (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+// Número -> texto de campo já formatado na moeda: 10.25 -> "R$ 10,25"
+function fmtMoneyInput(n, code) {
+  return fmtMoney(Number(n) || 0, code);
 }
 
-// Máscara de moeda ao vivo: os dígitos digitados formam os centavos.
-// Digitar 1,0,2,5 mostra R$ 0,01 -> R$ 0,10 -> R$ 1,02 -> R$ 10,25.
-function maskMoneyEl(el) {
-  const digits = el.value.replace(/\D/g, "").slice(0, 13);
-  el.value = digits ? (parseInt(digits, 10) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "";
+// Máscara de moeda ao vivo: os dígitos digitados formam as casas decimais da
+// moeda. Em Real (2 casas) digitar 1,0,2,5 mostra R$ 0,01 ... R$ 10,25; em
+// moedas sem centavos (CLP/PYG) os dígitos formam o inteiro. A moeda vem do
+// atributo data-cur do input (padrão Real).
+function maskMoneyEl(el, code) {
+  code = normCur(code || el.dataset.cur);
+  const frac = curFrac(code);
+  const digits = el.value.replace(/\D/g, "").slice(0, 15);
+  el.value = digits ? fmtMoney(parseInt(digits, 10) / Math.pow(10, frac), code) : "";
+}
+
+// Valor numérico a partir dos dígitos crus de um texto mascarado (independe do
+// separador local — evita a fragilidade do parseMoney em es-CL/es-PY).
+function moneyStrValue(str, code) {
+  code = normCur(code);
+  const digits = String(str || "").replace(/\D/g, "").slice(0, 15);
+  if (!digits) return null;
+  return parseInt(digits, 10) / Math.pow(10, curFrac(code));
+}
+function moneyInputValue(el, code) {
+  return moneyStrValue(el ? el.value : "", normCur(code || (el && el.dataset.cur)));
+}
+
+// Define a moeda de um input mascarado e reformata o que já estiver digitado.
+function setMoneyMaskCurrency(el, code) {
+  if (!el) return;
+  el.dataset.cur = normCur(code);
+  if (el.value) maskMoneyEl(el, el.dataset.cur);
 }
 
 // Liga a máscara num input (idempotente). Retorna o próprio elemento.
@@ -185,7 +232,7 @@ const Store = {
   },
   createDataset(name) {
     const now = new Date().toISOString();
-    const ds = { id: uid(), name: name || "Sem nome", createdAt: now, updatedAt: now, categories: [], transactions: [] };
+    const ds = { id: uid(), name: name || "Sem nome", createdAt: now, updatedAt: now, displayCurrency: "BRL", categories: [], transactions: [] };
     DEFAULT_CATS.forEach((c) => ensureCat(ds, c));
     return ds;
   },
@@ -227,9 +274,11 @@ function askName(title, initial, cb, opts) {
   opts = opts || {};
   $("#modal-name-title").textContent = title;
   const input = $("#modal-name-input");
-  // Flag "money": o listener único (ver DOMContentLoaded) mascara em R$ só
-  // quando ligado — o mesmo input serve para renomear pastas (texto normal).
+  // Flag "money": o listener único (ver DOMContentLoaded) mascara na moeda
+  // indicada (data-cur, padrão R$) só quando ligado — o mesmo input serve para
+  // renomear pastas (texto normal).
   input.dataset.money = opts.money ? "1" : "";
+  input.dataset.cur = opts.money ? normCur(opts.currency) : "";
   input.value = initial || "";
   nameCallback = cb;
   $("#modal-name").classList.remove("hidden");
@@ -345,6 +394,7 @@ function sanitizeDataset(raw, opts) {
     name: cleanStr(raw.name, 80).trim() || "Backup importado",
     createdAt: cleanISO(raw.createdAt, now),
     updatedAt: cleanISO(raw.updatedAt, now),
+    displayCurrency: normCur(raw.displayCurrency),
     categories: [],
     transactions: [],
     limits: [],
@@ -362,7 +412,7 @@ function sanitizeDataset(raw, opts) {
       } else {
         const target = cleanNum(m?.target);
         if (target == null || target <= 0) return;
-        ds.metas.push({ id: keepOrNewId(m?.id, preserve), name, target, saved: cleanNum(m?.saved) ?? 0 });
+        ds.metas.push({ id: keepOrNewId(m?.id, preserve), name, target, saved: cleanNum(m?.saved) ?? 0, currency: normCur(m?.currency) });
       }
     });
   }
@@ -402,6 +452,7 @@ function sanitizeDataset(raw, opts) {
       account: cleanStr(t.account, 40).trim(),
       type: t.type === "receita" ? "receita" : "despesa",
       amount,
+      currency: normCur(t.currency),
       installment: typeof t.installment === "string" && RE_PARC.test(t.installment) ? t.installment : null,
       totalValue: cleanNum(t.totalValue),
     });
@@ -431,6 +482,7 @@ function sanitizeDataset(raw, opts) {
         name: cleanStr(L?.name, 60).trim() || cats.join(" + "),
         amount: last.amount,
         categories: last.categories,
+        currency: normCur(L?.currency),
         versions,
       });
     });
