@@ -6,12 +6,12 @@
 <!-- Segurança: só scripts do próprio app e conexões aos serviços autorizados
      (api.anthropic.com p/ leitura de comprovante; *.supabase.co p/ nuvem).
      "file:" mantém o app funcionando quando aberto localmente com dois cliques. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://*.supabase.co wss://*.supabase.co https://open.er-api.com https://cdn.jsdelivr.net; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://*.supabase.co wss://*.supabase.co https://open.er-api.com https://cdn.jsdelivr.net; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#101016">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260719b">
+<link rel="stylesheet" href="css/style.css?v=20260719c">
 </head>
 <body>
 
@@ -216,6 +216,9 @@
       <div class="hero-balance">
         <span class="hero-balance-label" id="hero-saldo-label">Saldo em contas</span>
         <div class="hero-balance-value" id="hero-saldo">—</div>
+        <button class="btn-icon hero-eye" id="hero-eye" title="Ocultar/mostrar valores">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.7"/></svg>
+        </button>
       </div>
       <div class="hero-flow">
         <div class="hero-flow-item">
@@ -645,10 +648,10 @@
 <script src="js/app.js?v=20260719a"></script>
 <script src="js/rates.js?v=20260718a"></script>
 <script src="js/importer.js?v=20260718d"></script>
-<script src="js/dashboard.js?v=20260719b"></script>
+<script src="js/dashboard.js?v=20260719c"></script>
 <script src="js/receipt.js?v=20260718f"></script>
 <script src="js/batch.js?v=20260718h"></script>
 <script src="js/cloud.js?v=20260718i"></script>
-<script src="js/shell.js?v=20260719a"></script>
+<script src="js/shell.js?v=20260719b"></script>
 </body>
 </html>

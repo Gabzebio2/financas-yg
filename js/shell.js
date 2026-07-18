@@ -19,4 +19,12 @@ document.addEventListener("DOMContentLoaded", () => {
   // O FAB reaproveita o botão real do painel (mantém validações e estado)
   wire("#sb-fab", () => $("#btn-add-tx").click());
   wire("#bn-fab", () => $("#btn-add-tx").click());
+
+  // Olhinho do saldo: esconde/mostra os valores do cabeçalho (fica lembrado)
+  const HIDE_KEY = "fyg:hide-money";
+  try { if (localStorage.getItem(HIDE_KEY) === "1") document.body.classList.add("hide-money"); } catch { /* sem storage */ }
+  wire("#hero-eye", () => {
+    const on = document.body.classList.toggle("hide-money");
+    try { localStorage.setItem(HIDE_KEY, on ? "1" : "0"); } catch { /* sem storage */ }
+  });
 });

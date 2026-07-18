@@ -287,7 +287,7 @@ const Dashboard = (() => {
   }
 
   function renderCharts() {
-    Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+    Chart.defaults.font.family = "'MiSans', 'Segoe UI', system-ui, sans-serif";
     Chart.defaults.color = "#9aa0ae";
     Chart.defaults.borderColor = "rgba(255,255,255,.08)";
     const txs = filteredTxs();
