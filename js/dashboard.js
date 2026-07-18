@@ -1550,6 +1550,14 @@ const Dashboard = (() => {
 
   function currentDatasetName() { return ds ? ds.name : ""; }
 
+  // Chaves (data+descrição+valor+tipo) de tudo que JÁ está na pasta aberta —
+  // usadas pelo lote para avisar quando uma fatura é importada de novo.
+  function existingTxKeys() {
+    const set = new Set();
+    if (ds) ds.transactions.forEach((t) => set.add(dupTxKey(t.date, t.desc, t.amount, t.type)));
+    return set;
+  }
+
   // Injeta na pasta atual transações JÁ no formato interno (vindas do
   // importador completo: preservam categoria, cartão, parcela, recorrente,
   // valor total e o vínculo entre parcelas). IDs são regerados.
@@ -1584,5 +1592,5 @@ const Dashboard = (() => {
     return n;
   }
 
-  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, resolveImportDate };
+  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, resolveImportDate, existingTxKeys };
 })();

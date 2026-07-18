@@ -6,8 +6,9 @@
 
 const Batch = (() => {
   const PROXY_PATH = "/api/receipt";
-  let rows = [];          // [{ date, desc, amount, type, on }]
+  let rows = [];          // [{ date, desc, amount, type, currency, on, src, dup }]
   let presetCat = null;   // categoria destino sugerida (ex: amigo)
+  let srcSeq = 0;         // nº do arquivo de origem de cada linha (p/ detectar sobreposição)
 
   function proxyAvailable() {
     if (location.protocol === "file:") return false;
@@ -25,6 +26,7 @@ const Batch = (() => {
     opts = opts || {};
     presetCat = opts.category || null;
     rows = [];
+    srcSeq = 0;
     $("#batch-title").textContent = opts.title || "Importar em lote";
     // Quando os arquivos já vieram do "Upload do comprovante", não repete os
     // botões de origem (foto/Excel) — o modal serve só para conferir e confirmar.
@@ -80,8 +82,8 @@ const Batch = (() => {
 
     const cur = normCur($("#batch-cur").value);
     $("#batch-tbody").innerHTML = rows.map((r, i) => `
-      <tr data-i="${i}" class="${r.on ? "" : "batch-off"}">
-        <td><input type="checkbox" class="batch-check" data-i="${i}" ${r.on ? "checked" : ""}></td>
+      <tr data-i="${i}" class="${r.on ? "" : "batch-off"}${r.dup ? " batch-dup" : ""}">
+        <td><input type="checkbox" class="batch-check" data-i="${i}" ${r.on ? "checked" : ""}>${r.dup ? '<span class="dup-flag" title="Possível duplicado: já está na pasta ou repetiu entre os arquivos enviados">⚠</span>' : ""}</td>
         <td><input type="date" data-f="date" data-i="${i}" value="${escapeHtml(r.date)}"></td>
         <td><input type="text" data-f="desc" data-i="${i}" value="${escapeHtml(r.desc)}"></td>
         <td class="num"><input type="text" class="batch-val" data-f="amount" data-i="${i}" data-cur="${cur}" value="${fmtMoneyInput(r.amount, cur)}"></td>
@@ -130,6 +132,44 @@ const Batch = (() => {
     const count = {};
     rows.forEach((r) => { const c = normCur(r.currency); count[c] = (count[c] || 0) + 1; });
     return Object.keys(count).sort((a, b) => count[b] - count[a])[0] || "BRL";
+  }
+
+  /* ---------- Proteção anti-duplicados ----------
+     Uma fatura enviada duas vezes (ou prints com sobreposição) fazia cada
+     gasto entrar em dobro. Aqui NADA é apagado — linhas suspeitas só vêm
+     DESMARCADAS, com aviso, e você marca de volta se forem compras reais.
+     Duas checagens:
+     1) Entre arquivos: para cada chave (data+descrição+valor+tipo), a lista
+        mantém no máximo o MAIOR nº de ocorrências visto num arquivo SÓ.
+        Assim "3× ELEVENLABS no mesmo dia" num arquivo continua válido, mas o
+        mesmo trio vindo de novo em outro print é desmarcado.
+     2) Contra a pasta: o que já existe lá (mesma chave) vem desmarcado —
+        cobre o caso de importar a mesma fatura de novo. */
+  function flagDuplicates() {
+    const perFile = {}; // chave -> { src: quantas vezes naquele arquivo }
+    rows.forEach((r) => {
+      const k = dupTxKey(r.date, r.desc, r.amount, r.type);
+      const bySrc = (perFile[k] = perFile[k] || {});
+      bySrc[r.src || 0] = (bySrc[r.src || 0] || 0) + 1;
+    });
+    const allowed = {};
+    for (const k in perFile) allowed[k] = Math.max(...Object.values(perFile[k]));
+
+    const existing = Dashboard.existingTxKeys();
+    const seen = {};
+    let flagged = 0;
+    rows.forEach((r) => {
+      const k = dupTxKey(r.date, r.desc, r.amount, r.type);
+      seen[k] = (seen[k] || 0) + 1;
+      if (r.dupHandled) return; // decisão do usuário em leituras anteriores é respeitada
+      r.dupHandled = true;
+      if (existing.has(k) || seen[k] > allowed[k]) {
+        r.dup = true;
+        r.on = false;
+        flagged++;
+      }
+    });
+    return flagged;
   }
 
   // Mensagem de sucesso do acúmulo (menciona o total quando já havia itens)
@@ -181,6 +221,8 @@ const Batch = (() => {
         if (data.error === "refusal") { falhas.push(`imagem ${i + 1} não pôde ser lida`); continue; }
         const novos = normalize(data.itens);
         if (!novos.length) { falhas.push(`imagem ${i + 1} sem itens reconhecidos`); continue; }
+        const src = srcSeq++;
+        novos.forEach((r) => { r.src = src; });
         rows.push(...novos);
         added += novos.length;
       } catch (e) {
@@ -190,9 +232,11 @@ const Batch = (() => {
         return;
       }
     }
+    const flagged = flagDuplicates();
     if (added) {
       statusAcumulo(added);
       if (falhas.length) setStatus(`${added} itens lidos, mas: ${falhas.join("; ")}. Confira abaixo ✔`, "ok");
+      if (flagged) setStatus(`${added} itens lidos — ⚠ ${flagged} desmarcado(s) por parecerem duplicados (já estão na pasta ou repetiram entre os arquivos). Se forem compras reais, marque-os de volta.`, "warn");
     } else {
       setStatus(falhas.length ? `Nada reconhecido: ${falhas.join("; ")}.` : "Não reconheci itens nessas imagens. Tente fotos mais nítidas.", "err");
     }
@@ -214,6 +258,8 @@ const Batch = (() => {
         const txs = await Importer.readForBatch(file);
         const novos = normalize(txs.map((t) => ({ date: t.date, desc: t.desc, amount: t.amount, type: t.type })));
         if (!novos.length) { falhas.push(`"${file.name}" sem transações reconhecidas`); continue; }
+        const src = srcSeq++;
+        novos.forEach((r) => { r.src = src; });
         rows.push(...novos);
         added += novos.length;
       } catch (e) {
@@ -221,9 +267,11 @@ const Batch = (() => {
         falhas.push(`"${file.name}" inválido`);
       }
     }
+    const flagged = flagDuplicates();
     if (added) {
       statusAcumulo(added);
       if (falhas.length) setStatus(`${added} itens lidos, mas: ${falhas.join("; ")}. Confira abaixo ✔`, "ok");
+      if (flagged) setStatus(`${added} itens lidos — ⚠ ${flagged} desmarcado(s) por parecerem duplicados (já estão na pasta ou repetiram entre os arquivos). Se forem compras reais, marque-os de volta.`, "warn");
     } else {
       setStatus(falhas.length ? `Nada lido: ${falhas.join("; ")}.` : "Não reconheci transações. Confira o formato (Data, Descrição, Valor).", "err");
     }

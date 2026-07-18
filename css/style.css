@@ -448,6 +448,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .receipt-status { font-size: 12.5px; color: var(--text-soft); }
 .receipt-status.ok { color: var(--green); font-weight: 600; }
 .receipt-status.err { color: var(--red); font-weight: 600; }
+.receipt-status.warn { color: #b45309; font-weight: 600; }
+
+/* Linha suspeita de duplicado na importação em lote (vem desmarcada) */
+#batch-table tr.batch-dup td { background: #fffbeb; }
+.dup-flag { color: #b45309; margin-left: 4px; font-size: 13px; cursor: help; }
 .apikey-row { display: flex; gap: 8px; margin-top: 6px; }
 .apikey-row input {
   flex: 1; font-family: inherit; font-size: 13.5px; padding: 8px 10px;

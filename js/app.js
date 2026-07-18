@@ -60,6 +60,13 @@ function stripAccents(s) {
   return String(s || "").normalize("NFD").replace(new RegExp("[\\u0300-\\u036f]", "g"), "").toLowerCase().trim();
 }
 
+// Chave para detectar lançamentos repetidos: mesma data + descrição + valor +
+// tipo. Usada na importação em lote para avisar sobre possíveis duplicados
+// (fatura enviada duas vezes, prints com sobreposição etc.).
+function dupTxKey(date, desc, amount, type) {
+  return `${date}|${stripAccents(desc)}|${(Number(amount) || 0).toFixed(2)}|${type}`;
+}
+
 // 'YYYY-MM-DD' -> 'dd/mm/aaaa'
 function fmtDate(iso) {
   if (!iso) return "—";
