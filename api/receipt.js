@@ -96,6 +96,9 @@ async function geminiFetch(key, model, image, categories, multi, withSchema) {
         }],
         generationConfig,
       }),
+      // Um modelo lento não pode consumir o tempo todo da função (teto 60s na
+      // Vercel): corta em 25s e deixa o próximo modelo (mais rápido) assumir.
+      signal: AbortSignal.timeout(25000),
     }
   );
 }
@@ -114,19 +117,26 @@ function parseGeminiResponse(data) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Sobrecarga temporária do provedor (não é erro de chave/cota nem de entrada)
+// Sobrecarga temporária do provedor (não é erro de chave/cota nem de entrada).
+// status 0 = nosso corte de 25s por modelo — também vale trocar de modelo.
 function isOverloaded(status, detail) {
   const d = (detail || "").toLowerCase();
-  if (status === 503) return true;
+  if (status === 503 || status === 0) return true;
   return /high demand|overloaded|model is overloaded|try again later|temporarily unavailable|unavailable/.test(d);
 }
 
 async function tryGeminiOnce(key, model, image, categories, multi) {
-  let r = await geminiFetch(key, model, image, categories, multi, true);
-  if (r.status === 400) {
-    // Alguns projetos rejeitam o responseSchema — tenta em modo JSON simples
-    const r2 = await geminiFetch(key, model, image, categories, multi, false);
-    if (r2.ok || r2.status !== 400) r = r2;
+  let r;
+  try {
+    r = await geminiFetch(key, model, image, categories, multi, true);
+    if (r.status === 400) {
+      // Alguns projetos rejeitam o responseSchema — tenta em modo JSON simples
+      const r2 = await geminiFetch(key, model, image, categories, multi, false);
+      if (r2.ok || r2.status !== 400) r = r2;
+    }
+  } catch {
+    // AbortSignal (25s) ou falha de rede com o provedor: passa ao próximo modelo
+    return { ok: false, status: 0, detail: `sem resposta em 25s (${model})` };
   }
   if (r.ok) return { ok: true, data: await r.json() };
   let detail = "";
@@ -135,9 +145,11 @@ async function tryGeminiOnce(key, model, image, categories, multi) {
 }
 
 async function callGemini(key, image, categories, multi) {
+  const t0 = Date.now();
   let fail = null, sawOverload = false;
 
   for (const model of MODELS_GEMINI) {
+    if (Date.now() - t0 > 40000) break; // não arrisca o teto de 60s da função
     const res = await tryGeminiOnce(key, model, image, categories, multi);
     if (res.ok) return parseGeminiResponse(res.data);
 
@@ -154,8 +166,8 @@ async function callGemini(key, image, categories, multi) {
   }
 
   // Todos os modelos sobrecarregados: uma última tentativa após pausa curta
-  // (picos de demanda costumam durar poucos segundos).
-  if (sawOverload) {
+  // (picos de demanda costumam durar poucos segundos) — se ainda der tempo.
+  if (sawOverload && Date.now() - t0 < 32000) {
     await sleep(1500);
     const res = await tryGeminiOnce(key, MODELS_GEMINI[0], image, categories, multi);
     if (res.ok) return parseGeminiResponse(res.data);

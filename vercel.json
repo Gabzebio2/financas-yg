@@ -1,5 +1,5 @@
 {
   "functions": {
-    "api/receipt.js": { "maxDuration": 30 }
+    "api/receipt.js": { "maxDuration": 60 }
   }
 }

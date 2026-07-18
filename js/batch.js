@@ -200,17 +200,29 @@ const Batch = (() => {
       try { image = await Receipt.prepareImage(files[i]); }
       catch { falhas.push(`imagem ${i + 1} ilegível`); continue; }
 
+      const postPhoto = () => fetch(PROXY_PATH, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer " + token },
+        body: JSON.stringify({ image: { media_type: image.mediaType, data: image.data }, multi: true }),
+      });
       try {
-        const res = await fetch(PROXY_PATH, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: "Bearer " + token },
-          body: JSON.stringify({ image: { media_type: image.mediaType, data: image.data }, multi: true }),
-        });
+        let res = await postPhoto();
+        // 504/502 = a leitura demorou demais nesta imagem (fatura densa).
+        // Espera um instante e tenta ela de novo antes de dar como falha.
+        if (res.status === 504 || res.status === 502) {
+          setStatus(`A imagem ${i + 1} demorou mais que o normal — tentando de novo… ⏳`);
+          await new Promise((r) => setTimeout(r, 2500));
+          res = await postPhoto();
+        }
         // Erros de conta/servidor interrompem tudo (repetir não resolveria)
         if (res.status === 401) { setStatus("Sua sessão expirou. Entre novamente na seção nuvem.", "err"); renderIfAny(added); return; }
         if (res.status === 503) { setStatus("A IA está sobrecarregada agora (pico de uso do Google). Aguarde alguns segundos e clique de novo.", "err"); renderIfAny(added); return; }
         if (res.status === 429) { setStatus("Limite de leituras atingido — aguarde um minuto e tente as imagens restantes.", "err"); renderIfAny(added); return; }
         if (res.status === 501) { setStatus("A leitura por IA ainda não foi ativada no servidor.", "err"); return; }
+        if (res.status === 504) {
+          falhas.push(`imagem ${i + 1} demorou demais mesmo repetindo — se for uma fatura muito longa, envie-a em 2 pedaços (topo e fim)`);
+          continue;
+        }
         if (!res.ok) {
           let detail = "";
           try { const j = await res.json(); detail = j?.detail || j?.error || ""; } catch { /* sem corpo */ }
