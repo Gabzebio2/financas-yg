@@ -99,6 +99,8 @@ const Batch = (() => {
       if (y < 2000 || y > cur + 1) date = cur + date.slice(4); // conserta ano implausível
       const amount = Math.abs(Number(it.amount ?? it.valor) || 0);
       const type = (it.type === "receita" || it.tipo === "receita") ? "receita" : "despesa";
+      // Encaixa no mês selecionado no painel (quando não é o mês atual)
+      date = Dashboard.anchorImportDate(date);
       return { date, desc: String(it.desc ?? it.descricao ?? "").slice(0, 120), amount, type, currency: normCur(it.moeda ?? it.currency), on: amount > 0 };
     }).filter((r) => r.amount > 0);
   }
