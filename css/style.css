@@ -33,6 +33,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-size: 15px;
+  overflow-x: hidden; /* nunca rolar a página para o lado (celular) */
 }
 .hidden { display: none !important; }
 
@@ -275,10 +276,33 @@ body:has(#screen-home:not(.hidden)) #sb-home { background: var(--primary-soft); 
   border: 1px solid var(--border); border-radius: 12px;
   background: var(--input-bg); color: var(--text);
 }
-.month-nav { display: flex; align-items: center; gap: 4px; background: var(--primary-soft); border-radius: 999px; padding: 3px 6px; }
-.month-nav span { font-weight: 700; color: var(--primary-text); min-width: 130px; text-align: center; }
-.month-nav .btn-icon { color: var(--primary-text); font-size: 20px; }
-.range-nav { display: flex; align-items: center; gap: 8px; color: var(--text-soft); font-size: 13px; }
+.range-nav { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-soft); font-size: 13px; flex-wrap: wrap; }
+
+/* ===== Cabeçalho do painel (igual à tela inicial do app Mobills) ===== */
+.dash-hero {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 26px; box-shadow: var(--shadow);
+  padding: 16px 20px 24px; margin-bottom: 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.hero-period { display: flex; justify-content: center; width: 100%; }
+.month-nav { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.month-nav span { font-weight: 700; font-size: 19px; color: var(--text); min-width: 160px; text-align: center; }
+.month-nav .btn-icon { color: var(--text-soft); font-size: 24px; width: 38px; height: 38px; }
+.month-nav .btn-icon:hover { color: var(--text); }
+.hero-balance { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; margin-top: 8px; }
+.hero-balance-label { color: var(--text-soft); font-size: 14.5px; }
+.hero-balance-value { font-size: 40px; font-weight: 700; letter-spacing: -.5px; line-height: 1.15; }
+.hero-balance-value.is-neg { color: var(--red); }
+.hero-flow { display: flex; align-items: center; justify-content: center; gap: 56px; flex-wrap: wrap; margin-top: 16px; }
+.hero-flow-item { display: flex; align-items: center; gap: 13px; }
+.hero-flow-item .sum-ico { width: 52px; height: 52px; }
+.hero-flow-item .sum-ico svg { width: 25px; height: 25px; }
+.hero-flow-txt { display: flex; flex-direction: column; gap: 1px; }
+.hero-flow-label { color: var(--text-soft); font-size: 14.5px; }
+.hero-flow-value { font-size: 22px; font-weight: 700; white-space: nowrap; }
+.hero-flow-value.pos { color: var(--green); }
+.hero-flow-value.neg { color: var(--red); }
 
 .cat-filter { position: relative; }
 .cat-dropdown {
@@ -490,7 +514,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
   font-family: inherit; font-size: 14px; padding: 8px 10px; min-width: 180px;
   border: 1px solid var(--border); border-radius: 12px; background: var(--input-bg); color: var(--text);
 }
-.batch-table-wrap { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; }
+.batch-table-wrap { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
 #batch-table th { position: sticky; top: 0; background: var(--card); z-index: 1; padding: 8px 10px; }
 #batch-table td { padding: 6px 8px; }
 #batch-table input[type="text"], #batch-table input[type="date"] {
@@ -656,6 +680,59 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
     animation: sheet-in .22s ease;
   }
   .meta-modal-head { border-radius: 24px 24px 0 0; }
+
+  /* Cabeçalho do painel: igual ao print do app (sem saldo acumulado) */
+  .hero-flow-acc { display: none; }
+  .hero-balance-value { font-size: 34px; }
+  .dash-hero { padding-left: 12px; padding-right: 12px; }
+  .hero-flow {
+    display: grid; grid-template-columns: 1fr 1fr;
+    width: 100%; gap: 8px; margin-top: 14px;
+  }
+  .hero-flow-item { gap: 9px; min-width: 0; justify-content: center; }
+  .hero-flow-item .sum-ico { width: 44px; height: 44px; flex-shrink: 0; }
+  .hero-flow-item .sum-ico svg { width: 21px; height: 21px; }
+  .hero-flow-txt { min-width: 0; }
+  .hero-flow-label { font-size: 13.5px; }
+  .hero-flow-value { font-size: clamp(14px, 4.5vw, 19px); }
+  .month-nav span { font-size: 17px; min-width: 140px; }
+
+  /* O botão flutuante (+) da barra inferior já cria transações */
+  #btn-add-tx { display: none; }
+
+  /* Limites e Metas: título em cima, botões embaixo (sem espremer o texto) */
+  .limits-block-head { flex-direction: column; align-items: stretch; }
+  .limits-head-btns { justify-content: flex-start; }
+
+  /* Busca ocupa a linha toda */
+  #tx-search { width: 100%; }
+
+  /* Tabela de transações vira lista (sem rolagem lateral), como no app */
+  #tx-table thead { display: none; }
+  #tx-table, #tx-table tbody { display: block; width: 100%; }
+  #tx-table tbody tr {
+    display: flex; flex-wrap: wrap; align-items: center;
+    row-gap: 5px; column-gap: 8px;
+    padding: 11px 2px; border-bottom: 1px solid var(--border);
+  }
+  #tx-table tbody td { display: block; border: none; padding: 0; }
+  /* linha 1: [seleção] descrição ..... valor  ações */
+  #tx-table tbody td:nth-child(1) { order: 0; }
+  #tx-table tbody td:nth-child(3) {
+    order: 1; flex: 1 1 0; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 600;
+  }
+  #tx-table tbody td:nth-child(7) { order: 2; }
+  #tx-table tbody td:nth-child(8) { order: 3; }
+  /* quebra forçada: o que vem depois vai para a linha 2 */
+  #tx-table tbody tr::after { content: ""; flex-basis: 100%; height: 0; order: 4; }
+  /* linha 2: categoria · conta · parcela ..... data */
+  #tx-table tbody td:nth-child(4) { order: 5; margin-left: 25px; }
+  #tx-table tbody td:nth-child(5) { order: 6; color: var(--text-soft); font-size: 12px; }
+  #tx-table tbody td:nth-child(6) { order: 7; color: var(--text-soft); font-size: 12px; }
+  #tx-table tbody td:nth-child(2) { order: 8; margin-left: auto; color: var(--text-soft); font-size: 12px; }
+  #tx-table .empty-table { width: 100%; text-align: center; }
 }
 @keyframes sheet-in { from { transform: translateY(24px); opacity: .6; } to { transform: translateY(0); opacity: 1; } }
 @media (max-width: 520px) {

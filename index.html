@@ -11,7 +11,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#101016">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260719a">
+<link rel="stylesheet" href="css/style.css?v=20260719b">
 </head>
 <body>
 
@@ -25,7 +25,7 @@
     <button class="sb-item" id="sb-home" title="Início (minhas pastas)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.8 12 3.5l9 7.3"/><path d="M5.2 9.5V20h13.6V9.5"/></svg>
     </button>
-    <button class="sb-item sb-dash-only" data-scroll="#summary-cards" title="Resumo">
+    <button class="sb-item sb-dash-only" data-scroll="#dash-hero" title="Resumo">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>
     </button>
     <button class="sb-item sb-dash-only" data-scroll="#limits-block" title="Limites e metas">
@@ -200,6 +200,48 @@
       </div>
     </div>
 
+    <!-- Cabeçalho estilo app Mobills: mês centralizado, saldo grande e
+         Receitas × Despesas com ícones redondos -->
+    <div class="dash-hero" id="dash-hero">
+      <div class="hero-period">
+        <div id="month-nav" class="month-nav">
+          <button class="btn-icon" id="month-prev">‹</button>
+          <span id="month-label">—</span>
+          <button class="btn-icon" id="month-next">›</button>
+        </div>
+        <div id="range-nav" class="range-nav hidden">
+          <input type="date" id="range-from"> <span>até</span> <input type="date" id="range-to">
+        </div>
+      </div>
+      <div class="hero-balance">
+        <span class="hero-balance-label" id="hero-saldo-label">Saldo em contas</span>
+        <div class="hero-balance-value" id="hero-saldo">—</div>
+      </div>
+      <div class="hero-flow">
+        <div class="hero-flow-item">
+          <span class="sum-ico ico-rec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+          <span class="hero-flow-txt">
+            <span class="hero-flow-label">Receitas</span>
+            <span class="hero-flow-value pos" id="hero-rec">—</span>
+          </span>
+        </div>
+        <div class="hero-flow-item">
+          <span class="sum-ico ico-desp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></span>
+          <span class="hero-flow-txt">
+            <span class="hero-flow-label">Despesas</span>
+            <span class="hero-flow-value neg" id="hero-desp">—</span>
+          </span>
+        </div>
+        <div class="hero-flow-item hero-flow-acc">
+          <span class="sum-ico ico-acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.3 12 4l9 5.3"/><path d="M5 10.5V18M9.7 10.5V18M14.3 10.5V18M19 10.5V18"/><path d="M3 20h18"/></svg></span>
+          <span class="hero-flow-txt">
+            <span class="hero-flow-label">Saldo acumulado</span>
+            <span class="hero-flow-value" id="hero-acc">—</span>
+          </span>
+        </div>
+      </div>
+    </div>
+
     <div class="filters card">
       <div class="filter-group">
         <label class="field-label">Período</label>
@@ -209,14 +251,6 @@
             <option value="range">Intervalo</option>
             <option value="all">Tudo</option>
           </select>
-          <div id="month-nav" class="month-nav">
-            <button class="btn-icon" id="month-prev">‹</button>
-            <span id="month-label">—</span>
-            <button class="btn-icon" id="month-next">›</button>
-          </div>
-          <div id="range-nav" class="range-nav hidden">
-            <input type="date" id="range-from"> <span>até</span> <input type="date" id="range-to">
-          </div>
         </div>
       </div>
       <div class="filter-group" id="fg-categorias">
@@ -234,8 +268,6 @@
         </div>
       </div>
     </div>
-
-    <div class="summary-grid" id="summary-cards"></div>
 
     <!-- Controle de Limites (integrado ao painel) -->
     <div class="card limits-block" id="limits-block">
@@ -613,7 +645,7 @@
 <script src="js/app.js?v=20260719a"></script>
 <script src="js/rates.js?v=20260718a"></script>
 <script src="js/importer.js?v=20260718d"></script>
-<script src="js/dashboard.js?v=20260719a"></script>
+<script src="js/dashboard.js?v=20260719b"></script>
 <script src="js/receipt.js?v=20260718f"></script>
 <script src="js/batch.js?v=20260718h"></script>
 <script src="js/cloud.js?v=20260718i"></script>

@@ -231,32 +231,17 @@ const Dashboard = (() => {
       .reduce((s, t) => s + (t.type === "receita" ? dispAmount(t) : -dispAmount(t)), 0);
 
     const label = fil.mode === "month" ? "do mês" : fil.mode === "range" ? "do período" : "total";
-    // Ícones em círculos coloridos, como os cartões de resumo do Mobills
-    const icoUp = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`;
-    const icoDown = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>`;
-    const icoWallet = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5h16a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8.5z"/><path d="M3 8.5V7a2 2 0 0 1 2-2h11"/><circle cx="16.5" cy="13.7" r="1" fill="currentColor" stroke="none"/></svg>`;
-    const icoBank = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.3 12 4l9 5.3"/><path d="M5 10.5V18M9.7 10.5V18M14.3 10.5V18M19 10.5V18"/><path d="M3 20h18"/></svg>`;
-    $("#summary-cards").innerHTML = `
-      <div class="sum-card">
-        <span class="sum-ico ico-rec">${icoUp}</span>
-        <span class="sum-info"><span class="sum-label">Receitas ${label}</span>
-        <span class="sum-value pos">${fmtD(receitas)}</span></span>
-      </div>
-      <div class="sum-card">
-        <span class="sum-ico ico-desp">${icoDown}</span>
-        <span class="sum-info"><span class="sum-label">Despesas ${label}</span>
-        <span class="sum-value neg">${fmtD(despesas)}</span></span>
-      </div>
-      <div class="sum-card">
-        <span class="sum-ico ico-saldo">${icoWallet}</span>
-        <span class="sum-info"><span class="sum-label">Saldo ${label}</span>
-        <span class="sum-value ${saldo >= 0 ? "pos" : "neg"}">${fmtD(saldo)}</span></span>
-      </div>
-      <div class="sum-card">
-        <span class="sum-ico ico-acc">${icoBank}</span>
-        <span class="sum-info"><span class="sum-label">Saldo acumulado</span>
-        <span class="sum-value ${acumulado >= 0 ? "pos" : "neg"}">${fmtD(acumulado)}</span></span>
-      </div>`;
+    // Cabeçalho estilo app Mobills: saldo grande centralizado + Receitas × Despesas
+    $("#hero-saldo-label").textContent = `Saldo ${label}`;
+    const saldoEl = $("#hero-saldo");
+    saldoEl.textContent = fmtD(saldo);
+    saldoEl.classList.toggle("is-neg", saldo < 0);
+    $("#hero-rec").textContent = fmtD(receitas);
+    $("#hero-desp").textContent = fmtD(despesas);
+    const accEl = $("#hero-acc");
+    accEl.textContent = fmtD(acumulado);
+    accEl.classList.toggle("pos", acumulado >= 0);
+    accEl.classList.toggle("neg", acumulado < 0);
   }
 
   /* ---------- Gráficos ---------- */
