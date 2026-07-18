@@ -74,6 +74,7 @@
             <button class="btn btn-primary btn-sm" id="btn-cloud-signin">Entrar</button>
             <button class="btn btn-ghost btn-sm" id="btn-cloud-signup">Criar conta</button>
           </div>
+          <button type="button" class="btn-link" id="btn-cloud-forgot" title="Digite seu e-mail acima e clique aqui: você recebe um link para criar uma nova senha">esqueci minha senha</button>
         </div>
         <div class="drive-connected hidden" id="cloud-connected">
           <span class="hint" id="cloud-user"></span>
@@ -82,6 +83,13 @@
             <button class="btn btn-ghost btn-sm" id="btn-cloud-sync-now">Sincronizar agora</button>
             <button class="btn btn-ghost btn-sm" id="btn-cloud-logout">Sair</button>
           </div>
+        </div>
+      </div>
+      <div class="drive-cid-box hidden" id="cloud-newpass-wrap">
+        <p class="hint"><b>Redefinição de senha:</b> digite a nova senha para concluir (mín. 8 caracteres).</p>
+        <div class="apikey-row">
+          <input type="password" id="cloud-newpass" placeholder="nova senha (mín. 8)" autocomplete="new-password">
+          <button type="button" class="btn btn-primary btn-sm" id="btn-cloud-newpass-save">Salvar nova senha</button>
         </div>
       </div>
       <p class="drive-status" id="cloud-status"></p>
@@ -559,6 +567,6 @@
 <script src="js/dashboard.js?v=20260718g"></script>
 <script src="js/receipt.js?v=20260718f"></script>
 <script src="js/batch.js?v=20260718h"></script>
-<script src="js/cloud.js?v=20260717c"></script>
+<script src="js/cloud.js?v=20260718i"></script>
 </body>
 </html>

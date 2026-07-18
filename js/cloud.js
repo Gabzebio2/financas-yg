@@ -59,8 +59,23 @@ const Cloud = (() => {
     const cfg = getCfg();
     if (!cfg) return null;
     client = supabase.createClient(cfg.url, cfg.anonKey);
-    client.auth.onAuthStateChange((_ev, s) => { session = s; refreshUI(); });
+    client.auth.onAuthStateChange((ev, s) => {
+      session = s;
+      refreshUI();
+      // Usuário abriu o link "esqueci minha senha" do e-mail: o app carrega já
+      // autenticado em modo recuperação — só falta digitar a senha nova.
+      if (ev === "PASSWORD_RECOVERY") showNewPassUI();
+    });
     return client;
+  }
+
+  function showNewPassUI() {
+    const wrap = $("#cloud-newpass-wrap");
+    if (!wrap) return;
+    wrap.classList.remove("hidden");
+    setStatus("Quase lá! Digite a nova senha abaixo para concluir a redefinição 🔑");
+    $("#cloud-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => $("#cloud-newpass").focus(), 300);
   }
 
   /* ---------- Sincronização ---------- */
@@ -123,9 +138,18 @@ const Cloud = (() => {
       toast("Nuvem conectada ✔");
     } catch (e) {
       console.error(e);
-      const msg = /invalid login credentials/i.test(e.message || "") ? "E-mail ou senha incorretos."
-        : /signups not allowed/i.test(e.message || "") ? "Cadastros estão desativados neste projeto (você desativou no Supabase)."
-        : (e.message || "erro inesperado");
+      const raw = e.message || "";
+      const msg = /invalid login credentials/i.test(raw)
+        ? "E-mail ou senha incorretos. Confira se digitou o MESMO e-mail dos outros aparelhos; se esqueceu a senha, use “esqueci minha senha” logo abaixo."
+        : /signups not allowed/i.test(raw)
+          ? "Sua conta JÁ EXISTE — em aparelho novo, use o botão “Entrar” (os cadastros foram trancados de propósito na configuração)."
+        : /email not confirmed/i.test(raw)
+          ? "Este e-mail ainda não foi confirmado — procure o link de confirmação na caixa de entrada/spam."
+        : /failed to fetch|network|load failed/i.test(raw)
+          ? "Não consegui falar com a nuvem. Confira a internet; se o projeto Supabase ficou semanas sem uso, ele hiberna — entre em supabase.com e clique em “Restore project”."
+        : /rate limit|too many|security purposes/i.test(raw)
+          ? "Muitas tentativas em sequência — aguarde um minuto e tente de novo."
+        : raw || "erro inesperado";
       setStatus("Não deu para " + (isSignUp ? "criar a conta" : "entrar") + ": " + msg, "err");
     }
   }
@@ -136,6 +160,58 @@ const Cloud = (() => {
     refreshUI();
     setStatus("Desconectado. Seus dados locais continuam intactos.");
     toast("Nuvem desconectada.");
+  }
+
+  // "Esqueci minha senha": manda o e-mail de redefinição. O link abre o app
+  // de volta (redirectTo) e o gancho PASSWORD_RECOVERY mostra o campo de nova senha.
+  async function forgotPassword() {
+    const c = ensureClient();
+    if (!c) { showCfgSetup(); setStatus("Configure a conexão primeiro (uma vez só) 👇", "err"); return; }
+    const email = $("#cloud-email").value.trim();
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      toast("Digite seu e-mail no campo acima e clique de novo 📧");
+      $("#cloud-email").focus();
+      return;
+    }
+    setStatus("Enviando e-mail de redefinição…");
+    try {
+      const { error } = await c.auth.resetPasswordForEmail(email, {
+        redirectTo: location.origin + location.pathname,
+      });
+      if (error) throw error;
+      setStatus("Enviado ✔ Abra o link do e-mail NESTE aparelho — ele volta pro app já no passo de criar a nova senha. (Não chegou? Veja o spam.)", "ok");
+    } catch (e) {
+      console.error(e);
+      const raw = e.message || "";
+      const msg = /rate limit|too many|security purposes/i.test(raw)
+        ? "Muitas tentativas em sequência — aguarde uns minutos e tente de novo."
+        : raw || "erro inesperado";
+      setStatus("Não deu para enviar a redefinição: " + msg, "err");
+    }
+  }
+
+  async function saveNewPassword() {
+    const pass = $("#cloud-newpass").value;
+    if (pass.length < 8) { toast("A nova senha precisa ter pelo menos 8 caracteres 🔑"); $("#cloud-newpass").focus(); return; }
+    if (!client) return;
+    setStatus("Salvando nova senha…");
+    try {
+      const { error } = await client.auth.updateUser({ password: pass });
+      if (error) throw error;
+      $("#cloud-newpass").value = "";
+      $("#cloud-newpass-wrap").classList.add("hidden");
+      refreshUI();
+      setStatus("Senha atualizada ✔ Você já está conectado neste aparelho.", "ok");
+      toast("Nova senha salva ✔");
+      await syncNow();
+    } catch (e) {
+      console.error(e);
+      const raw = e.message || "";
+      const msg = /should be different/i.test(raw) ? "A nova senha precisa ser diferente da anterior."
+        : /session|jwt|token/i.test(raw) ? "O link de redefinição expirou — peça outro em “esqueci minha senha”."
+        : raw || "erro inesperado";
+      setStatus("Não deu para salvar a nova senha: " + msg, "err");
+    }
   }
 
   /* ---------- Ganchos chamados pelo app ---------- */
@@ -190,6 +266,9 @@ const Cloud = (() => {
     $("#cloud-pass").addEventListener("keydown", (ev) => { if (ev.key === "Enter") signInOrUp(false); });
     $("#btn-cloud-logout").addEventListener("click", logout);
     $("#btn-cloud-sync-now").addEventListener("click", syncNow);
+    $("#btn-cloud-forgot").addEventListener("click", forgotPassword);
+    $("#btn-cloud-newpass-save").addEventListener("click", saveNewPassword);
+    $("#cloud-newpass").addEventListener("keydown", (ev) => { if (ev.key === "Enter") saveNewPassword(); });
     $("#cloud-autosync").addEventListener("change", (ev) => {
       localStorage.setItem(AUTOSYNC_STORAGE, ev.target.checked ? "1" : "0");
     });
