@@ -211,6 +211,22 @@ async function callAnthropic(key, image, categories, multi) {
   return { text };
 }
 
+// Recupera os itens completos de uma lista JSON possivelmente TRUNCADA (fatura
+// longa que estourou o limite de tokens): pega cada objeto {...} fechado e
+// ignora o pedaço cortado no fim. Assim a leitura não falha por inteiro.
+function salvageItems(text) {
+  const items = [];
+  const re = /\{[^{}]*\}/g;
+  let m;
+  while ((m = re.exec(text || ""))) {
+    try {
+      const o = JSON.parse(m[0]);
+      if (o && (o.valor != null || o.data || o.descricao)) items.push(o);
+    } catch { /* objeto incompleto: ignora */ }
+  }
+  return items;
+}
+
 /* ---------- Handler ---------- */
 module.exports = async (req, res) => {
   const gKey = process.env.GEMINI_API_KEY;
@@ -259,15 +275,21 @@ module.exports = async (req, res) => {
     if (out.httpStatus) { res.status(502).json({ error: "ia_falhou", status: out.httpStatus, detail: out.detail || "" }); return; }
     if (out.refusal) { res.status(200).json({ error: "refusal" }); return; }
 
-    let parsed;
-    try { parsed = JSON.parse(out.text); }
-    catch { res.status(502).json({ error: "resposta_invalida" }); return; }
-
     if (multi) {
-      // Aceita tanto array puro quanto { itens: [...] }
-      const itens = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.itens) ? parsed.itens : []);
+      // Aceita array puro ou { itens: [...] }; se o JSON vier truncado (fatura
+      // longa), recupera os itens completos em vez de falhar por inteiro.
+      let itens = [];
+      try {
+        const parsed = JSON.parse(out.text);
+        itens = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.itens) ? parsed.itens : []);
+      } catch {
+        itens = salvageItems(out.text);
+      }
       res.status(200).json({ itens });
     } else {
+      let parsed;
+      try { parsed = JSON.parse(out.text); }
+      catch { res.status(502).json({ error: "resposta_invalida" }); return; }
       res.status(200).json(parsed);
     }
   } catch {

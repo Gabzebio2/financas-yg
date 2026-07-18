@@ -26,6 +26,12 @@ const Batch = (() => {
     presetCat = opts.category || null;
     rows = [];
     $("#batch-title").textContent = opts.title || "Importar em lote";
+    // Quando os arquivos já vieram do "Upload do comprovante", não repete os
+    // botões de origem (foto/Excel) — o modal serve só para conferir e confirmar.
+    const hide = !!opts.hideSources;
+    $("#btn-batch-photo").classList.toggle("hidden", hide);
+    $("#btn-batch-file").classList.toggle("hidden", hide);
+    $(".batch-sources").classList.toggle("batch-sources-empty", hide);
     $("#batch-preview").classList.add("hidden");
     $("#btn-batch-save").classList.add("hidden");
     setStatus("");
@@ -40,7 +46,7 @@ const Batch = (() => {
   // Botão "Upload do comprovante": abre a lista e processa os arquivos escolhidos
   // (fotos e/ou Excel) no mesmo fluxo — serve para um gasto só ou para lote.
   async function openWithFiles(files) {
-    open({ title: "Upload do comprovante" });
+    open({ title: "Upload do comprovante", hideSources: true });
     const arr = Array.from(files || []).slice(0, 15);
     const images = arr.filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name));
     const excels = arr.filter((f) => /\.(xlsx|xls)$/i.test(f.name));
@@ -105,7 +111,8 @@ const Batch = (() => {
   function normalize(items) {
     const cur = new Date().getFullYear();
     return (items || []).map((it) => {
-      let date = typeof it.date === "string" ? it.date : "";
+      // A IA devolve o campo como "data" (pt); o Excel devolve "date". Aceita os dois.
+      let date = typeof it.date === "string" ? it.date : (typeof it.data === "string" ? it.data : "");
       if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         const y = Number(date.slice(0, 4));
         if (y < 2000 || y > cur + 1) date = cur + date.slice(4); // conserta ano implausível
