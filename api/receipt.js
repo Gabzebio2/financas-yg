@@ -14,10 +14,12 @@
 
 const SUPABASE_URL = "https://mhgagjhwsjjjwwvopjgu.supabase.co";
 const SUPABASE_ANON = "sb_publishable_fB3B_MW3VgJBcJpUbN1wvg_1Glbr2r5"; // pública por design
-// Tenta em ordem; se o Google aposentar um modelo, o próximo assume sozinho
-// Vários modelos: se um estiver aposentado ou sobrecarregado, o próximo assume.
-// O "-lite" costuma ter mais folga na cota gratuita em picos de demanda.
-const MODELS_GEMINI = ["gemini-3.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"];
+// Tenta em ordem. Cada modelo do Gemini tem COTA GRÁTIS INDEPENDENTE, então se
+// um estiver no limite (429), aposentado (404) ou sobrecarregado (503), o
+// próximo assume — inclusive o "-lite", que tem a maior folga na cota gratuita.
+// Os aliases "-latest" acompanham o modelo mais novo automaticamente (evita
+// quebrar quando o Google aposenta uma versão numerada).
+const MODELS_GEMINI = ["gemini-flash-latest", "gemini-flash-lite-latest"];
 const MODEL_ANTHROPIC = "claude-haiku-4-5";
 
 const PROMPT_SINGLE = `Analise a imagem: é um comprovante financeiro (Pix, transferência bancária ou compra), do Brasil, Chile, Paraguai ou em dólar.
@@ -143,11 +145,12 @@ async function callGemini(key, image, categories, multi) {
     fail = { httpStatus: res.status, detail: res.detail };
     if (isOverloaded(res.status, res.detail)) sawOverload = true;
 
-    // Modelo aposentado OU sobrecarga -> tenta o próximo modelo já em seguida.
-    // Erro de chave/cota/entrada -> não adianta trocar de modelo, para aqui.
+    // Modelo aposentado (404), sobrecarregado (503) OU no limite de cota (429)
+    // -> tenta o PRÓXIMO modelo, que tem cota grátis independente. Só um erro
+    // de chave/entrada (ex: 400/401/403) interrompe — trocar não resolveria.
     const retirado = res.status === 404 ||
       /no longer available|not found|not supported|deprecated|does not exist/i.test(res.detail);
-    if (!retirado && !isOverloaded(res.status, res.detail)) break;
+    if (!retirado && !isOverloaded(res.status, res.detail) && res.status !== 429) break;
   }
 
   // Todos os modelos sobrecarregados: uma última tentativa após pausa curta
