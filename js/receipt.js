@@ -4,7 +4,7 @@
 const Receipt = (() => {
   const KEY_STORAGE = "fyg:anthropic-key";
   const MODEL = "claude-haiku-4-5"; // barato e ótimo para ler comprovantes
-  const MAX_EDGE = 1568; // redimensiona para economizar tokens sem perder legibilidade
+  const MAX_EDGE = 2200; // resolução maior: faturas densas (muitas linhas pequenas) ficam legíveis
   const PROXY_PATH = "/api/receipt"; // servidor seguro (Vercel) — a chave fica lá, não aqui
   let pendingFile = null; // arquivo aguardando a chave ser salva
 

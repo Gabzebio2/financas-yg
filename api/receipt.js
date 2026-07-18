@@ -32,15 +32,15 @@ Extraia os dados da operação e responda SOMENTE com JSON. Regras:
 - "categoria": escolha a mais adequada da lista permitida.
 - "direcao": "recebido" apenas se o comprovante mostrar dinheiro RECEBIDO; caso contrário "enviado".`;
 
-const PROMPT_BATCH = `A imagem é uma FATURA de cartão de crédito ou uma PLANILHA de gastos (pode ter muitas linhas).
-Extraia TODAS as linhas de transação, uma por item, e responda SOMENTE com JSON.
+const PROMPT_BATCH = `A imagem é uma FATURA/EXTRATO de banco ou cartão, ou uma PLANILHA de gastos — pode ter MUITAS linhas (facilmente 10, 20, 30 ou mais).
+Sua tarefa é extrair TODAS as transações, SEM PULAR NENHUMA. Percorra a imagem de cima até embaixo, linha por linha, e vá até o fim — NÃO pare depois das primeiras. Responda SOMENTE com JSON: um objeto por transação.
 Regras por item:
 - "data": a data REAL daquela linha, no formato AAAA-MM-DD. Cada linha tem a SUA própria data — leia a data específica de cada transação e NÃO repita a mesma data em todas. Se só aparecer dia/mês (ex: 29/06), use o ano ${new Date().getFullYear()}. Se a linha realmente não mostrar data, deixe "".
-- "descricao": o nome do estabelecimento/local exatamente como aparece (ex: "CAPITAO BAR", "Supermercado").
-- "valor": o valor da linha, como número positivo. Se a linha mostrar dois valores em moedas diferentes, use o valor na MOEDA PRINCIPAL do documento (a mesma da maioria das linhas) e informe essa moeda.
-- "moeda": a moeda desse valor — "BRL" (R$), "CLP" (peso chileno $), "PYG" (guarani ₲/Gs) ou "USD" (US$). Em geral é a mesma para o documento inteiro.
-- "tipo": "receita" se a linha for um pagamento/estorno/valor negativo (ex: linha "Pagamento" ou valor com sinal de menos); senão "despesa".
-Ignore linhas de total, subtotal, saldo, cabeçalho e rodapé. Não invente itens que não estão na imagem.`;
+- "descricao": o nome do estabelecimento/lançamento como aparece (ex: "CAPITAO BAR", "Transferencia a João", "Pago recibido PROVEEDOR").
+- "valor": o valor da linha, número positivo, na moeda principal do documento. Se a linha mostrar dois valores em moedas diferentes, use o da moeda principal.
+- "moeda": "BRL" (R$), "CLP" (peso chileno $), "PYG" (guarani ₲/Gs) ou "USD" (US$). Geralmente a mesma no documento inteiro.
+- "tipo": "receita" para entradas/pagamentos recebidos/estornos/créditos/valores com sinal de +; "despesa" para saídas/transferências enviadas/débitos.
+Ignore APENAS linhas de total, subtotal, saldo e cabeçalho/rodapé — todo o resto é transação. Não resuma, não agrupe linhas parecidas e não pule duplicatas (duas linhas iguais são duas transações). Não invente itens que não estão na imagem.`;
 
 /* ---------- Gemini ---------- */
 function geminiSchema(multi, categories) {
@@ -77,7 +77,7 @@ function geminiSchema(multi, categories) {
 
 async function geminiFetch(key, model, image, categories, multi, withSchema) {
   const generationConfig = { temperature: 0, responseMimeType: "application/json" };
-  if (multi) generationConfig.maxOutputTokens = 8192;
+  if (multi) generationConfig.maxOutputTokens = 32768; // fatura longa cabe sem truncar
   if (withSchema) generationConfig.responseSchema = geminiSchema(multi, categories);
   const promptText = multi
     ? PROMPT_BATCH
@@ -193,7 +193,7 @@ async function callAnthropic(key, image, categories, multi) {
     headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: MODEL_ANTHROPIC,
-      max_tokens: multi ? 4096 : 1024,
+      max_tokens: multi ? 8192 : 1024,
       output_config: { format: { type: "json_schema", schema } },
       messages: [{
         role: "user",
