@@ -1212,6 +1212,19 @@ const Dashboard = (() => {
     return ds ? ds.categories.map((c) => c.name) : DEFAULT_CATS.slice();
   }
 
+  // Encaixa a data lida do comprovante no mês em vista. Se o painel está num
+  // mês específico diferente do atual, mantém o DIA lido mas usa o mês/ano
+  // selecionado — assim comprovantes de meses passados caem no mês que você
+  // está vendo. Nos demais casos (mês atual, intervalo ou "tudo"), usa a data lida.
+  function anchorReceiptDate(iso) {
+    if (fil.mode === "month" && fil.month && fil.month !== todayISO().slice(0, 7)) {
+      const [y, m] = fil.month.split("-").map(Number);
+      const day = Math.min(Number(iso.slice(8, 10)) || 1, daysInMonth(y, m));
+      return `${fil.month}-${String(day).padStart(2, "0")}`;
+    }
+    return iso;
+  }
+
   function fillTxFromReceipt(d) {
     if (!d) return;
     // Pix/transferência enviada = despesa (débito); comprovante de recebimento = receita
@@ -1227,7 +1240,7 @@ const Dashboard = (() => {
       $("#tx-amount").value = fmtMoneyInput(d.valor, code);
       $("#tx-amount").dispatchEvent(new Event("input"));
     }
-    if (typeof d.data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.data)) $("#tx-date").value = d.data;
+    if (typeof d.data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.data)) $("#tx-date").value = anchorReceiptDate(d.data);
     if (d.descricao) $("#tx-desc").value = String(d.descricao).slice(0, 120);
     if (d.categoria) {
       const sel = $("#tx-cat");
