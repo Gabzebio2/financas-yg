@@ -231,22 +231,31 @@ const Dashboard = (() => {
       .reduce((s, t) => s + (t.type === "receita" ? dispAmount(t) : -dispAmount(t)), 0);
 
     const label = fil.mode === "month" ? "do mês" : fil.mode === "range" ? "do período" : "total";
+    // Ícones em círculos coloridos, como os cartões de resumo do Mobills
+    const icoUp = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>`;
+    const icoDown = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>`;
+    const icoWallet = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5h16a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8.5z"/><path d="M3 8.5V7a2 2 0 0 1 2-2h11"/><circle cx="16.5" cy="13.7" r="1" fill="currentColor" stroke="none"/></svg>`;
+    const icoBank = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.3 12 4l9 5.3"/><path d="M5 10.5V18M9.7 10.5V18M14.3 10.5V18M19 10.5V18"/><path d="M3 20h18"/></svg>`;
     $("#summary-cards").innerHTML = `
       <div class="sum-card">
-        <span class="sum-label"><span class="sum-dot" style="background:var(--green)"></span>Receitas ${label}</span>
-        <span class="sum-value pos">${fmtD(receitas)}</span>
+        <span class="sum-ico ico-rec">${icoUp}</span>
+        <span class="sum-info"><span class="sum-label">Receitas ${label}</span>
+        <span class="sum-value pos">${fmtD(receitas)}</span></span>
       </div>
       <div class="sum-card">
-        <span class="sum-label"><span class="sum-dot" style="background:var(--red)"></span>Despesas ${label}</span>
-        <span class="sum-value neg">${fmtD(despesas)}</span>
+        <span class="sum-ico ico-desp">${icoDown}</span>
+        <span class="sum-info"><span class="sum-label">Despesas ${label}</span>
+        <span class="sum-value neg">${fmtD(despesas)}</span></span>
       </div>
       <div class="sum-card">
-        <span class="sum-label"><span class="sum-dot" style="background:var(--primary)"></span>Saldo ${label}</span>
-        <span class="sum-value ${saldo >= 0 ? "pos" : "neg"}">${fmtD(saldo)}</span>
+        <span class="sum-ico ico-saldo">${icoWallet}</span>
+        <span class="sum-info"><span class="sum-label">Saldo ${label}</span>
+        <span class="sum-value ${saldo >= 0 ? "pos" : "neg"}">${fmtD(saldo)}</span></span>
       </div>
       <div class="sum-card">
-        <span class="sum-label"><span class="sum-dot" style="background:#8b5cf6"></span>Saldo acumulado</span>
-        <span class="sum-value ${acumulado >= 0 ? "pos" : "neg"}">${fmtD(acumulado)}</span>
+        <span class="sum-ico ico-acc">${icoBank}</span>
+        <span class="sum-info"><span class="sum-label">Saldo acumulado</span>
+        <span class="sum-value ${acumulado >= 0 ? "pos" : "neg"}">${fmtD(acumulado)}</span></span>
       </div>`;
   }
 
@@ -294,7 +303,8 @@ const Dashboard = (() => {
 
   function renderCharts() {
     Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
-    Chart.defaults.color = "#64748b";
+    Chart.defaults.color = "#9aa0ae";
+    Chart.defaults.borderColor = "rgba(255,255,255,.08)";
     const txs = filteredTxs();
 
     /* 1. Rosca — gastos por categoria */
@@ -309,7 +319,7 @@ const Dashboard = (() => {
         datasets: [{
           data: catEntries.map(([, v]) => v),
           backgroundColor: catEntries.map(([c]) => catColor(ds, c)),
-          borderWidth: 2, borderColor: "#fff",
+          borderWidth: 2, borderColor: "#23232c",
         }],
       },
       options: {
@@ -339,8 +349,8 @@ const Dashboard = (() => {
       data: {
         labels,
         datasets: [
-          { label: "Receitas", data: recData, borderColor: "#16a34a", backgroundColor: "rgba(22,163,74,.12)", fill: true, tension: .3, pointRadius: 3 },
-          { label: "Despesas", data: despData, borderColor: "#e11d48", backgroundColor: "rgba(225,29,72,.12)", fill: true, tension: .3, pointRadius: 3 },
+          { label: "Receitas", data: recData, borderColor: "#45c483", backgroundColor: "rgba(69,196,131,.14)", fill: true, tension: .3, pointRadius: 3 },
+          { label: "Despesas", data: despData, borderColor: "#f06a5f", backgroundColor: "rgba(240,106,95,.14)", fill: true, tension: .3, pointRadius: 3 },
         ],
       },
       options: {
@@ -365,10 +375,10 @@ const Dashboard = (() => {
         datasets: [
           {
             type: "bar", label: "Saldo do mês", data: saldoData,
-            backgroundColor: saldoData.map((v) => (v >= 0 ? "rgba(22,163,74,.65)" : "rgba(225,29,72,.65)")),
+            backgroundColor: saldoData.map((v) => (v >= 0 ? "rgba(69,196,131,.7)" : "rgba(240,106,95,.7)")),
             borderRadius: 6,
           },
-          { type: "line", label: "Acumulado", data: cumData, borderColor: "#4a6cf7", backgroundColor: "#4a6cf7", tension: .3, pointRadius: 3 },
+          { type: "line", label: "Acumulado", data: cumData, borderColor: "#8b5cf6", backgroundColor: "#8b5cf6", tension: .3, pointRadius: 3 },
         ],
       },
       options: {
@@ -392,7 +402,7 @@ const Dashboard = (() => {
         labels: accEntries.map(([a]) => a),
         datasets: [{
           label: "Despesas", data: accEntries.map(([, v]) => v),
-          backgroundColor: "#4a6cf7", borderRadius: 8, maxBarThickness: 34,
+          backgroundColor: "#8b5cf6", borderRadius: 8, maxBarThickness: 34,
         }],
       },
       options: {
@@ -517,12 +527,12 @@ const Dashboard = (() => {
         datasets: [
           {
             label: "Gasto", data: groups.map((g) => g.spent),
-            backgroundColor: groups.map((g) => (g.remaining < 0 ? "#e11d48" : g.pct >= 70 ? "#f59e0b" : "#4a6cf7")),
+            backgroundColor: groups.map((g) => (g.remaining < 0 ? "#f06a5f" : g.pct >= 70 ? "#f5a524" : "#8b5cf6")),
             borderRadius: 8, maxBarThickness: 30,
           },
           {
             label: "Limite", data: groups.map((g) => g.amount),
-            backgroundColor: "#cbd5e1", borderRadius: 8, maxBarThickness: 30,
+            backgroundColor: "#3a3a46", borderRadius: 8, maxBarThickness: 30,
           },
         ],
       },

@@ -9,10 +9,36 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://*.supabase.co wss://*.supabase.co https://open.er-api.com https://cdn.jsdelivr.net; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#101016">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260718g">
+<link rel="stylesheet" href="css/style.css?v=20260719a">
 </head>
 <body>
+
+<!-- Sidebar de ícones (desktop, estilo Mobills web) -->
+<aside class="sidebar">
+  <div class="sb-logo">YG</div>
+  <button class="sb-fab" id="sb-fab" title="Nova transação">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+  <nav class="sb-nav">
+    <button class="sb-item" id="sb-home" title="Início (minhas pastas)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.8 12 3.5l9 7.3"/><path d="M5.2 9.5V20h13.6V9.5"/></svg>
+    </button>
+    <button class="sb-item sb-dash-only" data-scroll="#summary-cards" title="Resumo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>
+    </button>
+    <button class="sb-item sb-dash-only" data-scroll="#limits-block" title="Limites e metas">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>
+    </button>
+    <button class="sb-item sb-dash-only" data-scroll=".charts-grid" title="Gráficos">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>
+    </button>
+    <button class="sb-item sb-dash-only" data-scroll=".table-card" title="Transações">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>
+    </button>
+  </nav>
+</aside>
 
 <header class="topbar">
   <div class="topbar-inner">
@@ -558,15 +584,39 @@
 
 <div id="toast" class="toast hidden"></div>
 
+<!-- Navegação inferior (celular, estilo app Mobills) -->
+<nav class="bottomnav" id="bottomnav">
+  <button class="bn-item" id="bn-home">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.8 12 3.5l9 7.3"/><path d="M5.2 9.5V20h13.6V9.5"/></svg>
+    Início
+  </button>
+  <button class="bn-item" data-scroll=".table-card">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>
+    Transações
+  </button>
+  <button class="bn-fab" id="bn-fab" title="Nova transação">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+  <button class="bn-item" data-scroll="#limits-block">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>
+    Limites
+  </button>
+  <button class="bn-item" data-scroll=".charts-grid">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>
+    Gráficos
+  </button>
+</nav>
+
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20260718g"></script>
+<script src="js/app.js?v=20260719a"></script>
 <script src="js/rates.js?v=20260718a"></script>
 <script src="js/importer.js?v=20260718d"></script>
-<script src="js/dashboard.js?v=20260718g"></script>
+<script src="js/dashboard.js?v=20260719a"></script>
 <script src="js/receipt.js?v=20260718f"></script>
 <script src="js/batch.js?v=20260718h"></script>
 <script src="js/cloud.js?v=20260718i"></script>
+<script src="js/shell.js?v=20260719a"></script>
 </body>
 </html>

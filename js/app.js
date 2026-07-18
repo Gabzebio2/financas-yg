@@ -40,7 +40,7 @@ const fmtBRL = (v) => fmtMoney(v, "BRL");
 const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 const MESES_ABREV = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 
-const PALETTE = ["#4a6cf7","#16a34a","#f59e0b","#e11d48","#8b5cf6","#06b6d4","#ec4899","#84cc16","#f97316","#14b8a6","#6366f1","#a855f7","#eab308","#64748b","#0ea5e9","#d946ef"];
+const PALETTE = ["#8b5cf6","#45c483","#f5a524","#f06a5f","#38bdf8","#2dd4bf","#f472b6","#a3e635","#fb923c","#4ade80","#818cf8","#c084fc","#facc15","#94a3b8","#0ea5e9","#e879f9"];
 
 const DEFAULT_CATS = ["Essencial","Lazer","Viagem","Moradia","Saúde","Transporte","Salário","Outros"];
 
