@@ -35,7 +35,7 @@ Extraia os dados da operação e responda SOMENTE com JSON. Regras:
 const PROMPT_BATCH = `A imagem é uma FATURA de cartão de crédito ou uma PLANILHA de gastos (pode ter muitas linhas).
 Extraia TODAS as linhas de transação, uma por item, e responda SOMENTE com JSON.
 Regras por item:
-- "data": data da compra no formato AAAA-MM-DD. Se só aparecer dia/mês (ex: 29/06), use o ano ${new Date().getFullYear()}.
+- "data": a data REAL daquela linha, no formato AAAA-MM-DD. Cada linha tem a SUA própria data — leia a data específica de cada transação e NÃO repita a mesma data em todas. Se só aparecer dia/mês (ex: 29/06), use o ano ${new Date().getFullYear()}. Se a linha realmente não mostrar data, deixe "".
 - "descricao": o nome do estabelecimento/local exatamente como aparece (ex: "CAPITAO BAR", "Supermercado").
 - "valor": o valor da linha, como número positivo. Se a linha mostrar dois valores em moedas diferentes, use o valor na MOEDA PRINCIPAL do documento (a mesma da maioria das linhas) e informe essa moeda.
 - "moeda": a moeda desse valor — "BRL" (R$), "CLP" (peso chileno $), "PYG" (guarani ₲/Gs) ou "USD" (US$). Em geral é a mesma para o documento inteiro.

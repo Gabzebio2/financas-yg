@@ -293,14 +293,13 @@
     <div class="receipt-box" id="receipt-box">
       <div class="receipt-btns">
         <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-camera">📷 Tirar foto</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-file">🧾 Ler comprovante</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-batch" title="Ler foto de fatura/planilha (ou Excel) com vários itens de uma vez">📄 Fatura/lista</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-upload" title="Envie uma foto (comprovante ou fatura/lista) ou um arquivo Excel — serve tanto para um gasto só quanto para vários de uma vez">📎 Upload do comprovante</button>
         <span class="receipt-status hidden" id="receipt-status"></span>
         <button type="button" class="btn-link hidden" id="btn-apikey-remove"
           title="Apaga a chave de IA salva neste navegador">🔒 remover chave</button>
       </div>
       <input type="file" id="receipt-input-camera" accept="image/*" capture="environment" hidden>
-      <input type="file" id="receipt-input-file" accept="image/*" hidden>
+      <input type="file" id="receipt-input-upload" accept="image/*,.xlsx,.xls" multiple hidden>
       <div id="apikey-wrap" class="hidden">
         <p class="hint">Para a IA ler comprovantes, cole sua chave da API Anthropic
           (crie em <b>console.anthropic.com</b> → API Keys). Ela fica salva só neste navegador.</p>
@@ -556,10 +555,10 @@
 <script src="lib/supabase.min.js"></script>
 <script src="js/app.js?v=20260718a"></script>
 <script src="js/rates.js?v=20260718a"></script>
-<script src="js/importer.js?v=20260718c"></script>
-<script src="js/dashboard.js?v=20260718c"></script>
-<script src="js/receipt.js?v=20260718a"></script>
-<script src="js/batch.js?v=20260718c"></script>
+<script src="js/importer.js?v=20260718d"></script>
+<script src="js/dashboard.js?v=20260718d"></script>
+<script src="js/receipt.js?v=20260718d"></script>
+<script src="js/batch.js?v=20260718d"></script>
 <script src="js/cloud.js?v=20260717c"></script>
 </body>
 </html>

@@ -37,6 +37,18 @@ const Batch = (() => {
     rows = [];
   }
 
+  // Botão "Upload do comprovante": abre a lista e processa os arquivos escolhidos
+  // (fotos e/ou Excel) no mesmo fluxo — serve para um gasto só ou para lote.
+  async function openWithFiles(files) {
+    open({ title: "Upload do comprovante" });
+    const arr = Array.from(files || []).slice(0, 15);
+    const images = arr.filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name));
+    const excels = arr.filter((f) => /\.(xlsx|xls)$/i.test(f.name));
+    if (!images.length && !excels.length) { setStatus("Envie uma foto (comprovante/fatura) ou um arquivo Excel.", "err"); return; }
+    if (excels.length) await fromFiles(excels);
+    if (images.length) await fromPhotos(images);
+  }
+
   /* ---------- Renderização da lista para conferência ---------- */
   function renderPreview() {
     const cats = Dashboard.getCats();
@@ -94,13 +106,14 @@ const Batch = (() => {
     const cur = new Date().getFullYear();
     return (items || []).map((it) => {
       let date = typeof it.date === "string" ? it.date : "";
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) date = todayISO();
-      const y = Number(date.slice(0, 4));
-      if (y < 2000 || y > cur + 1) date = cur + date.slice(4); // conserta ano implausível
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        const y = Number(date.slice(0, 4));
+        if (y < 2000 || y > cur + 1) date = cur + date.slice(4); // conserta ano implausível
+      }
+      // Data real da IA -> usada exatamente; sem data -> mês em vista (via Dashboard)
+      date = Dashboard.resolveImportDate(date);
       const amount = Math.abs(Number(it.amount ?? it.valor) || 0);
       const type = (it.type === "receita" || it.tipo === "receita") ? "receita" : "despesa";
-      // Encaixa no mês selecionado no painel (quando não é o mês atual)
-      date = Dashboard.anchorImportDate(date);
       return { date, desc: String(it.desc ?? it.descricao ?? "").slice(0, 120), amount, type, currency: normCur(it.moeda ?? it.currency), on: amount > 0 };
     }).filter((r) => r.amount > 0);
   }
@@ -275,5 +288,5 @@ const Batch = (() => {
     });
   });
 
-  return { open };
+  return { open, openWithFiles };
 })();

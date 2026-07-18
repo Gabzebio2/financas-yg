@@ -205,18 +205,22 @@ Extraia os dados da operação. Regras:
 
   /* ---------- Eventos ---------- */
   document.addEventListener("DOMContentLoaded", () => {
+    // Tirar foto: captura pela câmera e preenche o formulário (comprovante avulso)
     $("#btn-receipt-camera").addEventListener("click", () => $("#receipt-input-camera").click());
-    $("#btn-receipt-file").addEventListener("click", () => $("#receipt-input-file").click());
-    $("#btn-receipt-batch").addEventListener("click", () => {
-      $("#modal-tx").classList.add("hidden");
-      Batch.open({ title: "Ler fatura ou lista" });
+    $("#receipt-input-camera").addEventListener("change", (ev) => {
+      const file = ev.target.files[0];
+      if (file) analyze(file);
+      ev.target.value = "";
     });
-    ["receipt-input-camera", "receipt-input-file"].forEach((id) => {
-      $("#" + id).addEventListener("change", (ev) => {
-        const file = ev.target.files[0];
-        if (file) analyze(file);
-        ev.target.value = "";
-      });
+    // Upload do comprovante: foto (gasto único ou fatura/lista) ou Excel — tudo
+    // cai na tela de lista para conferir e confirmar de uma vez.
+    $("#btn-receipt-upload").addEventListener("click", () => $("#receipt-input-upload").click());
+    $("#receipt-input-upload").addEventListener("change", (ev) => {
+      const files = Array.from(ev.target.files || []);
+      ev.target.value = "";
+      if (!files.length) return;
+      $("#modal-tx").classList.add("hidden");
+      Batch.openWithFiles(files);
     });
     $("#btn-apikey-save").addEventListener("click", () => {
       const key = $("#apikey-input").value.trim();

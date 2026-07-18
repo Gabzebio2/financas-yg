@@ -1212,19 +1212,17 @@ const Dashboard = (() => {
     return ds ? ds.categories.map((c) => c.name) : DEFAULT_CATS.slice();
   }
 
-  // Encaixa uma data importada (comprovante avulso, foto de fatura/lista ou
-  // Excel) no mês em vista. Se o painel está num mês específico diferente do
-  // atual, mantém o DIA mas usa o mês/ano selecionado — assim o que você
-  // importa cai no mês que está vendo. Nos demais casos (mês atual, intervalo
-  // ou "tudo"), usa a data original.
-  function anchorImportDate(iso) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return iso;
-    if (fil.mode === "month" && fil.month && fil.month !== todayISO().slice(0, 7)) {
-      const [y, m] = fil.month.split("-").map(Number);
-      const day = Math.min(Number(iso.slice(8, 10)) || 1, daysInMonth(y, m));
-      return `${fil.month}-${String(day).padStart(2, "0")}`;
-    }
-    return iso;
+  // Data de um item importado (comprovante avulso, foto de fatura/lista ou
+  // Excel). Se a IA/planilha traz uma data real, ela é usada EXATAMENTE — assim
+  // cada gasto/receita é contabilizado no dia certo. Só quando NÃO há data
+  // legível é que cai no mês em vista (dia 1º), ou em hoje se for o mês atual.
+  function importFallbackDate() {
+    const today = todayISO();
+    if (fil.mode === "month" && fil.month && fil.month !== today.slice(0, 7)) return fil.month + "-01";
+    return today;
+  }
+  function resolveImportDate(iso) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? iso : importFallbackDate();
   }
 
   function fillTxFromReceipt(d) {
@@ -1242,7 +1240,7 @@ const Dashboard = (() => {
       $("#tx-amount").value = fmtMoneyInput(d.valor, code);
       $("#tx-amount").dispatchEvent(new Event("input"));
     }
-    if (typeof d.data === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.data)) $("#tx-date").value = anchorImportDate(d.data);
+    $("#tx-date").value = resolveImportDate(d.data);
     if (d.descricao) $("#tx-desc").value = String(d.descricao).slice(0, 120);
     if (d.categoria) {
       const sel = $("#tx-cat");
@@ -1586,5 +1584,5 @@ const Dashboard = (() => {
     return n;
   }
 
-  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, anchorImportDate };
+  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, resolveImportDate };
 })();

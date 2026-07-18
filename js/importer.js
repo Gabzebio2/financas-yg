@@ -361,10 +361,7 @@ const Importer = (() => {
 
   /* ---------- Pré-visualização ---------- */
   function showPreview(results) {
-    let txs = results.flatMap((r) => r.txs);
-    // Adicionando à pasta aberta com um mês específico em vista: encaixa as
-    // datas nesse mês (mesma regra do comprovante avulso).
-    if (addToCurrent) txs = txs.map((t) => ({ ...t, date: Dashboard.anchorImportDate(t.date) }));
+    const txs = results.flatMap((r) => r.txs);
     txs.sort((a, b) => a.date.localeCompare(b.date));
     const notes = [];
     results.forEach((r) => {
