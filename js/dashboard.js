@@ -60,7 +60,6 @@ const Dashboard = (() => {
     undoStack.length = 0;
     updateUndoBtn();
     $("#tx-search").value = "";
-    $("#filter-mode").value = "month";
     showScreen("screen-dash");
     renderAll();
   }
@@ -161,13 +160,18 @@ const Dashboard = (() => {
     renderTable();
   }
 
-  // Seletor da moeda de exibição do painel + linha de status da cotação
+  // Botão "BRL ▾" do cabeçalho + menu de moedas + linha de status da cotação
   function renderCurrencyControl() {
-    const sel = $("#disp-currency");
-    if (sel) {
-      sel.innerHTML = CURRENCY_CODES.map((c) =>
-        `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
-      sel.value = dispCur();
+    const code = $("#hero-cur-code");
+    if (code) code.textContent = dispCur();
+    const menu = $("#cur-menu");
+    if (menu) {
+      menu.innerHTML = CURRENCY_CODES.map((c) => `
+        <button type="button" class="pop-item ${c === dispCur() ? "active" : ""}" data-cur="${c}">
+          ${escapeHtml(CURRENCIES[c].symbol)} — ${escapeHtml(CURRENCIES[c].name)}
+          ${c === dispCur() ? '<span class="pop-check">✓</span>' : ""}
+        </button>`).join("") +
+        `<div class="pop-sep"></div><div class="pop-hint" id="rates-hint" title="Cotação usada para converter as moedas"></div>`;
     }
     renderRatesHint();
   }
@@ -187,11 +191,41 @@ const Dashboard = (() => {
   }
 
   function renderPeriodControls() {
-    $("#month-nav").classList.toggle("hidden", fil.mode !== "month");
-    $("#range-nav").classList.toggle("hidden", fil.mode !== "range");
-    if (fil.mode === "month" && fil.month) $("#month-label").textContent = fmtMonthLong(fil.month);
-    $("#range-from").value = fil.from;
-    $("#range-to").value = fil.to;
+    const lbl = fil.month ? fmtMonthLong(fil.month) : "—";
+    $("#month-label").textContent = lbl;
+    const t = $("#txs-month-label");
+    if (t) t.textContent = lbl;
+  }
+
+  /* ---------- Calendário de meses (popup do cabeçalho) ---------- */
+  let mmYear = null;
+
+  function renderMonthMenu() {
+    $("#mm-year").textContent = mmYear;
+    const cur = todayISO().slice(0, 7);
+    $("#mm-grid").innerHTML = MESES_ABREV.map((m, i) => {
+      const ym = `${mmYear}-${String(i + 1).padStart(2, "0")}`;
+      const cls = ym === fil.month ? "mm-sel" : ym === cur ? "mm-cur" : "";
+      return `<button type="button" class="${cls}" data-ym="${ym}">${m}.</button>`;
+    }).join("");
+  }
+
+  function openMonthMenu() {
+    mmYear = Number((fil.month || todayISO()).slice(0, 4));
+    renderMonthMenu();
+    $("#month-menu").classList.remove("hidden");
+  }
+
+  /* ---------- Menu de pastas (ícone de conta do cabeçalho) ---------- */
+  function renderAcctMenu() {
+    const idx = Store.loadIndex();
+    $("#acct-menu").innerHTML = idx.map((e) => `
+      <button type="button" class="pop-item ${ds && e.id === ds.id ? "active" : ""}" data-ds="${escapeHtml(e.id)}">
+        🗂 ${escapeHtml(e.name)}
+        ${ds && e.id === ds.id ? '<span class="pop-check">✓</span>' : ""}
+      </button>`).join("") +
+      `<div class="pop-sep"></div>
+       <button type="button" class="pop-item" data-acct-home="1">🏠 Todas as pastas</button>`;
   }
 
   function stepMonth(delta) {
@@ -204,8 +238,12 @@ const Dashboard = (() => {
   }
 
   function renderCatFilter() {
+    // O botão é um funil fixo no cabeçalho; só sinaliza (bolinha) quando há filtro
     const btn = $("#cat-filter-btn");
-    btn.textContent = fil.cats ? `${fil.cats.size} categoria(s) ▾` : "Todas as categorias ▾";
+    btn.classList.toggle("cat-filtered", !!fil.cats);
+    btn.title = fil.cats
+      ? `Filtro ativo: ${fil.cats.size} categoria(s) — toque para ajustar`
+      : "Filtrar categorias (todas vêm selecionadas)";
     const dd = $("#cat-dropdown");
     const allChecked = !fil.cats;
     dd.innerHTML =
@@ -242,6 +280,30 @@ const Dashboard = (() => {
     accEl.textContent = fmtD(acumulado);
     accEl.classList.toggle("pos", acumulado >= 0);
     accEl.classList.toggle("neg", acumulado < 0);
+    // Mini-resumo da tela de Transações ("Saldo atual" = acumulado)
+    const tAcc = $("#txs-acc");
+    if (tAcc) { tAcc.textContent = fmtD(acumulado); tAcc.className = acumulado >= 0 ? "pos" : "neg"; }
+    const tSal = $("#txs-saldo");
+    if (tSal) { tSal.textContent = fmtD(saldo); tSal.className = saldo >= 0 ? "pos" : "neg"; }
+    fitHeroFlow();
+  }
+
+  // Encolhe os valores de Receitas/Despesas só o necessário para caberem
+  // lado a lado na tela (o tamanho base é o do print: 26px no celular)
+  function fitHeroFlow() {
+    const flow = document.querySelector(".hero-flow");
+    if (!flow) return;
+    const vals = flow.querySelectorAll(".hero-flow-value");
+    vals.forEach((el) => { el.style.fontSize = ""; });
+    let guard = 16;
+    while (guard-- > 0 && flow.scrollWidth > flow.clientWidth + 1) {
+      let shrunk = false;
+      vals.forEach((el) => {
+        const s = parseFloat(getComputedStyle(el).fontSize);
+        if (s > 14) { el.style.fontSize = (s - 1) + "px"; shrunk = true; }
+      });
+      if (!shrunk) break;
+    }
   }
 
   /* ---------- Gráficos ---------- */
@@ -287,7 +349,7 @@ const Dashboard = (() => {
   }
 
   function renderCharts() {
-    Chart.defaults.font.family = "'MiSans', 'Segoe UI', system-ui, sans-serif";
+    Chart.defaults.font.family = "'Raleway', 'Segoe UI', system-ui, sans-serif";
     Chart.defaults.color = "#9aa0ae";
     Chart.defaults.borderColor = "rgba(255,255,255,.08)";
     const txs = filteredTxs();
@@ -1260,43 +1322,85 @@ const Dashboard = (() => {
     // Máscara de moeda (R$ 10,25) em todos os campos fixos de valor
     ["#tx-amount", "#meta-target", "#meta-saved", "#limit-amount"].forEach((s) => attachMoneyMask($(s)));
 
-    // Filtro de período
-    $("#filter-mode").addEventListener("change", (ev) => {
-      fil.mode = ev.target.value;
-      if (fil.mode === "range" && !fil.from && !fil.to) {
-        const months = allMonths();
-        if (months.length) {
-          fil.from = months[0] + "-01";
-          const last = months[months.length - 1];
-          const [y, m] = last.split("-").map(Number);
-          fil.to = `${last}-${String(daysInMonth(y, m)).padStart(2, "0")}`;
-        }
-      }
-      renderAll();
-    });
+    // Navegação de mês (setas da tela de Transações)
     $("#month-prev").addEventListener("click", () => stepMonth(-1));
     $("#month-next").addEventListener("click", () => stepMonth(1));
-    $("#range-from").addEventListener("change", (ev) => { fil.from = ev.target.value; renderAll(); });
-    $("#range-to").addEventListener("change", (ev) => { fil.to = ev.target.value; renderAll(); });
 
-    // Moeda de exibição do painel (preferência de visualização por pasta)
-    $("#disp-currency").addEventListener("change", (ev) => {
-      ds.displayCurrency = normCur(ev.target.value);
-      Store.saveDataset(ds); // preferência: não empilha no "Desfazer"
+    // Calendário de meses: clique no mês do cabeçalho
+    $("#hero-month").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      if ($("#month-menu").classList.contains("hidden")) openMonthMenu();
+      else $("#month-menu").classList.add("hidden");
+    });
+    $("#mm-prev").addEventListener("click", () => { mmYear--; renderMonthMenu(); });
+    $("#mm-next").addEventListener("click", () => { mmYear++; renderMonthMenu(); });
+    $("#mm-cancel").addEventListener("click", () => $("#month-menu").classList.add("hidden"));
+    $("#mm-today").addEventListener("click", () => {
+      fil.month = todayISO().slice(0, 7);
+      $("#month-menu").classList.add("hidden");
       renderAll();
     });
-    // Atualizar cotação manualmente (o botão é recriado a cada render → delegação)
-    $("#fg-moeda").addEventListener("click", (ev) => {
-      if (ev.target.closest("#btn-rates-refresh")) { Rates.refresh(); toast("Buscando a cotação mais recente… 🌐"); }
+    $("#mm-grid").addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-ym]");
+      if (!b) return;
+      fil.month = b.dataset.ym;
+      $("#month-menu").classList.add("hidden");
+      renderAll();
     });
+
+    // Moeda do painel: botão "BRL ▾" no topo direito do cabeçalho
+    $("#hero-cur").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      $("#cur-menu").classList.toggle("hidden");
+    });
+    $("#cur-menu").addEventListener("click", (ev) => {
+      if (ev.target.closest("#btn-rates-refresh")) {
+        Rates.refresh(); toast("Buscando a cotação mais recente… 🌐"); return;
+      }
+      const item = ev.target.closest("[data-cur]");
+      if (!item) return;
+      ds.displayCurrency = normCur(item.dataset.cur);
+      Store.saveDataset(ds); // preferência: não empilha no "Desfazer"
+      $("#cur-menu").classList.add("hidden");
+      renderAll();
+    });
+
+    // Menu de pastas: ícone de conta no topo esquerdo (pessoa física / empresa…)
+    $("#hero-acct").addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const menu = $("#acct-menu");
+      if (menu.classList.contains("hidden")) { renderAcctMenu(); menu.classList.remove("hidden"); }
+      else menu.classList.add("hidden");
+    });
+    $("#acct-menu").addEventListener("click", (ev) => {
+      if (ev.target.closest("[data-acct-home]")) {
+        $("#acct-menu").classList.add("hidden"); goHome(); return;
+      }
+      const item = ev.target.closest("[data-ds]");
+      if (!item) return;
+      $("#acct-menu").classList.add("hidden");
+      if (!ds || item.dataset.ds !== ds.id) open(item.dataset.ds);
+    });
+
+    // Receitas/Despesas do cabeçalho abrem a transação já no tipo certo
+    $("#hero-flow-rec").addEventListener("click", () => openTxModal(null, { type: "receita" }));
+    $("#hero-flow-desp").addEventListener("click", () => openTxModal(null, { type: "despesa" }));
+
+    // Reencaixa os valores do cabeçalho ao girar/redimensionar a tela
+    window.addEventListener("resize", fitHeroFlow);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitHeroFlow);
 
     // Filtro de categorias
     $("#cat-filter-btn").addEventListener("click", (ev) => {
       ev.stopPropagation();
       $("#cat-dropdown").classList.toggle("hidden");
     });
+    // Fecha os menus flutuantes ao clicar fora deles
     document.addEventListener("click", (ev) => {
       if (!ev.target.closest("#cat-filter")) $("#cat-dropdown").classList.add("hidden");
+      if (!ev.target.closest("#month-menu") && !ev.target.closest("#hero-month")) $("#month-menu").classList.add("hidden");
+      if (!ev.target.closest("#cur-menu") && !ev.target.closest("#hero-cur")) $("#cur-menu").classList.add("hidden");
+      if (!ev.target.closest("#acct-menu") && !ev.target.closest("#hero-acct")) $("#acct-menu").classList.add("hidden");
     });
     $("#cat-dropdown").addEventListener("change", (ev) => {
       const cat = ev.target.dataset.cat;

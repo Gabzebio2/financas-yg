@@ -11,7 +11,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#101016">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260719c">
+<link rel="stylesheet" href="css/style.css?v=20260720a">
 </head>
 <body>
 
@@ -34,7 +34,7 @@
     <button class="sb-item sb-dash-only" data-scroll=".charts-grid" title="Gráficos">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>
     </button>
-    <button class="sb-item sb-dash-only" data-scroll=".table-card" title="Transações">
+    <button class="sb-item sb-dash-only" id="sb-txs" title="Transações">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>
     </button>
   </nav>
@@ -203,15 +203,46 @@
     <!-- Cabeçalho estilo app Mobills: mês centralizado, saldo grande e
          Receitas × Despesas com ícones redondos -->
     <div class="dash-hero" id="dash-hero">
-      <div class="hero-period">
-        <div id="month-nav" class="month-nav">
-          <button class="btn-icon" id="month-prev">‹</button>
+      <!-- Topo: [conta]  Mês ⌄  [categorias][moeda BRL ▾] -->
+      <div class="hero-top">
+        <div class="hero-top-left">
+          <button class="btn-icon hero-top-icon" id="hero-acct" title="Trocar de painel (ex: pessoa física / empresa)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.7"/><path d="M4.8 20c.9-4 3.9-5.6 7.2-5.6s6.3 1.6 7.2 5.6"/></svg>
+          </button>
+        </div>
+        <button class="hero-month" id="hero-month" title="Escolher o mês">
           <span id="month-label">—</span>
-          <button class="btn-icon" id="month-next">›</button>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l7 7 7-7"/></svg>
+        </button>
+        <div class="hero-top-right">
+          <div class="cat-filter" id="cat-filter">
+            <button class="btn-icon hero-top-icon" id="cat-filter-btn" title="Filtrar categorias (todas vêm selecionadas)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5h17l-6.7 8v5.5l-3.6 1.8v-7.3z"/></svg>
+            </button>
+            <div class="cat-dropdown hidden" id="cat-dropdown"></div>
+          </div>
+          <button class="hero-cur" id="hero-cur" title="Moeda do painel">
+            <span id="hero-cur-code">BRL</span><span class="cur-tri"></span>
+          </button>
         </div>
-        <div id="range-nav" class="range-nav hidden">
-          <input type="date" id="range-from"> <span>até</span> <input type="date" id="range-to">
+
+        <!-- Menu de pastas (pessoa física / empresa / ...) -->
+        <div class="pop-menu hidden" id="acct-menu"></div>
+        <!-- Calendário de meses (como no app Mobills) -->
+        <div class="pop-menu hidden" id="month-menu">
+          <div class="mm-head">
+            <button type="button" id="mm-prev" title="Ano anterior">‹</button>
+            <span id="mm-year">—</span>
+            <button type="button" id="mm-next" title="Próximo ano">›</button>
+          </div>
+          <div class="mm-grid" id="mm-grid"></div>
+          <div class="mm-foot">
+            <button type="button" id="mm-cancel">Cancelar</button>
+            <button type="button" id="mm-today">Mês atual</button>
+          </div>
         </div>
+        <!-- Menu da moeda -->
+        <div class="pop-menu hidden" id="cur-menu"></div>
       </div>
       <div class="hero-balance">
         <span class="hero-balance-label" id="hero-saldo-label">Saldo em contas</span>
@@ -221,53 +252,26 @@
         </button>
       </div>
       <div class="hero-flow">
-        <div class="hero-flow-item">
+        <button type="button" class="hero-flow-item" id="hero-flow-rec" title="Adicionar receita">
           <span class="sum-ico ico-rec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
           <span class="hero-flow-txt">
             <span class="hero-flow-label">Receitas</span>
             <span class="hero-flow-value pos" id="hero-rec">—</span>
           </span>
-        </div>
-        <div class="hero-flow-item">
+        </button>
+        <button type="button" class="hero-flow-item" id="hero-flow-desp" title="Adicionar despesa">
           <span class="sum-ico ico-desp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></span>
           <span class="hero-flow-txt">
             <span class="hero-flow-label">Despesas</span>
             <span class="hero-flow-value neg" id="hero-desp">—</span>
           </span>
-        </div>
+        </button>
         <div class="hero-flow-item hero-flow-acc">
           <span class="sum-ico ico-acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.3 12 4l9 5.3"/><path d="M5 10.5V18M9.7 10.5V18M14.3 10.5V18M19 10.5V18"/><path d="M3 20h18"/></svg></span>
           <span class="hero-flow-txt">
             <span class="hero-flow-label">Saldo acumulado</span>
             <span class="hero-flow-value" id="hero-acc">—</span>
           </span>
-        </div>
-      </div>
-    </div>
-
-    <div class="filters card">
-      <div class="filter-group">
-        <label class="field-label">Período</label>
-        <div class="period-controls">
-          <select id="filter-mode">
-            <option value="month">Por mês</option>
-            <option value="range">Intervalo</option>
-            <option value="all">Tudo</option>
-          </select>
-        </div>
-      </div>
-      <div class="filter-group" id="fg-categorias">
-        <label class="field-label">Categorias</label>
-        <div class="cat-filter" id="cat-filter">
-          <button class="btn btn-ghost" id="cat-filter-btn">Todas as categorias ▾</button>
-          <div class="cat-dropdown hidden" id="cat-dropdown"></div>
-        </div>
-      </div>
-      <div class="filter-group" id="fg-moeda">
-        <label class="field-label" for="disp-currency">Moeda do painel</label>
-        <div class="currency-controls">
-          <select id="disp-currency"></select>
-          <span class="rates-hint" id="rates-hint" title="Cotação usada para converter as moedas"></span>
         </div>
       </div>
     </div>
@@ -312,6 +316,26 @@
         <h3>Gastos por cartão / conta</h3>
         <div class="chart-box"><canvas id="chart-conta"></canvas></div>
       </div>
+    </div>
+
+  </section>
+
+  <!-- ===================== TRANSAÇÕES (tela própria) ===================== -->
+  <section id="screen-txs" class="screen hidden">
+    <div class="txs-head">
+      <button class="btn-icon" id="btn-txs-back" title="Voltar ao painel">←</button>
+      <h1>Transações</h1>
+    </div>
+    <div class="txs-month">
+      <div class="month-nav">
+        <button class="btn-icon" id="month-prev">‹</button>
+        <span id="txs-month-label">—</span>
+        <button class="btn-icon" id="month-next">›</button>
+      </div>
+    </div>
+    <div class="card txs-stats">
+      <div class="txs-stat"><span>Saldo atual</span><b id="txs-acc">—</b></div>
+      <div class="txs-stat"><span>Balanço mensal</span><b id="txs-saldo">—</b></div>
     </div>
 
     <div class="card table-card">
@@ -625,7 +649,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.8 12 3.5l9 7.3"/><path d="M5.2 9.5V20h13.6V9.5"/></svg>
     Início
   </button>
-  <button class="bn-item" data-scroll=".table-card">
+  <button class="bn-item" id="bn-txs">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>
     Transações
   </button>
@@ -648,10 +672,10 @@
 <script src="js/app.js?v=20260719a"></script>
 <script src="js/rates.js?v=20260718a"></script>
 <script src="js/importer.js?v=20260718d"></script>
-<script src="js/dashboard.js?v=20260719c"></script>
+<script src="js/dashboard.js?v=20260720a"></script>
 <script src="js/receipt.js?v=20260718f"></script>
 <script src="js/batch.js?v=20260718h"></script>
 <script src="js/cloud.js?v=20260718i"></script>
-<script src="js/shell.js?v=20260719b"></script>
+<script src="js/shell.js?v=20260720a"></script>
 </body>
 </html>
