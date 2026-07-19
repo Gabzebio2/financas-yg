@@ -28,6 +28,10 @@ const Dashboard = (() => {
     const loaded = Store.loadDataset(id);
     if (!loaded) { toast("Pasta não encontrada 😕"); goHome(); return; }
     ds = loaded;
+    // Lembra a última pasta pessoal aberta (usada no menu Pessoa física/Empresa)
+    if (ds.profile !== "pj") {
+      try { localStorage.setItem("fyg:pf-last", ds.id); } catch { /* sem storage */ }
+    }
     // Migração para multi-moeda: pastas antigas eram 100% em Real
     ds.displayCurrency = normCur(ds.displayCurrency);
     ds.transactions.forEach((t) => { if (!t.currency) t.currency = "BRL"; });
@@ -223,16 +227,50 @@ const Dashboard = (() => {
     $("#month-menu").classList.remove("hidden");
   }
 
-  /* ---------- Menu de pastas (ícone de conta do cabeçalho) ---------- */
+  /* ---------- Menu de contas (ícone do topo esquerdo) ----------
+     Mostra dois perfis: "Pessoa física" (a pasta pessoal em uso) e
+     "Empresa" — que vira "Criar conta Empresa" enquanto não existir. */
+  const EMPRESA_CATS = [
+    "Receita de vendas", "Serviços", "Impostos", "Folha de pagamento",
+    "Fornecedores", "Marketing", "Operacional", "Pró-labore",
+    "Software e assinaturas", "Outros",
+  ];
+
+  function createEmpresaDataset() {
+    const nds = Store.createDataset("Empresa");
+    nds.profile = "pj";
+    nds.categories = [];
+    EMPRESA_CATS.forEach((c) => ensureCat(nds, c));
+    Store.saveDataset(nds);
+    open(nds.id);
+    toast("Conta Empresa criada 🏢 — categorias de negócio já configuradas");
+  }
+
   function renderAcctMenu() {
     const idx = Store.loadIndex();
-    $("#acct-menu").innerHTML = idx.map((e) => `
-      <button type="button" class="pop-item ${ds && e.id === ds.id ? "active" : ""}" data-ds="${escapeHtml(e.id)}">
-        🗂 ${escapeHtml(e.name)}
-        ${ds && e.id === ds.id ? '<span class="pop-check">✓</span>' : ""}
-      </button>`).join("") +
-      `<div class="pop-sep"></div>
-       <button type="button" class="pop-item" data-acct-home="1">🏠 Todas as pastas</button>`;
+    const isPj = (e) => e.profile === "pj";
+    const pj = idx.find(isPj);
+    const curIsPj = !!(ds && ds.profile === "pj");
+    // "Pessoa física" = a pasta pessoal aberta (ou a última pessoal usada)
+    let pf = null;
+    if (ds && !curIsPj) pf = idx.find((e) => e.id === ds.id) || null;
+    if (!pf) {
+      let lastPf = null;
+      try { lastPf = localStorage.getItem("fyg:pf-last"); } catch { /* sem storage */ }
+      pf = idx.find((e) => !isPj(e) && e.id === lastPf) || idx.find((e) => !isPj(e)) || null;
+    }
+    let html = "";
+    if (pf) {
+      html += `<button type="button" class="pop-item ${!curIsPj ? "active" : ""}" data-ds="${escapeHtml(pf.id)}">
+        👤 Pessoa física${!curIsPj ? '<span class="pop-check">✓</span>' : ""}</button>`;
+    }
+    html += pj
+      ? `<button type="button" class="pop-item ${curIsPj ? "active" : ""}" data-ds="${escapeHtml(pj.id)}">
+          🏢 Empresa${curIsPj ? '<span class="pop-check">✓</span>' : ""}</button>`
+      : `<button type="button" class="pop-item" data-create-pj="1">➕ Criar conta Empresa</button>`;
+    html += `<div class="pop-sep"></div>
+      <button type="button" class="pop-item" data-acct-home="1">🏠 Todas as pastas</button>`;
+    $("#acct-menu").innerHTML = html;
   }
 
   function stepMonth(delta) {
@@ -1372,6 +1410,9 @@ const Dashboard = (() => {
       Store.saveDataset(ds); // preferência: não empilha no "Desfazer"
       $("#cur-menu").classList.add("hidden");
       renderAll();
+      // Sempre busca a cotação mais recente ao trocar a moeda; quando
+      // chegar, o painel re-renderiza sozinho (Rates.onUpdate)
+      Rates.refresh();
     });
 
     // Menu de pastas: ícone de conta no topo esquerdo (pessoa física / empresa…)
@@ -1384,6 +1425,9 @@ const Dashboard = (() => {
     $("#acct-menu").addEventListener("click", (ev) => {
       if (ev.target.closest("[data-acct-home]")) {
         $("#acct-menu").classList.add("hidden"); goHome(); return;
+      }
+      if (ev.target.closest("[data-create-pj]")) {
+        $("#acct-menu").classList.add("hidden"); createEmpresaDataset(); return;
       }
       const item = ev.target.closest("[data-ds]");
       if (!item) return;

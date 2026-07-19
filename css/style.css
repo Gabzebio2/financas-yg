@@ -792,6 +792,17 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 
 /* ===== Responsivo ===== */
 @media (max-width: 980px) {
+  /* Quem rola é o <main>, não a página — assim o navegador do celular
+     não mostra o botão flutuante de "voltar ao topo" */
+  html, body { height: 100%; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  .topbar { position: static; flex-shrink: 0; }
+  main {
+    flex: 1 1 auto; min-height: 0; min-width: 0; width: 100%;
+    overflow-y: auto; overflow-x: clip;
+    -webkit-overflow-scrolling: touch;
+  }
+
   /* Barra inferior aparece no painel e na tela de transações */
   body:has(#screen-dash:not(.hidden), #screen-txs:not(.hidden)) .bottomnav { display: flex; }
   body:has(#screen-dash:not(.hidden), #screen-txs:not(.hidden)) main { padding-bottom: 120px; }

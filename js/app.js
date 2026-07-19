@@ -221,8 +221,9 @@ const Store = {
     const e = idx.find((x) => x.id === ds.id);
     if (e) {
       e.name = ds.name; e.updatedAt = ds.updatedAt; e.txCount = ds.transactions.length;
+      e.profile = ds.profile === "pj" ? "pj" : "pf";
     } else {
-      idx.unshift({ id: ds.id, name: ds.name, createdAt: ds.createdAt, updatedAt: ds.updatedAt, txCount: ds.transactions.length });
+      idx.unshift({ id: ds.id, name: ds.name, createdAt: ds.createdAt, updatedAt: ds.updatedAt, txCount: ds.transactions.length, profile: ds.profile === "pj" ? "pj" : "pf" });
     }
     this.saveIndex(idx);
     this._notify();
@@ -239,7 +240,7 @@ const Store = {
   },
   createDataset(name) {
     const now = new Date().toISOString();
-    const ds = { id: uid(), name: name || "Sem nome", createdAt: now, updatedAt: now, displayCurrency: "BRL", categories: [], transactions: [] };
+    const ds = { id: uid(), name: name || "Sem nome", createdAt: now, updatedAt: now, displayCurrency: "BRL", profile: "pf", categories: [], transactions: [] };
     DEFAULT_CATS.forEach((c) => ensureCat(ds, c));
     return ds;
   },
@@ -268,6 +269,9 @@ function showScreen(id) {
   $("#" + id).classList.remove("hidden");
   $("#btn-back").classList.toggle("hidden", id === "screen-home");
   window.scrollTo(0, 0);
+  // No celular quem rola é o <main> (evita o botão "voltar ao topo" do navegador)
+  const m = $("#main");
+  if (m && m.scrollTo) m.scrollTo(0, 0);
 }
 
 function goHome() {
@@ -402,6 +406,7 @@ function sanitizeDataset(raw, opts) {
     createdAt: cleanISO(raw.createdAt, now),
     updatedAt: cleanISO(raw.updatedAt, now),
     displayCurrency: normCur(raw.displayCurrency),
+    profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: [],
     limits: [],
