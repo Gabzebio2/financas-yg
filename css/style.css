@@ -2,12 +2,13 @@
    Layout desktop com sidebar de ícones (como o Mobills web) e
    navegação inferior com FAB central no celular (como o app). */
 
-/* Fonte Raleway — a fonte oficial do Mobills (confirmada no web app deles,
-   que carrega Raleway do Google Fonts). Arquivo variável local em fonts/,
-   sem depender de CDN (a CSP só permite 'self'). */
+/* Fonte Open Sans — a fonte do app Android do Mobills (identificada por
+   comparação glyph a glyph com os prints: dígitos largos e redondos,
+   letras humanistas robustas). Arquivo variável local em fonts/, sem
+   depender de CDN (a CSP só permite 'self'). */
 @font-face {
-  font-family: "Raleway"; font-weight: 100 900; font-style: normal; font-display: swap;
-  src: url("../fonts/Raleway-Var.woff2") format("woff2");
+  font-family: "Open Sans"; font-weight: 300 800; font-style: normal; font-display: swap;
+  src: url("../fonts/OpenSans-Var.woff2") format("woff2");
 }
 
 :root {
@@ -40,7 +41,7 @@ html, body { margin: 0; padding: 0; }
 /* nunca rolar a página para o lado (celular) — clip bloqueia até o arrasto */
 html, body { overflow-x: clip; }
 body {
-  font-family: "Raleway", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: "Open Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
   background: var(--bg);
   color: var(--text);
   font-size: 15px;
@@ -271,7 +272,8 @@ body:has(#screen-txs:not(.hidden)) #sb-txs { background: var(--primary-soft); co
 /* ===== Painel ===== */
 .dash-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; flex-wrap: wrap; }
 .dash-header-btns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ds-name-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ds-name-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; position: relative; }
+.ds-name-wrap .cat-filter { display: flex; }
 .ds-name-wrap h1 { font-size: 22px; margin: 0; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-name-input {
   font-size: 20px; font-weight: 700; font-family: inherit; color: var(--text);
@@ -301,6 +303,9 @@ body:has(#screen-txs:not(.hidden)) #sb-txs { background: var(--primary-soft); co
 .hero-top-icon { width: 40px; height: 40px; color: var(--text-soft); }
 .hero-top-icon:hover { color: var(--text); }
 .hero-top-icon svg { width: 23px; height: 23px; }
+.hero-month-wrap { display: flex; align-items: center; gap: 0; }
+.hero-month-arrow { width: 34px; height: 36px; font-size: 24px; color: var(--text-soft); }
+.hero-month-arrow:hover { color: var(--text); }
 .hero-month {
   border: none; background: transparent; cursor: pointer; font-family: inherit;
   color: var(--text); font-weight: 600; font-size: 21px; white-space: nowrap;
@@ -834,7 +839,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
   .hero-flow-txt { min-width: 0; }
   .hero-flow-label { font-size: 17px; }
   .hero-flow-value { font-size: 26px; }
-  .hero-month { font-size: 17.5px; gap: 6px; padding: 6px 6px; }
+  .hero-month { font-size: 19px; gap: 6px; padding: 6px 4px; }
 
   /* O botão flutuante (+) da barra inferior já cria transações */
   #btn-add-tx { display: none; }

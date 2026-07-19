@@ -11,7 +11,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#101016">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260720a">
+<link rel="stylesheet" href="css/style.css?v=20260720b">
 </head>
 <body>
 
@@ -193,6 +193,12 @@
       <div class="ds-name-wrap">
         <h1 id="ds-name" title="Clique para renomear">—</h1>
         <button class="btn-icon" id="btn-rename-ds" title="Renomear pasta">✎</button>
+        <div class="cat-filter" id="cat-filter">
+          <button class="btn-icon" id="cat-filter-btn" title="Filtrar categorias (todas vêm selecionadas)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" width="19" height="19"><path d="M3.5 5h17l-6.7 8v5.5l-3.6 1.8v-7.3z"/></svg>
+          </button>
+          <div class="cat-dropdown hidden" id="cat-dropdown"></div>
+        </div>
       </div>
       <div class="dash-header-btns">
         <button class="btn btn-ghost hidden" id="btn-undo" title="Desfazer a última alteração (Ctrl+Z)">↩ Desfazer</button>
@@ -210,17 +216,15 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.7"/><path d="M4.8 20c.9-4 3.9-5.6 7.2-5.6s6.3 1.6 7.2 5.6"/></svg>
           </button>
         </div>
-        <button class="hero-month" id="hero-month" title="Escolher o mês">
-          <span id="month-label">—</span>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l7 7 7-7"/></svg>
-        </button>
+        <div class="hero-month-wrap">
+          <button class="btn-icon hero-month-arrow" id="hero-month-prev" title="Mês anterior">‹</button>
+          <button class="hero-month" id="hero-month" title="Escolher o mês">
+            <span id="month-label">—</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l7 7 7-7"/></svg>
+          </button>
+          <button class="btn-icon hero-month-arrow" id="hero-month-next" title="Próximo mês">›</button>
+        </div>
         <div class="hero-top-right">
-          <div class="cat-filter" id="cat-filter">
-            <button class="btn-icon hero-top-icon" id="cat-filter-btn" title="Filtrar categorias (todas vêm selecionadas)">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5h17l-6.7 8v5.5l-3.6 1.8v-7.3z"/></svg>
-            </button>
-            <div class="cat-dropdown hidden" id="cat-dropdown"></div>
-          </div>
           <button class="hero-cur" id="hero-cur" title="Moeda do painel">
             <span id="hero-cur-code">BRL</span><span class="cur-tri"></span>
           </button>
@@ -672,7 +676,7 @@
 <script src="js/app.js?v=20260719a"></script>
 <script src="js/rates.js?v=20260718a"></script>
 <script src="js/importer.js?v=20260718d"></script>
-<script src="js/dashboard.js?v=20260720a"></script>
+<script src="js/dashboard.js?v=20260720b"></script>
 <script src="js/receipt.js?v=20260718f"></script>
 <script src="js/batch.js?v=20260718h"></script>
 <script src="js/cloud.js?v=20260718i"></script>

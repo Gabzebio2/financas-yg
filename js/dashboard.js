@@ -191,7 +191,14 @@ const Dashboard = (() => {
   }
 
   function renderPeriodControls() {
-    const lbl = fil.month ? fmtMonthLong(fil.month) : "—";
+    // Só o nome do mês ("Janeiro"); o ano aparece junto apenas quando não é o atual
+    let lbl = "—";
+    if (fil.month) {
+      const [y, m] = fil.month.split("-").map(Number);
+      const nome = MESES[m - 1] || "";
+      const cap = nome.charAt(0).toUpperCase() + nome.slice(1);
+      lbl = y === new Date().getFullYear() ? cap : `${cap} ${y}`;
+    }
     $("#month-label").textContent = lbl;
     const t = $("#txs-month-label");
     if (t) t.textContent = lbl;
@@ -349,7 +356,7 @@ const Dashboard = (() => {
   }
 
   function renderCharts() {
-    Chart.defaults.font.family = "'Raleway', 'Segoe UI', system-ui, sans-serif";
+    Chart.defaults.font.family = "'Open Sans', 'Segoe UI', system-ui, sans-serif";
     Chart.defaults.color = "#9aa0ae";
     Chart.defaults.borderColor = "rgba(255,255,255,.08)";
     const txs = filteredTxs();
@@ -1322,9 +1329,11 @@ const Dashboard = (() => {
     // Máscara de moeda (R$ 10,25) em todos os campos fixos de valor
     ["#tx-amount", "#meta-target", "#meta-saved", "#limit-amount"].forEach((s) => attachMoneyMask($(s)));
 
-    // Navegação de mês (setas da tela de Transações)
+    // Navegação de mês (setas do cabeçalho e da tela de Transações)
     $("#month-prev").addEventListener("click", () => stepMonth(-1));
     $("#month-next").addEventListener("click", () => stepMonth(1));
+    $("#hero-month-prev").addEventListener("click", () => stepMonth(-1));
+    $("#hero-month-next").addEventListener("click", () => stepMonth(1));
 
     // Calendário de meses: clique no mês do cabeçalho
     $("#hero-month").addEventListener("click", (ev) => {
