@@ -806,10 +806,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
   .sidebar { display: flex; }
   .topbar { display: none; }
   /* A sidebar é fixa (ocupa 78px à esquerda); o padding do body reserva esse
-     espaço e o conteúdo é centralizado no que sobra — assim a folga fica
-     igual dos dois lados, sem sobrar tudo de um lado só. */
+     espaço e o conteúdo preenche toda a largura restante (sem limite de
+     largura), com um respiro nas bordas para não colar. */
   body { padding-left: 78px; }
-  main { margin: 0 auto; max-width: 1258px; padding-left: 32px; padding-right: 32px; }
+  main { margin: 0; max-width: none; padding-left: 40px; padding-right: 40px; }
 }
 
 /* ===== Responsivo ===== */
