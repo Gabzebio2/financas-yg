@@ -955,6 +955,65 @@ const Dashboard = (() => {
     });
   }
 
+  /* ---------- Avatar de categoria (círculo colorido + ícone, estilo Mobills) ----------
+     Ícone escolhido por palavra-chave no nome da categoria; o círculo usa a
+     cor da própria categoria. Ícones são linhas brancas (mesmo traço do app). */
+  const CAT_ICON_SVG = {
+    food: '<path d="M8 3v18M6 3v6a2 2 0 0 0 4 0V3M16 3c-1.4 0-2 1.8-2 4.5S15 12 16 12v9"/>',
+    cart: '<circle cx="9" cy="20" r="1.3"/><circle cx="17" cy="20" r="1.3"/><path d="M2 3h2.3l2 12a1.5 1.5 0 0 0 1.5 1.2h8.7a1.5 1.5 0 0 0 1.5-1.2L20 7H5.5"/>',
+    home: '<path d="M3 11 12 4l9 7"/><path d="M5 10v9h14v-9"/>',
+    plane: '<path d="M21 4 3 11l6 2.5M21 4 11 20l-2-6.5M21 4 9 13.5"/>',
+    health: '<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
+    car: '<path d="M3 13h18l-1.6-5.2A2 2 0 0 0 17.5 6h-11a2 2 0 0 0-1.9 1.8L3 13v4h2m14 0h-2M5 17h14"/><circle cx="7.5" cy="15" r="1.2"/><circle cx="16.5" cy="15" r="1.2"/>',
+    money: '<rect x="2.5" y="7" width="19" height="10" rx="2.5"/><circle cx="12" cy="12" r="2.2"/>',
+    fun: '<rect x="2.5" y="8" width="19" height="9" rx="4"/><path d="M7.5 11v3M6 12.5h3M15.5 12h.01M17.5 13.5h.01"/>',
+    chart: '<path d="M4 19V5M4 19h16M7.5 15l3.5-3.5 3 2 4.5-5.5"/>',
+    tool: '<path d="M14.5 6.5a3.5 3.5 0 0 0-4.6 4.6L4 17v3h3l5.9-5.9a3.5 3.5 0 0 0 4.6-4.6l-2.5 2.5-2-2 2.5-2.5z"/>',
+    receipt: '<path d="M6 3h12v18l-2.5-1.6L13 21l-2.5-1.6L8 21l-2-1.6V3z"/><path d="M9 8h6M9 12h6"/>',
+    people: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-5 6-5s6 1.7 6 5"/><path d="M16 5.5a3 3 0 0 1 0 5.5M21 20c0-2.4-1.4-4.1-3.6-4.8"/>',
+    box: '<path d="M3 8l9-4 9 4-9 4-9-4z"/><path d="M3 8v8l9 4 9-4V8M12 12v8"/>',
+    mega: '<path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 8.5a5 5 0 0 1 0 7"/>',
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1"/>',
+    monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+    tv: '<rect x="3" y="7" width="18" height="12" rx="2"/><path d="M8 3l4 4 4-4"/>',
+    gift: '<path d="M4 11h16v9H4zM2 7h20v4H2zM12 7V20M12 7S10.5 3 8.5 3 6 5.5 8.5 7M12 7s1.5-4 3.5-4S18 5.5 15.5 7"/>',
+    cap: '<path d="M12 4 2 9l10 5 10-5-10-5z"/><path d="M6 11v5c0 1.1 2.7 2.5 6 2.5s6-1.4 6-2.5v-5"/>',
+    paw: '<circle cx="7" cy="9" r="1.6"/><circle cx="12" cy="7" r="1.6"/><circle cx="17" cy="9" r="1.6"/><path d="M12 12c-2.6 0-5 2-5 4.6C7 18.5 9 20 12 20s5-1.5 5-3.4C17 14 14.6 12 12 12z"/>',
+    tag: '<path d="M3 12l8.6-8.6a2 2 0 0 1 1.4-.6H19a2 2 0 0 1 2 2v6a2 2 0 0 1-.6 1.4L12 20.8a2 2 0 0 1-2.8 0L3 14.6a2 2 0 0 1 0-2.6z"/><circle cx="16" cy="8" r="1.3"/>',
+  };
+  const CAT_ICON_RULES = [
+    [/aliment|comida|superm|mercado|restaur|lanche|food|refei|padaria|bar\b/, "food"],
+    [/compra|essencial|shopping/, "cart"],
+    [/morad|casa|alug|lar\b|imovel|rent|conta.*casa/, "home"],
+    [/viagem|viaje|travel|passag|turis|hotel|ferias/, "plane"],
+    [/saude|farmac|medic|hospital|dentist|remedio|plano de saude/, "health"],
+    [/transport|uber|combustivel|gasolina|carro|onibus|metro|taxi|posto/, "car"],
+    [/salario|renda|pro-labore|pro labore|prolabore|freela|honorario|receita de vend|vendas?\b|faturamento/, "money"],
+    [/lazer|divers|entreten|jogo|game|cinema|festa|hobby/, "fun"],
+    [/servico|manuten|reparo|conserto/, "tool"],
+    [/imposto|taxa|tributo|fiscal|das\b|darf/, "receipt"],
+    [/folha|pagamento de pessoal|colaborador|funcionar|equipe|rh\b/, "people"],
+    [/fornecedor|insumo|estoque|materia/, "box"],
+    [/marketing|anuncio|publicidade|ads?\b|trafego|propaganda/, "mega"],
+    [/operacional|operac|logistica|infra/, "gear"],
+    [/software|assinatura|saas|sistema|licenca|app\b|tecnologia/, "monitor"],
+    [/streaming|netflix|spotify|youtube|prime|disney|tv\b/, "tv"],
+    [/presente|gift|doacao|caridade/, "gift"],
+    [/educa|curso|escola|faculdade|estudo|livro/, "cap"],
+    [/pet|animal|cachorro|gato|veterin/, "paw"],
+    [/receita|entrada|ganho|invest|dividendo|lucro/, "chart"],
+  ];
+  function catIcon(name) {
+    const key = stripAccents(name);
+    for (const [re, ic] of CAT_ICON_RULES) if (re.test(key)) return CAT_ICON_SVG[ic];
+    return CAT_ICON_SVG.tag;
+  }
+  function catAvatar(name) {
+    return `<span class="tx-avatar" style="background:${catColor(ds, name)}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${catIcon(name)}</svg>
+    </span>`;
+  }
+
   function renderTable() {
     const list = sortTxs(tableTxs());
     $("#tx-count").textContent = list.length;
@@ -977,7 +1036,7 @@ const Dashboard = (() => {
       <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
         <td style="white-space:nowrap">${fmtDate(t.date)}</td>
-        <td>${escapeHtml(t.desc)}</td>
+        <td><span class="tx-desc-cell">${catAvatar(t.category)}<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}</span></span></td>
         <td><span class="cat-chip" style="background:${catColor(ds, t.category)}">${escapeHtml(t.category)}</span></td>
         <td>${escapeHtml(t.account || "—")}</td>
         <td>${t.installment ? escapeHtml(t.installment) : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
@@ -1486,8 +1545,14 @@ const Dashboard = (() => {
       const tr = ev.target.closest("tr[data-id]");
       if (!tr) return;
       const action = ev.target.closest("[data-action]")?.dataset.action;
-      if (action === "delete") requestDeleteTx(tr.dataset.id);
-      else if (action === "edit") openTxModal(tr.dataset.id);
+      if (action === "delete") { requestDeleteTx(tr.dataset.id); return; }
+      if (action === "edit") { openTxModal(tr.dataset.id); return; }
+      // Celular: toque na linha abre a edição (como no Mobills). Ignora a
+      // caixinha de seleção e qualquer campo interativo.
+      if (window.matchMedia("(max-width: 640px)").matches &&
+          !ev.target.closest("input, button, a, label")) {
+        openTxModal(tr.dataset.id);
+      }
     });
     $("#tx-tbody").addEventListener("dblclick", (ev) => {
       if (ev.target.classList.contains("tx-sel")) return;
