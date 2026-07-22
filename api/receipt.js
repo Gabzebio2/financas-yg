@@ -40,24 +40,39 @@ Regras por item:
 - "valor": o valor da linha, número positivo, na moeda principal do documento. Se a linha mostrar dois valores em moedas diferentes, use o da moeda principal.
 - "moeda": "BRL" (R$), "CLP" (peso chileno $), "PYG" (guarani ₲/Gs) ou "USD" (US$). Geralmente a mesma no documento inteiro.
 - "tipo": "receita" para entradas/pagamentos recebidos/estornos/créditos/valores com sinal de +; "despesa" para saídas/transferências enviadas/débitos.
-Ignore APENAS linhas de total, subtotal, saldo e cabeçalho/rodapé — todo o resto é transação. Não resuma, não agrupe linhas parecidas e não pule duplicatas (duas linhas iguais são duas transações). Não invente itens que não estão no documento.`;
+- "categoria": escolha, da lista permitida, a que melhor descreve CADA compra (ex: restaurante -> alimentação/essencial; farmácia -> saúde; uber -> transporte).
+- "parcela": se a linha indicar compra parcelada (ex: "PARC 03/12", "3/12", "Parcela 3 de 12", "Cuota 03/12"), devolva no formato "3/12" (parcela atual/total). Senão, "".
+- "fixa": true SOMENTE se a linha for claramente uma assinatura/mensalidade recorrente (streaming, música, academia, plano, internet, aluguel, mensalidade). Na dúvida, false.
+- Em "descricao", NÃO inclua o marcador de parcela: escreva "LOJA X", não "LOJA X 3/12".
+Ignore APENAS linhas de total, subtotal, saldo e cabeçalho/rodapé — todo o resto é transação. Não resuma, não agrupe linhas parecidas e não pule duplicatas (duas linhas iguais são duas transações). Não invente itens que não estão no documento.
+No campo "cartao" (fora da lista de itens), identifique de QUAL cartão/conta é este documento, escolhendo EXATAMENTE um nome da lista de cartões fornecida — use o banco emissor e o NOME DO TITULAR impresso no documento para distinguir cartões de pessoas diferentes. Se não tiver certeza, use "".`;
 
 /* ---------- Gemini ---------- */
 function geminiSchema(multi, categories) {
   if (multi) {
     return {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          data: { type: "STRING", description: "Data AAAA-MM-DD" },
-          descricao: { type: "STRING", description: "Estabelecimento/local" },
-          valor: { type: "NUMBER", description: "Valor (positivo) na moeda do documento" },
-          moeda: { type: "STRING", enum: ["BRL", "CLP", "PYG", "USD"], description: "Moeda do valor" },
-          tipo: { type: "STRING", enum: ["despesa", "receita"] },
+      type: "OBJECT",
+      properties: {
+        cartao: { type: "STRING", description: "Cartão/conta do documento (um da lista fornecida) ou \"\"" },
+        itens: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              data: { type: "STRING", description: "Data AAAA-MM-DD" },
+              descricao: { type: "STRING", description: "Estabelecimento/local, SEM marcador de parcela" },
+              valor: { type: "NUMBER", description: "Valor (positivo) na moeda do documento" },
+              moeda: { type: "STRING", enum: ["BRL", "CLP", "PYG", "USD"], description: "Moeda do valor" },
+              tipo: { type: "STRING", enum: ["despesa", "receita"] },
+              categoria: { type: "STRING", enum: categories, description: "Categoria que melhor descreve a compra" },
+              parcela: { type: "STRING", description: "\"atual/total\" (ex: 3/12) se parcelado; senão \"\"" },
+              fixa: { type: "BOOLEAN", description: "true só para assinatura/mensalidade recorrente óbvia" },
+            },
+            required: ["data", "descricao", "valor", "moeda", "tipo", "categoria", "parcela", "fixa"],
+          },
         },
-        required: ["data", "descricao", "valor", "moeda", "tipo"],
       },
+      required: ["cartao", "itens"],
     };
   }
   return {
@@ -75,12 +90,14 @@ function geminiSchema(multi, categories) {
   };
 }
 
-async function geminiFetch(key, model, image, categories, multi, withSchema) {
+async function geminiFetch(key, model, image, categories, cards, multi, withSchema) {
   const generationConfig = { temperature: 0, responseMimeType: "application/json" };
   if (multi) generationConfig.maxOutputTokens = 32768; // fatura longa cabe sem truncar
   if (withSchema) generationConfig.responseSchema = geminiSchema(multi, categories);
   const promptText = multi
-    ? PROMPT_BATCH
+    ? PROMPT_BATCH +
+      `\nLista permitida de "categoria": ${categories.join(", ")}.` +
+      (cards.length ? `\nLista de cartões para "cartao": ${cards.join(", ")}.` : `\nNão há lista de cartões: use "" em "cartao".`)
     : PROMPT_SINGLE + `\nLista permitida de "categoria": ${categories.join(", ")}.`;
   return fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
@@ -125,13 +142,13 @@ function isOverloaded(status, detail) {
   return /high demand|overloaded|model is overloaded|try again later|temporarily unavailable|unavailable/.test(d);
 }
 
-async function tryGeminiOnce(key, model, image, categories, multi) {
+async function tryGeminiOnce(key, model, image, categories, cards, multi) {
   let r;
   try {
-    r = await geminiFetch(key, model, image, categories, multi, true);
+    r = await geminiFetch(key, model, image, categories, cards, multi, true);
     if (r.status === 400) {
       // Alguns projetos rejeitam o responseSchema — tenta em modo JSON simples
-      const r2 = await geminiFetch(key, model, image, categories, multi, false);
+      const r2 = await geminiFetch(key, model, image, categories, cards, multi, false);
       if (r2.ok || r2.status !== 400) r = r2;
     }
   } catch {
@@ -144,13 +161,13 @@ async function tryGeminiOnce(key, model, image, categories, multi) {
   return { ok: false, status: r.status, detail: String(detail).slice(0, 300) };
 }
 
-async function callGemini(key, image, categories, multi) {
+async function callGemini(key, image, categories, cards, multi) {
   const t0 = Date.now();
   let fail = null, sawOverload = false;
 
   for (const model of MODELS_GEMINI) {
     if (Date.now() - t0 > 40000) break; // não arrisca o teto de 60s da função
-    const res = await tryGeminiOnce(key, model, image, categories, multi);
+    const res = await tryGeminiOnce(key, model, image, categories, cards, multi);
     if (res.ok) return parseGeminiResponse(res.data);
 
     console.error("gemini_falhou", model, res.status, res.detail);
@@ -169,7 +186,7 @@ async function callGemini(key, image, categories, multi) {
   // (picos de demanda costumam durar poucos segundos) — se ainda der tempo.
   if (sawOverload && Date.now() - t0 < 32000) {
     await sleep(1500);
-    const res = await tryGeminiOnce(key, MODELS_GEMINI[0], image, categories, multi);
+    const res = await tryGeminiOnce(key, MODELS_GEMINI[0], image, categories, cards, multi);
     if (res.ok) return parseGeminiResponse(res.data);
     fail = { httpStatus: res.status, detail: res.detail, overloaded: true };
   }
@@ -177,14 +194,17 @@ async function callGemini(key, image, categories, multi) {
 }
 
 /* ---------- Anthropic (reserva) ---------- */
-async function callAnthropic(key, image, categories, multi) {
+async function callAnthropic(key, image, categories, cards, multi) {
   const itemSchema = {
     type: "object", additionalProperties: false,
-    required: ["data", "descricao", "valor", "moeda", "tipo"],
+    required: ["data", "descricao", "valor", "moeda", "tipo", "categoria", "parcela", "fixa"],
     properties: {
       data: { type: "string" }, descricao: { type: "string" },
       valor: { type: "number" }, moeda: { type: "string", enum: ["BRL", "CLP", "PYG", "USD"] },
       tipo: { type: "string", enum: ["despesa", "receita"] },
+      categoria: { type: "string", enum: categories },
+      parcela: { type: "string" },
+      fixa: { type: "boolean" },
     },
   };
   const singleSchema = {
@@ -198,8 +218,11 @@ async function callAnthropic(key, image, categories, multi) {
     },
   };
   const schema = multi
-    ? { type: "object", additionalProperties: false, required: ["itens"], properties: { itens: { type: "array", items: itemSchema } } }
+    ? { type: "object", additionalProperties: false, required: ["cartao", "itens"], properties: { cartao: { type: "string" }, itens: { type: "array", items: itemSchema } } }
     : singleSchema;
+  const promptMulti = PROMPT_BATCH +
+    `\nLista permitida de "categoria": ${categories.join(", ")}.` +
+    (cards.length ? `\nLista de cartões para "cartao": ${cards.join(", ")}.` : `\nNão há lista de cartões: use "" em "cartao".`);
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
@@ -214,7 +237,7 @@ async function callAnthropic(key, image, categories, multi) {
           image.media_type === "application/pdf"
             ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: image.data } }
             : { type: "image", source: { type: "base64", media_type: image.media_type, data: image.data } },
-          { type: "text", text: multi ? PROMPT_BATCH : PROMPT_SINGLE },
+          { type: "text", text: multi ? promptMulti : PROMPT_SINGLE },
         ],
       }],
     }),
@@ -279,12 +302,16 @@ module.exports = async (req, res) => {
   const categories = Array.isArray(body.categories) && body.categories.length
     ? body.categories.map((c) => String(c).slice(0, 40)).slice(0, 40)
     : ["Outros"];
+  // Cartões/contas do usuário: a IA escolhe de qual cartão é a fatura (lote)
+  const cards = Array.isArray(body.cards)
+    ? body.cards.map((c) => String(c).slice(0, 40)).filter(Boolean).slice(0, 20)
+    : [];
 
   // 3) Chama a IA com a chave secreta (só o resultado volta ao app)
   try {
     const out = gKey
-      ? await callGemini(gKey, image, categories, multi)
-      : await callAnthropic(aKey, image, categories, multi);
+      ? await callGemini(gKey, image, categories, cards, multi)
+      : await callAnthropic(aKey, image, categories, cards, multi);
 
     if (out.overloaded) { res.status(503).json({ error: "sobrecarga_ia" }); return; }
     if (out.httpStatus === 429) { res.status(429).json({ error: "limite_ia" }); return; }
@@ -292,16 +319,21 @@ module.exports = async (req, res) => {
     if (out.refusal) { res.status(200).json({ error: "refusal" }); return; }
 
     if (multi) {
-      // Aceita array puro ou { itens: [...] }; se o JSON vier truncado (fatura
-      // longa), recupera os itens completos em vez de falhar por inteiro.
+      // Aceita array puro ou { cartao, itens: [...] }; se o JSON vier truncado
+      // (fatura longa), recupera os itens completos em vez de falhar por inteiro.
       let itens = [];
+      let cartao = "";
       try {
         const parsed = JSON.parse(out.text);
-        itens = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.itens) ? parsed.itens : []);
+        if (Array.isArray(parsed)) itens = parsed;
+        else {
+          itens = Array.isArray(parsed.itens) ? parsed.itens : [];
+          cartao = typeof parsed.cartao === "string" ? parsed.cartao.slice(0, 40) : "";
+        }
       } catch {
         itens = salvageItems(out.text);
       }
-      res.status(200).json({ itens });
+      res.status(200).json({ cartao, itens });
     } else {
       let parsed;
       try { parsed = JSON.parse(out.text); }

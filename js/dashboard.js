@@ -1778,6 +1778,19 @@ const Dashboard = (() => {
     return set;
   }
 
+  // Chaves de SÉRIE do que já está na pasta — parceladas (descrição+parcela,
+  // sem data: a fatura pode datar a parcela num dia diferente do lançamento)
+  // e fixas (descrição+mês). Usadas pelo lote para não duplicar uma compra
+  // parcelada já adicionada num mês anterior.
+  function existingSeriesKeys() {
+    const set = new Set();
+    if (ds) ds.transactions.forEach((t) => {
+      if (t.installment) set.add(`p|${stripAccents(t.desc)}|${t.type}|${t.installment}`);
+      if (t.fixed) set.add(`f|${stripAccents(t.desc)}|${t.type}|${(t.date || "").slice(0, 7)}`);
+    });
+    return set;
+  }
+
   // Injeta na pasta atual transações JÁ no formato interno (vindas do
   // importador completo: preservam categoria, cartão, parcela, recorrente,
   // valor total e o vínculo entre parcelas). IDs são regerados.
@@ -1812,5 +1825,5 @@ const Dashboard = (() => {
     return n;
   }
 
-  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, resolveImportDate, existingTxKeys, refitHero: fitHeroFlow };
+  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, resolveImportDate, existingTxKeys, existingSeriesKeys, refitHero: fitHeroFlow };
 })();

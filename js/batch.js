@@ -6,9 +6,11 @@
 
 const Batch = (() => {
   const PROXY_PATH = "/api/receipt";
-  let rows = [];          // [{ date, desc, amount, type, currency, on, src, dup }]
+  let rows = [];          // [{ date, desc, amount, type, currency, on, src, dup, cat, installment, fixa... }]
   let presetCat = null;   // categoria destino sugerida (ex: amigo)
   let srcSeq = 0;         // nº do arquivo de origem de cada linha (p/ detectar sobreposição)
+  let detectedCard = null;  // cartão identificado pela IA na fatura (ex: "Nubank Gab")
+  let chosenAccount = null; // cartão escolhido à mão pelo usuário (prevalece)
 
   function proxyAvailable() {
     if (location.protocol === "file:") return false;
@@ -27,6 +29,8 @@ const Batch = (() => {
     presetCat = opts.category || null;
     rows = [];
     srcSeq = 0;
+    detectedCard = null;
+    chosenAccount = null;
     $("#batch-title").textContent = opts.title || "Importar em lote";
     // Quando os arquivos já vieram do "Upload do comprovante", não repete os
     // botões de origem (foto/Excel) — o modal serve só para conferir e confirmar.
@@ -75,21 +79,40 @@ const Batch = (() => {
     curSel.innerHTML = CURRENCY_CODES.map((c) => `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
     curSel.value = (curPrev && CURRENCY_CODES.includes(curPrev)) ? curPrev : majorityCurrency();
 
+    // Cartão/Conta: o que o usuário escolheu > o detectado pela IA > C6
+    const accSel = $("#batch-acc");
+    accSel.innerHTML = CARDS.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("") +
+      `<option value="">(sem cartão)</option>`;
+    accSel.value = chosenAccount != null ? chosenAccount : (detectedCard || "C6");
+    if (accSel.selectedIndex === -1) accSel.value = "C6";
+
     if (!rows.length) {
       $("#batch-preview").classList.remove("hidden");
       $("#btn-batch-save").classList.add("hidden");
-      $("#batch-tbody").innerHTML = `<tr><td colspan="5" class="empty-table">Nada reconhecido nesta imagem/arquivo. Tente uma foto mais nítida ou outro arquivo.</td></tr>`;
+      $("#batch-tbody").innerHTML = `<tr><td colspan="6" class="empty-table">Nada reconhecido nesta imagem/arquivo. Tente uma foto mais nítida ou outro arquivo.</td></tr>`;
       $("#batch-count").textContent = "";
       return;
     }
 
     const cur = normCur($("#batch-cur").value);
+    const fallCat = sel.value; // linhas sem categoria da IA seguem o seletor geral
     $("#batch-tbody").innerHTML = rows.map((r, i) => `
       <tr data-i="${i}" class="${r.on ? "" : "batch-off"}${r.dup ? " batch-dup" : ""}">
         <td><input type="checkbox" class="batch-check" data-i="${i}" ${r.on ? "checked" : ""}>${r.dup ? '<span class="dup-flag" title="Possível duplicado: já está na pasta ou repetiu entre os arquivos enviados">⚠</span>' : ""}</td>
         <td><input type="date" data-f="date" data-i="${i}" value="${escapeHtml(r.date)}"></td>
-        <td><input type="text" data-f="desc" data-i="${i}" value="${escapeHtml(r.desc)}"></td>
+        <td><div class="batch-desc-cell"><input type="text" data-f="desc" data-i="${i}" value="${escapeHtml(r.desc)}">${
+          r.installment
+            ? `<span class="parc-tag" title="${r.gen ? "Parcela gerada automaticamente a partir da parcela vista na fatura" : "Parcela vista na fatura"}">${escapeHtml(r.installment)}</span>`
+            : (r.fixed || r.fixa)
+              ? `<span class="parc-tag" title="${r.gen ? "Mês gerado automaticamente (despesa fixa)" : "Assinatura/mensalidade detectada"}">fixa</span>`
+              : ""
+        }</div></td>
         <td class="num"><input type="text" class="batch-val" data-f="amount" data-i="${i}" data-cur="${cur}" value="${fmtMoneyInput(r.amount, cur)}"></td>
+        <td>
+          <select data-f="cat" data-i="${i}">
+            ${cats.map((c) => `<option value="${escapeHtml(c)}" ${(r.cat || fallCat) === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("")}
+          </select>
+        </td>
         <td>
           <select data-f="type" data-i="${i}">
             <option value="despesa" ${r.type === "despesa" ? "selected" : ""}>Despesa</option>
@@ -126,8 +149,85 @@ const Batch = (() => {
       date = Dashboard.resolveImportDate(date);
       const amount = Math.abs(Number(it.amount ?? it.valor) || 0);
       const type = (it.type === "receita" || it.tipo === "receita") ? "receita" : "despesa";
-      return { date, desc: String(it.desc ?? it.descricao ?? "").slice(0, 120), amount, type, currency: normCur(it.moeda ?? it.currency), on: amount > 0 };
+
+      // Categoria sugerida pela IA por item (validada contra as da pasta).
+      // Na cobrança de amigo (presetCat) tudo vai para a categoria do amigo —
+      // a sugestão da IA é ignorada de propósito.
+      let cat = null;
+      if (!presetCat) {
+        const raw = it.categoria ?? it.category;
+        if (typeof raw === "string" && raw) {
+          cat = Dashboard.getCats().find((c) => stripAccents(c) === stripAccents(raw)) || null;
+        }
+      }
+
+      // Parcela "3/12" detectada na fatura -> a série completa é gerada em expandSeries
+      let parcNum = 0, parcTotal = 0;
+      const pm = String(it.parcela ?? "").match(/(\d{1,2})\s*\/\s*(\d{1,2})/);
+      if (pm) {
+        const a = Number(pm[1]), b = Number(pm[2]);
+        if (a >= 1 && b >= 2 && a <= b && b <= 48) { parcNum = a; parcTotal = b; }
+      }
+      const fixa = it.fixa === true && !parcTotal;
+
+      let desc = String(it.desc ?? it.descricao ?? "").slice(0, 120);
+      // Se a IA deixou o marcador de parcela na descrição, limpa ("LOJA 3/12" -> "LOJA")
+      if (parcTotal) {
+        desc = desc.replace(/[\s\-–(]*(?:parc\.?\w*|parcela|cuota)?\s*\d{1,2}\s*(?:\/|de|of)\s*\d{1,2}\s*\)?/i, "").trim() || desc;
+      }
+
+      return { date, desc, amount, type, currency: normCur(it.moeda ?? it.currency), on: amount > 0, cat, parcNum, parcTotal, fixa };
     }).filter((r) => r.amount > 0);
+  }
+
+  // Desloca uma data ISO em N meses, mantendo o dia (limitado ao fim do mês)
+  function shiftMonths(iso, delta) {
+    const [y0, m0, d0] = iso.split("-").map(Number);
+    let m = m0 + delta, y = y0;
+    y += Math.floor((m - 1) / 12); m = ((m - 1) % 12) + 1;
+    const day = Math.min(d0, daysInMonth(y, m));
+    return `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  /* Compra parcelada detectada na fatura (ex: "3/12"): gera a série COMPLETA —
+     as parcelas já pagas nos meses anteriores (1 e 2) e as futuras (4..12),
+     cada uma no seu mês, ligadas como uma compra parcelada do app.
+     Assinatura/mensalidade (fixa): gera 12 meses a partir da data, como a
+     "Despesa fixa" do app. O anti-duplicados desmarca o que já existir. */
+  function expandSeries(list) {
+    const out = [];
+    (list || []).forEach((r, idx) => {
+      if (r.parcTotal >= 2) {
+        const serie = `s${srcSeq}_${idx}`;
+        for (let k = 1; k <= r.parcTotal; k++) {
+          out.push({ ...r, serie, date: shiftMonths(r.date, k - r.parcNum), installment: `${k}/${r.parcTotal}`, gen: k !== r.parcNum });
+        }
+      } else if (r.fixa) {
+        const serie = `s${srcSeq}_${idx}`;
+        for (let i = 0; i < 12; i++) {
+          out.push({ ...r, serie, date: shiftMonths(r.date, i), fixed: true, gen: i > 0 });
+        }
+      } else {
+        out.push(r);
+      }
+    });
+    return out;
+  }
+
+  // Processa um resultado da IA (itens + cartão detectado) e acumula na lista
+  function ingestAiResult(itens, cartao) {
+    if (cartao && !detectedCard) {
+      const det = stripAccents(String(cartao));
+      detectedCard = CARDS.find((c) => stripAccents(c) === det) ||
+        CARDS.find((c) => det.includes(stripAccents(c)) || stripAccents(c).includes(det)) || null;
+    }
+    const novos = expandSeries(normalize(itens));
+    if (novos.length) {
+      const src = srcSeq++;
+      novos.forEach((r) => { r.src = src; });
+      rows.push(...novos);
+    }
+    return novos.length;
   }
 
   // Moeda mais frequente entre as linhas lidas (default p/ o seletor)
@@ -149,8 +249,17 @@ const Batch = (() => {
      2) Contra a pasta: o que já existe lá (mesma chave) vem desmarcado —
         cobre o caso de importar a mesma fatura de novo. */
   function flagDuplicates() {
+    // Parceladas e fixas usam chave de SÉRIE (sem data): a mesma compra
+    // parcelada vista na fatura do mês seguinte ("X 4/12") bate com a parcela
+    // 4/12 já criada antes — mesmo que os dias não coincidam.
+    const serieKeyOf = (r) =>
+      r.installment ? `p|${stripAccents(r.desc)}|${r.type}|${r.installment}`
+        : (r.fixed || r.fixa) ? `f|${stripAccents(r.desc)}|${r.type}|${(r.date || "").slice(0, 7)}`
+          : null;
+
     const perFile = {}; // chave -> { src: quantas vezes naquele arquivo }
     rows.forEach((r) => {
+      if (serieKeyOf(r)) return; // séries têm checagem própria acima
       const k = dupTxKey(r.date, r.desc, r.amount, r.type);
       const bySrc = (perFile[k] = perFile[k] || {});
       bySrc[r.src || 0] = (bySrc[r.src || 0] || 0) + 1;
@@ -159,12 +268,23 @@ const Batch = (() => {
     for (const k in perFile) allowed[k] = Math.max(...Object.values(perFile[k]));
 
     const existing = Dashboard.existingTxKeys();
+    const existingSeries = Dashboard.existingSeriesKeys();
+    const seenSeries = new Set();
     const seen = {};
     let flagged = 0;
     rows.forEach((r) => {
+      const sk = serieKeyOf(r);
+      if (sk) {
+        const isDup = existingSeries.has(sk) || seenSeries.has(sk);
+        seenSeries.add(sk);
+        if (r.dupHandled) return; // decisão do usuário em leituras anteriores é respeitada
+        r.dupHandled = true;
+        if (isDup) { r.dup = true; r.on = false; flagged++; }
+        return;
+      }
       const k = dupTxKey(r.date, r.desc, r.amount, r.type);
       seen[k] = (seen[k] || 0) + 1;
-      if (r.dupHandled) return; // decisão do usuário em leituras anteriores é respeitada
+      if (r.dupHandled) return;
       r.dupHandled = true;
       if (existing.has(k) || seen[k] > allowed[k]) {
         r.dup = true;
@@ -211,7 +331,12 @@ const Batch = (() => {
       const postPhoto = () => fetch(PROXY_PATH, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: "Bearer " + token },
-        body: JSON.stringify({ image: { media_type: image.mediaType, data: image.data }, multi: true }),
+        body: JSON.stringify({
+          image: { media_type: image.mediaType, data: image.data },
+          multi: true,
+          categories: Dashboard.getCats(), // a IA escolhe a categoria por item
+          cards: CARDS,                    // e identifica de qual cartão é a fatura
+        }),
       });
       try {
         let res = await postPhoto();
@@ -239,12 +364,9 @@ const Batch = (() => {
         }
         const data = await res.json();
         if (data.error === "refusal") { falhas.push(`arquivo ${i + 1} não pôde ser lido`); continue; }
-        const novos = normalize(data.itens);
-        if (!novos.length) { falhas.push(`arquivo ${i + 1} sem itens reconhecidos`); continue; }
-        const src = srcSeq++;
-        novos.forEach((r) => { r.src = src; });
-        rows.push(...novos);
-        added += novos.length;
+        const novosN = ingestAiResult(data.itens, data.cartao);
+        if (!novosN) { falhas.push(`arquivo ${i + 1} sem itens reconhecidos`); continue; }
+        added += novosN;
       } catch (e) {
         console.error(e);
         setStatus("Sem conexão — tente de novo.", "err");
@@ -299,15 +421,24 @@ const Batch = (() => {
   }
 
   function save() {
-    const category = $("#batch-cat").value;
+    const fallbackCat = $("#batch-cat").value;
     const currency = normCur($("#batch-cur").value);
-    const items = rows.filter((r) => r.on).map((r) => ({
-      date: r.date, desc: r.desc, amount: r.amount, type: r.type, category, currency,
+    const account = $("#batch-acc").value;
+    const on = rows.filter((r) => r.on);
+    if (!on.length) { toast("Selecione pelo menos um item ✔"); return; }
+    // Formato interno completo: parceladas viram séries ligadas (groupId) e
+    // fixas ganham a marca "fixa" — igual às criadas à mão no app.
+    const txs = on.map((r) => ({
+      date: r.date, desc: r.desc, amount: r.amount, type: r.type,
+      category: r.cat || fallbackCat, currency, account,
+      groupId: r.serie || null,
+      installment: r.installment || null,
+      totalValue: r.installment && r.parcTotal ? Math.round(r.amount * r.parcTotal * 100) / 100 : null,
+      fixed: r.fixed === true,
     }));
-    if (!items.length) { toast("Selecione pelo menos um item ✔"); return; }
-    const n = Dashboard.addBulk(items);
+    const n = Dashboard.appendImported(txs);
     close();
-    toast(`${n} transaç${n === 1 ? "ão adicionada" : "ões adicionadas"} em "${category}" ✔`);
+    toast(`${n} transaç${n === 1 ? "ão adicionada" : "ões adicionadas"} ✔`);
   }
 
   /* ---------- Eventos ---------- */
@@ -338,6 +469,10 @@ const Batch = (() => {
     $("#btn-batch-save").addEventListener("click", save);
     // Trocar a moeda do lote reformata os valores das linhas e o total
     $("#batch-cur").addEventListener("change", renderPreview);
+    // Trocar a categoria geral aplica a TODAS as linhas (elas voltam a segui-la)
+    $("#batch-cat").addEventListener("change", () => { rows.forEach((r) => { r.cat = null; }); renderPreview(); });
+    // Cartão escolhido à mão prevalece sobre o detectado pela IA
+    $("#batch-acc").addEventListener("change", () => { chosenAccount = $("#batch-acc").value; });
 
     // Edição inline da lista
     const tbody = $("#batch-tbody");
@@ -349,6 +484,7 @@ const Batch = (() => {
       if (f === "date") rows[i].date = el.value;
       else if (f === "desc") rows[i].desc = el.value;
       else if (f === "amount") { maskMoneyEl(el); rows[i].amount = Math.abs(moneyInputValue(el) || 0); }
+      else if (f === "cat") rows[i].cat = el.value;
       else if (f === "type") rows[i].type = el.value === "receita" ? "receita" : "despesa";
       if (f === "amount" || f === "type") updateCount();
     });
@@ -363,5 +499,12 @@ const Batch = (() => {
     });
   });
 
-  return { open, openWithFiles };
+  // Reaplica o anti-duplicados e redesenha a lista (usado após ingestões diretas)
+  function refreshPreview() {
+    const flagged = flagDuplicates();
+    renderPreview();
+    return flagged;
+  }
+
+  return { open, openWithFiles, ingestAiResult, refreshPreview };
 })();

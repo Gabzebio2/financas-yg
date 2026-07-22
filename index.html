@@ -11,7 +11,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#101016">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260722f">
+<link rel="stylesheet" href="css/style.css?v=20260723a">
 </head>
 <body>
 
@@ -511,7 +511,10 @@
 
     <div id="batch-preview" class="hidden">
       <div class="batch-controls">
-        <label>Categoria destino
+        <label title="Detectado pela IA a partir da fatura; C6 quando não dá para identificar">Cartão/Conta
+          <select id="batch-acc"></select>
+        </label>
+        <label title="A IA sugere por item (coluna Categoria); mudar aqui aplica a todas as linhas">Categoria
           <select id="batch-cat"></select>
         </label>
         <label>Moeda
@@ -522,7 +525,7 @@
       <div class="table-wrap batch-table-wrap">
         <table id="batch-table">
           <thead>
-            <tr><th></th><th>Data</th><th>Descrição</th><th class="num">Valor</th><th>Tipo</th></tr>
+            <tr><th></th><th>Data</th><th>Descrição</th><th class="num">Valor</th><th>Categoria</th><th>Tipo</th></tr>
           </thead>
           <tbody id="batch-tbody"></tbody>
         </table>
@@ -675,9 +678,9 @@
 <script src="js/app.js?v=20260722g"></script>
 <script src="js/rates.js?v=20260718a"></script>
 <script src="js/importer.js?v=20260718d"></script>
-<script src="js/dashboard.js?v=20260722g"></script>
+<script src="js/dashboard.js?v=20260723a"></script>
 <script src="js/receipt.js?v=20260722h"></script>
-<script src="js/batch.js?v=20260722h"></script>
+<script src="js/batch.js?v=20260723a"></script>
 <script src="js/cloud.js?v=20260718i"></script>
 <script src="js/shell.js?v=20260720a"></script>
 </body>

@@ -673,6 +673,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 #batch-table tr.batch-off { opacity: .4; }
 #batch-table tr.batch-off input, #batch-table tr.batch-off select { text-decoration: line-through; }
 .batch-check { width: 17px; height: 17px; }
+/* Chip de parcela ("3/12") ou "fixa" ao lado da descrição no lote */
+.batch-desc-cell { display: flex; align-items: center; gap: 6px; }
+.batch-desc-cell input { flex: 1 1 auto; min-width: 90px; }
+.parc-tag {
+  flex: 0 0 auto; padding: 1px 8px; border-radius: 10px;
+  background: var(--primary-soft); color: var(--primary-text);
+  font-size: 11px; font-weight: 700; white-space: nowrap; cursor: help;
+}
 
 .import-target-name { font-size: 18px; font-weight: 700; color: var(--primary-text); margin-top: 4px; }
 
