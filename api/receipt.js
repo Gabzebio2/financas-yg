@@ -22,7 +22,7 @@ const SUPABASE_ANON = "sb_publishable_fB3B_MW3VgJBcJpUbN1wvg_1Glbr2r5"; // públ
 const MODELS_GEMINI = ["gemini-flash-latest", "gemini-flash-lite-latest"];
 const MODEL_ANTHROPIC = "claude-haiku-4-5";
 
-const PROMPT_SINGLE = `Analise a imagem: é um comprovante financeiro (Pix, transferência bancária ou compra), do Brasil, Chile, Paraguai ou em dólar.
+const PROMPT_SINGLE = `Analise o documento (imagem ou PDF): é um comprovante financeiro (Pix, transferência bancária ou compra), do Brasil, Chile, Paraguai ou em dólar.
 Extraia os dados da operação e responda SOMENTE com JSON. Regras:
 - "valor": o valor principal da operação, como número (ex: 150.75), na moeda mostrada.
 - "moeda": a moeda do valor — "BRL" (Real, R$), "CLP" (peso chileno, $/CLP), "PYG" (guarani, ₲/Gs) ou "USD" (dólar, US$/USD). Se o símbolo "$" for ambíguo entre peso chileno e dólar, decida pelo país do banco/comprovante.
@@ -32,15 +32,15 @@ Extraia os dados da operação e responda SOMENTE com JSON. Regras:
 - "categoria": escolha a mais adequada da lista permitida.
 - "direcao": "recebido" apenas se o comprovante mostrar dinheiro RECEBIDO; caso contrário "enviado".`;
 
-const PROMPT_BATCH = `A imagem é uma FATURA/EXTRATO de banco ou cartão, ou uma PLANILHA de gastos — pode ter MUITAS linhas (facilmente 10, 20, 30 ou mais).
-Sua tarefa é extrair TODAS as transações, SEM PULAR NENHUMA. Percorra a imagem de cima até embaixo, linha por linha, e vá até o fim — NÃO pare depois das primeiras. Responda SOMENTE com JSON: um objeto por transação.
+const PROMPT_BATCH = `O documento (imagem ou PDF) é uma FATURA/EXTRATO de banco ou cartão, ou uma PLANILHA de gastos — pode ter MUITAS linhas (facilmente 10, 20, 30 ou mais).
+Sua tarefa é extrair TODAS as transações, SEM PULAR NENHUMA. Percorra o documento inteiro — TODAS as páginas, se houver mais de uma — de cima até embaixo, linha por linha, e vá até o fim — NÃO pare depois das primeiras. Responda SOMENTE com JSON: um objeto por transação.
 Regras por item:
 - "data": a data REAL daquela linha, no formato AAAA-MM-DD. Cada linha tem a SUA própria data — leia a data específica de cada transação e NÃO repita a mesma data em todas. Se só aparecer dia/mês (ex: 29/06), use o ano ${new Date().getFullYear()}. Se a linha realmente não mostrar data, deixe "".
 - "descricao": o nome do estabelecimento/lançamento como aparece (ex: "CAPITAO BAR", "Transferencia a João", "Pago recibido PROVEEDOR").
 - "valor": o valor da linha, número positivo, na moeda principal do documento. Se a linha mostrar dois valores em moedas diferentes, use o da moeda principal.
 - "moeda": "BRL" (R$), "CLP" (peso chileno $), "PYG" (guarani ₲/Gs) ou "USD" (US$). Geralmente a mesma no documento inteiro.
 - "tipo": "receita" para entradas/pagamentos recebidos/estornos/créditos/valores com sinal de +; "despesa" para saídas/transferências enviadas/débitos.
-Ignore APENAS linhas de total, subtotal, saldo e cabeçalho/rodapé — todo o resto é transação. Não resuma, não agrupe linhas parecidas e não pule duplicatas (duas linhas iguais são duas transações). Não invente itens que não estão na imagem.`;
+Ignore APENAS linhas de total, subtotal, saldo e cabeçalho/rodapé — todo o resto é transação. Não resuma, não agrupe linhas parecidas e não pule duplicatas (duas linhas iguais são duas transações). Não invente itens que não estão no documento.`;
 
 /* ---------- Gemini ---------- */
 function geminiSchema(multi, categories) {
@@ -210,7 +210,10 @@ async function callAnthropic(key, image, categories, multi) {
       messages: [{
         role: "user",
         content: [
-          { type: "image", source: { type: "base64", media_type: image.media_type, data: image.data } },
+          // PDF entra como "document"; imagem como "image" — a IA lê os dois
+          image.media_type === "application/pdf"
+            ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: image.data } }
+            : { type: "image", source: { type: "base64", media_type: image.media_type, data: image.data } },
           { type: "text", text: multi ? PROMPT_BATCH : PROMPT_SINGLE },
         ],
       }],
@@ -268,7 +271,8 @@ module.exports = async (req, res) => {
   const body = req.body || {};
   const image = body.image;
   const multi = body.multi === true;
-  if (!image || typeof image.data !== "string" || !/^image\/(jpeg|png|webp|gif)$/.test(image.media_type || "")) {
+  // Aceita imagem OU PDF — os dois provedores leem PDF nativamente
+  if (!image || typeof image.data !== "string" || !/^(image\/(jpeg|png|webp|gif)|application\/pdf)$/.test(image.media_type || "")) {
     res.status(400).json({ error: "imagem" }); return;
   }
   if (image.data.length > 8 * 1024 * 1024) { res.status(413).json({ error: "imagem_grande" }); return; }

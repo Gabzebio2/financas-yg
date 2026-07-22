@@ -46,15 +46,18 @@ const Batch = (() => {
   }
 
   // Botão "Upload do comprovante": abre a lista e processa os arquivos escolhidos
-  // (fotos e/ou Excel) no mesmo fluxo — serve para um gasto só ou para lote.
+  // (fotos, PDFs e/ou Excel) no mesmo fluxo — serve para um gasto só ou para lote.
   async function openWithFiles(files) {
     open({ title: "Upload do comprovante", hideSources: true });
     const arr = Array.from(files || []).slice(0, 15);
-    const images = arr.filter((f) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name));
+    // Fotos e PDFs vão juntos para a IA; Excel é lido localmente
+    const aiFiles = arr.filter((f) =>
+      /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name) ||
+      f.type === "application/pdf" || /\.pdf$/i.test(f.name));
     const excels = arr.filter((f) => /\.(xlsx|xls)$/i.test(f.name));
-    if (!images.length && !excels.length) { setStatus("Envie uma foto (comprovante/fatura) ou um arquivo Excel.", "err"); return; }
+    if (!aiFiles.length && !excels.length) { setStatus("Envie uma foto ou PDF (comprovante/fatura) ou um arquivo Excel.", "err"); return; }
     if (excels.length) await fromFiles(excels);
-    if (images.length) await fromPhotos(images);
+    if (aiFiles.length) await fromPhotos(aiFiles);
   }
 
   /* ---------- Renderização da lista para conferência ---------- */
@@ -179,26 +182,31 @@ const Batch = (() => {
     setStatus(`${added} itens reconhecidos${extra} — confira e ajuste abaixo ✔`, "ok");
   }
 
-  /* ---------- Origem: FOTO(s) — fatura/planilha via IA no servidor ----------
-     Aceita várias imagens de uma vez (ex: 4 prints da fatura); lê em
+  /* ---------- Origem: FOTO(s)/PDF(s) — fatura/planilha via IA no servidor ----------
+     Aceita várias imagens/PDFs de uma vez (ex: 4 prints da fatura); lê em
      sequência e ACUMULA tudo numa lista só, para um único OK. */
   async function fromPhotos(files) {
     if (!proxyAvailable()) {
-      setStatus("Leitura de foto funciona no endereço da nuvem (Vercel). Para uso local, use o Arquivo Excel.", "err");
+      setStatus("Leitura de foto/PDF funciona no endereço da nuvem (Vercel). Para uso local, use o Arquivo Excel.", "err");
       return;
     }
     const token = (typeof Cloud !== "undefined" && Cloud.getToken) ? Cloud.getToken() : null;
-    if (!token) { setStatus("Entre na sua conta (seção nuvem) para usar a leitura por foto.", "err"); return; }
+    if (!token) { setStatus("Entre na sua conta (seção nuvem) para usar a leitura por foto/PDF.", "err"); return; }
 
     let added = 0;
     let falhas = [];
     for (let i = 0; i < files.length; i++) {
       setStatus(files.length > 1
-        ? `Lendo imagem ${i + 1} de ${files.length}… 🔎`
-        : "Lendo a imagem… isso pode levar alguns segundos 🔎");
+        ? `Lendo arquivo ${i + 1} de ${files.length}… 🔎`
+        : "Lendo o arquivo… isso pode levar alguns segundos 🔎");
       let image;
-      try { image = await Receipt.prepareImage(files[i]); }
-      catch { falhas.push(`imagem ${i + 1} ilegível`); continue; }
+      try { image = await Receipt.prepareFile(files[i]); }
+      catch (e) {
+        falhas.push(e && e.message === "pdf_grande"
+          ? `"${files[i].name}" é um PDF grande demais (máx. 3 MB)`
+          : `arquivo ${i + 1} ilegível`);
+        continue;
+      }
 
       const postPhoto = () => fetch(PROXY_PATH, {
         method: "POST",
@@ -210,7 +218,7 @@ const Batch = (() => {
         // 504/502 = a leitura demorou demais nesta imagem (fatura densa).
         // Espera um instante e tenta ela de novo antes de dar como falha.
         if (res.status === 504 || res.status === 502) {
-          setStatus(`A imagem ${i + 1} demorou mais que o normal — tentando de novo… ⏳`);
+          setStatus(`O arquivo ${i + 1} demorou mais que o normal — tentando de novo… ⏳`);
           await new Promise((r) => setTimeout(r, 2500));
           res = await postPhoto();
         }
@@ -220,19 +228,19 @@ const Batch = (() => {
         if (res.status === 429) { setStatus("Limite de leituras atingido — aguarde um minuto e tente as imagens restantes.", "err"); renderIfAny(added); return; }
         if (res.status === 501) { setStatus("A leitura por IA ainda não foi ativada no servidor.", "err"); return; }
         if (res.status === 504) {
-          falhas.push(`imagem ${i + 1} demorou demais mesmo repetindo — se for uma fatura muito longa, envie-a em 2 pedaços (topo e fim)`);
+          falhas.push(`arquivo ${i + 1} demorou demais mesmo repetindo — se for uma fatura muito longa, envie-a em 2 pedaços (topo e fim)`);
           continue;
         }
         if (!res.ok) {
           let detail = "";
           try { const j = await res.json(); detail = j?.detail || j?.error || ""; } catch { /* sem corpo */ }
-          falhas.push(`imagem ${i + 1} falhou (${res.status}${detail ? " — " + detail : ""})`);
+          falhas.push(`arquivo ${i + 1} falhou (${res.status}${detail ? " — " + detail : ""})`);
           continue;
         }
         const data = await res.json();
-        if (data.error === "refusal") { falhas.push(`imagem ${i + 1} não pôde ser lida`); continue; }
+        if (data.error === "refusal") { falhas.push(`arquivo ${i + 1} não pôde ser lido`); continue; }
         const novos = normalize(data.itens);
-        if (!novos.length) { falhas.push(`imagem ${i + 1} sem itens reconhecidos`); continue; }
+        if (!novos.length) { falhas.push(`arquivo ${i + 1} sem itens reconhecidos`); continue; }
         const src = srcSeq++;
         novos.forEach((r) => { r.src = src; });
         rows.push(...novos);
@@ -250,7 +258,7 @@ const Batch = (() => {
       if (falhas.length) setStatus(`${added} itens lidos, mas: ${falhas.join("; ")}. Confira abaixo ✔`, "ok");
       if (flagged) setStatus(`${added} itens lidos — ⚠ ${flagged} desmarcado(s) por parecerem duplicados (já estão na pasta ou repetiram entre os arquivos). Se forem compras reais, marque-os de volta.`, "warn");
     } else {
-      setStatus(falhas.length ? `Nada reconhecido: ${falhas.join("; ")}.` : "Não reconheci itens nessas imagens. Tente fotos mais nítidas.", "err");
+      setStatus(falhas.length ? `Nada reconhecido: ${falhas.join("; ")}.` : "Não reconheci itens nesses arquivos. Tente fotos mais nítidas ou outro PDF.", "err");
     }
     renderPreview();
   }

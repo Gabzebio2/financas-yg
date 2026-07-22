@@ -389,13 +389,13 @@
     <div class="receipt-box" id="receipt-box">
       <div class="receipt-btns">
         <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-camera">📷 Tirar foto</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-upload" title="Envie uma foto (comprovante ou fatura/lista) ou um arquivo Excel — serve tanto para um gasto só quanto para vários de uma vez">📎 Upload do comprovante</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-upload" title="Envie uma foto ou PDF (comprovante ou fatura/lista) ou um arquivo Excel — serve tanto para um gasto só quanto para vários de uma vez">📎 Upload do comprovante</button>
         <span class="receipt-status hidden" id="receipt-status"></span>
         <button type="button" class="btn-link hidden" id="btn-apikey-remove"
           title="Apaga a chave de IA salva neste navegador">🔒 remover chave</button>
       </div>
       <input type="file" id="receipt-input-camera" accept="image/*" capture="environment" hidden>
-      <input type="file" id="receipt-input-upload" accept="image/*,.xlsx,.xls" multiple hidden>
+      <input type="file" id="receipt-input-upload" accept="image/*,.pdf,application/pdf,.xlsx,.xls" multiple hidden>
       <div id="apikey-wrap" class="hidden">
         <p class="hint">Para a IA ler comprovantes, cole sua chave da API Anthropic
           (crie em <b>console.anthropic.com</b> → API Keys). Ela fica salva só neste navegador.</p>
@@ -497,16 +497,16 @@
       <div class="meta-modal-icon batch-icon">📄</div>
       <div>
         <h3 id="batch-title">Importar em lote</h3>
-        <p class="meta-modal-sub">Mande uma ou várias fotos de fatura/planilha (ou Excel) — o app lê tudo e você dá um só OK</p>
+        <p class="meta-modal-sub">Mande fotos ou PDFs de fatura/planilha (ou Excel) — o app lê tudo e você dá um só OK</p>
       </div>
     </div>
 
     <div class="batch-sources">
-      <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-photo">📷 Foto (fatura/planilha)</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-photo">📷 Foto ou PDF</button>
       <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-file">📊 Arquivo Excel</button>
       <span class="receipt-status hidden" id="batch-status"></span>
     </div>
-    <input type="file" id="batch-input-photo" accept="image/*" multiple hidden>
+    <input type="file" id="batch-input-photo" accept="image/*,.pdf,application/pdf" multiple hidden>
     <input type="file" id="batch-input-file" accept=".xlsx,.xls" multiple hidden>
 
     <div id="batch-preview" class="hidden">
@@ -676,8 +676,8 @@
 <script src="js/rates.js?v=20260718a"></script>
 <script src="js/importer.js?v=20260718d"></script>
 <script src="js/dashboard.js?v=20260722g"></script>
-<script src="js/receipt.js?v=20260718f"></script>
-<script src="js/batch.js?v=20260718h"></script>
+<script src="js/receipt.js?v=20260722h"></script>
+<script src="js/batch.js?v=20260722h"></script>
 <script src="js/cloud.js?v=20260718i"></script>
 <script src="js/shell.js?v=20260720a"></script>
 </body>

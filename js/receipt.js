@@ -57,6 +57,40 @@ const Receipt = (() => {
     });
   }
 
+  // PDF não passa por canvas: vai como está (a IA lê PDFs nativamente, com
+  // todas as páginas). Teto de 3 MB — em base64 isso fica perto do limite de
+  // corpo de requisição do servidor (Vercel). Comprovantes/faturas reais são
+  // bem menores que isso.
+  const MAX_PDF_BYTES = 3 * 1024 * 1024;
+  function isPdf(file) {
+    return file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
+  }
+  // Prepara qualquer arquivo aceito pela IA (imagem -> JPEG otimizado; PDF -> base64 puro)
+  function prepareFile(file) {
+    if (!isPdf(file)) return prepareImage(file);
+    return new Promise((resolve, reject) => {
+      if (file.size > MAX_PDF_BYTES) { reject(new Error("pdf_grande")); return; }
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("leitura"));
+      reader.onload = () => resolve({ data: String(reader.result).split(",")[1], mediaType: "application/pdf" });
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Mensagem certa quando o preparo do arquivo falha
+  function prepFailMsg(e) {
+    return e && e.message === "pdf_grande"
+      ? "PDF grande demais (máx. 3 MB). Exporte só a página do comprovante ou envie um print."
+      : "Não consegui abrir esse arquivo 😕";
+  }
+
+  // Bloco de conteúdo para a API da Anthropic: imagem ou documento (PDF)
+  function anthropicFileBlock(f) {
+    return f.mediaType === "application/pdf"
+      ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: f.data } }
+      : { type: "image", source: { type: "base64", media_type: f.mediaType, data: f.data } };
+  }
+
   function buildSchema(categories) {
     return {
       type: "object",
@@ -104,9 +138,9 @@ Extraia os dados da operação. Regras:
     setStatus("Analisando comprovante… 🔎");
     let image;
     try {
-      image = await prepareImage(file);
-    } catch {
-      setStatus("Não consegui abrir essa imagem 😕", "err");
+      image = await prepareFile(file);
+    } catch (e) {
+      setStatus(prepFailMsg(e), "err");
       return;
     }
 
@@ -126,7 +160,7 @@ Extraia os dados da operação. Regras:
           messages: [{
             role: "user",
             content: [
-              { type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } },
+              anthropicFileBlock(image),
               { type: "text", text: buildPrompt() },
             ],
           }],
@@ -170,8 +204,8 @@ Extraia os dados da operação. Regras:
     }
     setStatus("Analisando comprovante… 🔎");
     let image;
-    try { image = await prepareImage(file); }
-    catch { setStatus("Não consegui abrir essa imagem 😕", "err"); return; }
+    try { image = await prepareFile(file); }
+    catch (e) { setStatus(prepFailMsg(e), "err"); return; }
 
     try {
       const res = await fetch(PROXY_PATH, {
@@ -246,5 +280,5 @@ Extraia os dados da operação. Regras:
     refreshKeyUI();
   });
 
-  return { analyze, prepareImage };
+  return { analyze, prepareImage, prepareFile };
 })();
