@@ -337,7 +337,10 @@ const Dashboard = (() => {
   // lado a lado na tela (o tamanho base é o do print: 26px no celular)
   function fitHeroFlow() {
     const flow = document.querySelector(".hero-flow");
-    if (!flow) return;
+    // Painel oculto (ex.: tela de Transações aberta) tem largura 0: não dá
+    // para medir. Sai sem mexer para não zerar os tamanhos e deixar os
+    // valores estourarem quando o painel voltar a aparecer.
+    if (!flow || !flow.clientWidth) return;
     const vals = flow.querySelectorAll(".hero-flow-value");
     vals.forEach((el) => { el.style.fontSize = ""; });
     let guard = 16;
@@ -1809,5 +1812,5 @@ const Dashboard = (() => {
     return n;
   }
 
-  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, resolveImportDate, existingTxKeys };
+  return { open, openTxModal, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, resolveImportDate, existingTxKeys, refitHero: fitHeroFlow };
 })();

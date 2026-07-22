@@ -272,6 +272,11 @@ function showScreen(id) {
   // No celular quem rola é o <main> (evita o botão "voltar ao topo" do navegador)
   const m = $("#main");
   if (m && m.scrollTo) m.scrollTo(0, 0);
+  // Ao voltar para o painel, reencaixa os valores do cabeçalho — eles podem
+  // ter sido recalculados enquanto o painel estava oculto (tela de Transações).
+  if (id === "screen-dash" && typeof Dashboard !== "undefined" && Dashboard.refitHero) {
+    requestAnimationFrame(Dashboard.refitHero);
+  }
 }
 
 function goHome() {
