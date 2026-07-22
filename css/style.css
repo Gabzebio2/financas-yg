@@ -805,7 +805,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 @media (min-width: 981px) {
   .sidebar { display: flex; }
   .topbar { display: none; }
-  main { margin-left: 78px; max-width: calc(1180px + 78px); padding-left: 32px; padding-right: 32px; }
+  /* A sidebar é fixa (ocupa 78px à esquerda); o padding do body reserva esse
+     espaço e o conteúdo é centralizado no que sobra — assim a folga fica
+     igual dos dois lados, sem sobrar tudo de um lado só. */
+  body { padding-left: 78px; }
+  main { margin: 0 auto; max-width: 1258px; padding-left: 32px; padding-right: 32px; }
 }
 
 /* ===== Responsivo ===== */
