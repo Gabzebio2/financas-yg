@@ -154,9 +154,9 @@ body:has(#screen-txs:not(.hidden)) #sb-txs { background: var(--primary-soft); co
 .bn-fab:active { transform: scale(.94); }
 .bn-fab svg { width: 26px; height: 26px; }
 
-/* ===== Botões ===== */
+/* ===== Botões (pílulas, como no Mobills) ===== */
 .btn {
-  border: none; border-radius: 12px; padding: 10px 18px;
+  border: none; border-radius: 999px; padding: 10px 18px;
   font-size: 14px; font-weight: 600; cursor: pointer;
   font-family: inherit; transition: filter .15s, background .15s;
 }
@@ -240,11 +240,11 @@ body:has(#screen-txs:not(.hidden)) #sb-txs { background: var(--primary-soft); co
 .card h3 { margin: 0 0 12px; font-size: 15.5px; }
 .field-label { display: block; font-size: 13px; font-weight: 600; color: var(--text-soft); margin-bottom: 6px; }
 .input-lg {
-  width: 100%; font-size: 17px; padding: 11px 14px; color: var(--text);
-  background: var(--input-bg);
-  border: 1px solid var(--border); border-radius: 12px; font-family: inherit;
+  width: 100%; font-size: 17px; padding: 11px 4px; color: var(--text);
+  background: transparent;
+  border: none; border-bottom: 1px solid var(--border); border-radius: 0; font-family: inherit;
 }
-.input-lg:focus { outline: 2px solid var(--primary); border-color: transparent; }
+.input-lg:focus { outline: none; border-bottom: 2px solid var(--primary); padding-bottom: 10px; }
 
 /* ===== Resumo (cartões estilo Mobills) ===== */
 .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
@@ -455,8 +455,8 @@ body.hide-money .hero-eye { opacity: .5; }
   border-radius: 20px; font-size: 12px; padding: 3px 10px; font-weight: 600;
 }
 #tx-search {
-  font-family: inherit; font-size: 14px; padding: 9px 14px; width: 300px; max-width: 100%;
-  border: 1px solid var(--border); border-radius: 12px;
+  font-family: inherit; font-size: 14px; padding: 9px 16px; width: 300px; max-width: 100%;
+  border: 1px solid var(--border); border-radius: 999px;
   background: var(--input-bg); color: var(--text);
 }
 #tx-search:focus { outline: 2px solid var(--primary); border-color: transparent; }
@@ -510,6 +510,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .modal-sm { width: 400px; }
 .modal h3 { margin: 0 0 16px; font-size: 18px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+/* CANCELAR / CONCLUÍDO em maiúsculas, como no app Mobills */
+.modal-actions .btn {
+  text-transform: uppercase; letter-spacing: .6px;
+  font-size: 13.5px; padding: 11px 22px;
+}
 
 .type-toggle { display: flex; background: var(--input-bg); border-radius: 999px; padding: 4px; margin-bottom: 16px; }
 .type-toggle button {
@@ -522,11 +527,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; color: var(--text-soft); }
 .form-grid .span2 { grid-column: 1 / -1; }
-.form-grid input, .form-grid select {
-  font-family: inherit; font-size: 15px; padding: 9px 12px; color: var(--text);
-  border: 1px solid var(--border); border-radius: 12px; background: var(--input-bg);
+/* Campos com linha embaixo, como os formulários do app Mobills */
+.form-grid input:not([type="checkbox"]):not([type="radio"]), .form-grid select {
+  font-family: inherit; font-size: 15px; padding: 9px 4px; color: var(--text);
+  border: none; border-bottom: 1px solid var(--border);
+  border-radius: 0; background: transparent;
 }
-.form-grid input:focus, .form-grid select:focus { outline: 2px solid var(--primary); border-color: transparent; }
+.form-grid input:not([type="checkbox"]):not([type="radio"]):focus, .form-grid select:focus {
+  outline: none; border-bottom: 2px solid var(--primary); padding-bottom: 8px;
+}
 .checkline { flex-direction: row !important; align-items: center; gap: 8px !important; cursor: pointer; }
 .checkline input { width: 17px; height: 17px; accent-color: var(--primary); }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
