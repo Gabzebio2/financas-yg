@@ -1,0 +1,27 @@
+# Publish only the reviewed application files listed below.
+# Personal documents, images, backups, credentials and development files stay excluded.
+*
+!/.vercelignore
+!/api/
+!/css/
+!/fonts/
+!/js/
+!/lib/
+!/api/receipt.js
+!/css/design.css
+!/css/style.css
+!/fonts/OpenSans-Var.woff2
+!/index.html
+!/js/app.js
+!/js/batch.js
+!/js/cloud.js
+!/js/dashboard.js
+!/js/importer.js
+!/js/navigation.js
+!/js/rates.js
+!/js/receipt.js
+!/js/theme.js
+!/lib/chart.min.js
+!/lib/supabase.min.js
+!/lib/xlsx.min.js
+!/vercel.json

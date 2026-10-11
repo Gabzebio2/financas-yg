@@ -20,12 +20,249 @@ const Cloud = (() => {
   const DEFAULT_URL = "https://mhgagjhwsjjjwwvopjgu.supabase.co";
   const DEFAULT_KEY = "sb_publishable_fB3B_MW3VgJBcJpUbN1wvg_1Glbr2r5";
 
-  let client = null;
-  let session = null;
-  let syncing = false;   // trava anti-loop enquanto puxa da nuvem
-  let pushTimer = null;
+  const OWNERS_STORAGE = "fyg:cloud-owners:v1";
+  const RETRY_MS = [5000, 15000, 30000, 60000, 120000, 300000];
+  const REQUEST_MS = 20000;
+  let client = null, clientCfg = null, session = null, activeOwner = "";
+  let syncing = false, applyingRemote = false;
+  let pushTimer = null, nextRetryAt = null, retryAttempt = 0;
+  let authSubscription = null, connectionVersion = 0;
+  let syncPromise = null, syncVersion = -1;
+  let queueDurable = true, lastError = "", authRequired = false;
+  let accountConflictCount = 0, revisionCounter = 0;
+  const queues = new Map();
+  const queueReads = new Map();
+  const requests = new Set();
+  const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
+  const validId = (id) => typeof id === "string" && /^[a-z0-9_-]{1,200}$/i.test(id) && !["__proto__", "prototype", "constructor"].includes(id);
+  const validOwner = (owner) => typeof owner === "string" && /^https:\/\/[a-z0-9-]+\.supabase\.co\|[a-z0-9_-]+$/i.test(owner);
+  const clone = (value) => JSON.parse(JSON.stringify(value));
+  const revision = () => Date.now().toString(36) + (++revisionCounter).toString(36) + Math.random().toString(36).slice(2, 9);
+  const ownerFor = (s) => clientCfg && validId(s?.user?.id) ? `${clientCfg.url}|${s.user.id}` : "";
+  const matchesClientCfg = () => {
+    const cfg = getCfg();
+    return !!clientCfg && cfg?.url === clientCfg.url && cfg?.anonKey === clientCfg.anonKey;
+  };
+  const ownerParts = (owner) => { const at = owner.lastIndexOf("|"); return { url: owner.slice(0, at), userId: owner.slice(at + 1) }; };
+  const queueKey = (owner) => "fyg:cloud-queue:v1:" + owner;
+  const isAuto = () => { try { return localStorage.getItem(AUTOSYNC_STORAGE) !== "0"; } catch { return false; } };
+  const isOffline = () => typeof navigator !== "undefined" && navigator.onLine === false;
+  let ledger = { version: 1, owners: Object.create(null), projects: Object.create(null) };
+  function refreshLedger() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(OWNERS_STORAGE));
+      if (raw?.version !== 1) return;
+      for (const [id, owner] of Object.entries(raw.owners || {})) if (validId(id) && validOwner(owner)) ledger.owners[id] = owner;
+      for (const [project, migrated] of Object.entries(raw.projects || {})) if (/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(project) && migrated === true) ledger.projects[project] = true;
+    } catch { /* nenhum dado financeiro é alterado */ }
+  }
+  refreshLedger();
 
-  const isAuto = () => localStorage.getItem(AUTOSYNC_STORAGE) !== "0"; // padrão ligado
+  function localDatasets() {
+    if (typeof Store !== "undefined") return Store.loadIndex().map((entry) => Store._rawDataset(entry.id)).filter(Boolean);
+    return typeof buildSyncPayload === "function" ? buildSyncPayload().datasets : [];
+  }
+
+  function localDataset(id) {
+    return typeof Store !== "undefined" ? Store._rawDataset(id) : localDatasets().find((ds) => ds.id === id) || null;
+  }
+
+  function newQueue() { return { version: 1, dirty: Object.create(null), deletes: Object.create(null), base: Object.create(null), conflicts: [], lastSyncedAt: null }; }
+
+  function loadQueue(owner, reload = false) {
+    if (!reload && queues.has(owner)) return queues.get(owner);
+    let q = newQueue();
+    try {
+      const raw = JSON.parse(localStorage.getItem(queueKey(owner)));
+      if (raw?.version === 1) {
+        for (const field of ["dirty", "deletes", "base"]) {
+          if (!raw[field] || typeof raw[field] !== "object" || Array.isArray(raw[field])) continue;
+          for (const [id, value] of Object.entries(raw[field])) {
+            if (validId(id) && value && typeof value === "object") q[field][id] = value;
+          }
+        }
+        q.conflicts = Array.isArray(raw.conflicts) ? raw.conflicts.filter((c) => c && validId(c.sourceId) && validId(c.copyId) && typeof c.digest === "string") : [];
+        q.lastSyncedAt = typeof raw.lastSyncedAt === "string" ? raw.lastSyncedAt : null;
+      }
+      // Migra a fila de exclusões da versão anterior, sem apagá-la antes de confirmar.
+      const { url, userId } = ownerParts(owner);
+      const deleted = JSON.parse(localStorage.getItem(`fyg:cloud-deletes:${url}:${userId}`));
+      if (Array.isArray(deleted)) deleted.filter(validId).forEach((id) => {
+        if (!own(q.deletes, id)) q.deletes[id] = { rev: revision() };
+        if (!own(ledger.owners, id)) ledger.owners[id] = owner;
+      });
+    } catch { /* a varredura das pastas recupera envios sem confirmação */ }
+    queues.set(owner, q);
+    queueReads.set(owner, clone(q));
+    return q;
+  }
+
+  // Mescla só os metadados da fila entre abas. Remover uma revisão confirmada
+  // jamais remove uma revisão nova gravada por outra aba durante a requisição.
+  function mergeQueueFromDisk(owner, q) {
+    const previous = queueReads.get(owner) || newQueue();
+    let disk;
+    try { disk = JSON.parse(localStorage.getItem(queueKey(owner))); } catch { return; }
+    if (disk?.version !== 1) return;
+    for (const field of ["dirty", "deletes", "base"]) {
+      const keys = new Set([...Object.keys(disk[field] || {}), ...Object.keys(previous[field] || {})]);
+      for (const id of keys) {
+        if (!validId(id)) continue;
+        const before = previous[field]?.[id], remote = disk[field]?.[id], local = q[field][id];
+        if (canonical(remote) === canonical(before)) continue;
+        if (canonical(local) === canonical(before)) {
+          if (remote && typeof remote === "object") q[field][id] = clone(remote);
+          else delete q[field][id];
+        } else if (remote && typeof remote === "object") {
+          if (!local || field !== "base" && String(remote.queuedAt || "") > String(local.queuedAt || "") || field === "base" && Date.parse(remote.version || 0) > Date.parse(local.version || 0)) q[field][id] = clone(remote);
+        }
+      }
+    }
+    for (const entry of Array.isArray(disk.conflicts) ? disk.conflicts : []) {
+      if (entry && validId(entry.sourceId) && validId(entry.copyId) && typeof entry.digest === "string" && !q.conflicts.some((v) => v.sourceId === entry.sourceId && v.digest === entry.digest)) q.conflicts.push(entry);
+    }
+    for (const id of Object.keys(q.dirty)) if (own(q.deletes, id)) {
+      if (localDataset(id)) delete q.deletes[id];
+      else delete q.dirty[id];
+    }
+  }
+
+  function persistMetadata() {
+    try {
+      refreshLedger();
+      localStorage.setItem(OWNERS_STORAGE, JSON.stringify(ledger));
+      for (const [owner, q] of queues) {
+        mergeQueueFromDisk(owner, q);
+        localStorage.setItem(queueKey(owner), JSON.stringify(q));
+        queueReads.set(owner, clone(q));
+        const { url, userId } = ownerParts(owner);
+        localStorage.removeItem(`fyg:cloud-deletes:${url}:${userId}`);
+      }
+      queueDurable = true;
+      return true;
+    } catch {
+      queueDurable = false;
+      lastError = "Os dados estão salvos localmente, mas não foi possível guardar a fila de sincronização. Exporte um backup e libere espaço.";
+      return false;
+    }
+  }
+
+  function requireDurableQueue() {
+    if (!persistMetadata()) throw Object.assign(new Error(lastError), { name: "QueueStorageError" });
+  }
+
+  function markDirty(owner, id) {
+    const q = loadQueue(owner);
+    q.dirty[id] = { rev: revision(), queuedAt: new Date().toISOString() };
+    delete q.deletes[id];
+  }
+
+  // A assinatura usa o conteúdo persistido, sem regenerar IDs nem decidir por relógios.
+  function canonical(value, root = true) {
+    if (Array.isArray(value)) return "[" + value.map((v) => canonical(v, false)).join(",") + "]";
+    if (value && typeof value === "object") return "{" + Object.keys(value).filter((key) => !(root && key === "updatedAt")).sort().map((key) => JSON.stringify(key) + ":" + canonical(value[key], false)).join(",") + "}";
+    return JSON.stringify(value);
+  }
+
+  async function fingerprint(text) {
+    if (typeof crypto !== "undefined" && crypto.subtle && typeof TextEncoder !== "undefined") {
+      const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+      return "sha256:" + Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    }
+    // Contextos antigos sem Web Crypto usam comparação exata, nunca um hash fraco.
+    return "json:" + text;
+  }
+
+  function getSyncState() {
+    const owners = new Set(Object.values(ledger.owners));
+    if (activeOwner) owners.add(activeOwner);
+    let pendingUploads = 0, pendingDeletes = 0, otherAccountPending = 0;
+    for (const owner of owners) {
+      const q = loadQueue(owner);
+      const uploads = Object.keys(q.dirty).length, deletes = Object.keys(q.deletes).length;
+      if (!activeOwner || owner === activeOwner) { pendingUploads += uploads; pendingDeletes += deletes; }
+      else otherAccountPending += uploads + deletes;
+    }
+    const q = activeOwner ? loadQueue(activeOwner) : null;
+    const pendingCount = pendingUploads + pendingDeletes;
+    const unlinkedCount = localDatasets().filter((ds) => !own(ledger.owners, ds.id)).length;
+    const connected = !!session, autoSync = isAuto();
+    let status = "local";
+    if (syncing) status = "syncing";
+    else if (!queueDurable) status = "error";
+    else if (authRequired || (!connected && pendingCount)) status = "auth-required";
+    else if (pendingCount && isOffline()) status = "offline";
+    else if (pendingCount) status = lastError ? "error" : "pending";
+    else if (lastError || accountConflictCount) status = "error";
+    else if (unlinkedCount) status = "unlinked";
+    else if (connected && q?.lastSyncedAt) status = "synced";
+    return { status, connected, autoSync, pendingUploads, pendingDeletes, pendingCount, otherAccountPending, unlinkedCount,
+      lastSyncedAt: q?.lastSyncedAt || null, nextRetryAt, error: lastError || null, conflictCount: q?.conflicts.length || 0,
+      accountConflictCount, queueDurable };
+  }
+
+  function publishState() {
+    const state = getSyncState();
+    let message;
+    if (!state.queueDurable) message = state.error;
+    else if (state.status === "syncing") message = "Sincronizando as alterações salvas neste aparelho…";
+    else if (state.pendingCount) {
+      const count = `${state.pendingCount} alteração(ões) salva(s) neste aparelho, aguardando envio.`;
+      if (state.status === "auth-required") message = count + " Entre novamente na conta de origem.";
+      else if (!state.autoSync) message = count + " A sincronização automática está desligada.";
+      else if (state.status === "offline") message = count + " O envio será retomado quando a conexão voltar com o app aberto.";
+      else message = count + (state.nextRetryAt ? " Nova tentativa automática com o app aberto." : "");
+    } else if (state.unlinkedCount) message = state.connected
+      ? "Há pastas locais sem vínculo. Vincule-as explicitamente à conta desejada para enviá-las."
+      : "Há pastas locais sem vínculo. Entre na conta desejada para vincular e enviar essas pastas.";
+    else if (state.accountConflictCount) message = "Uma pasta da nuvem coincide com dados de outra conta neste aparelho. As duas versões foram mantidas nos seus locais de origem.";
+    else if (state.status === "synced") message = "Tudo sincronizado ✔" + (state.conflictCount ? " Versões divergentes foram preservadas em pastas de conflito." : "");
+    else if (state.error) message = "Nuvem indisponível agora. Seus dados locais continuam disponíveis.";
+    else message = "Seus dados estão salvos neste aparelho.";
+    setStatus(message, state.status === "synced" ? "ok" : state.status === "error" ? "err" : state.pendingCount ? "warn" : "");
+    if (typeof CustomEvent !== "undefined" && document.dispatchEvent) document.dispatchEvent(new CustomEvent("fyg:cloudstate", { detail: state }));
+  }
+
+  function cancelSchedule() { clearTimeout(pushTimer); pushTimer = null; nextRetryAt = null; }
+  function cancelRequests() { for (const request of requests) request.cancel(); }
+
+  function scheduleSync(delay = 1500) {
+    if (!session || !isAuto() || isOffline()) { publishState(); return; }
+    cancelSchedule();
+    const version = connectionVersion;
+    nextRetryAt = new Date(Date.now() + delay).toISOString();
+    pushTimer = setTimeout(() => {
+      pushTimer = null; nextRetryAt = null;
+      if (version === connectionVersion && session && isAuto()) syncNow({ automatic: true });
+    }, delay);
+    publishState();
+  }
+
+  function retryPending() {
+    const q = activeOwner ? loadQueue(activeOwner) : null;
+    if (!q || !Object.keys(q.dirty).length && !Object.keys(q.deletes).length || authRequired) return;
+    scheduleSync(RETRY_MS[Math.min(retryAttempt++, RETRY_MS.length - 1)]);
+  }
+
+  function current(c, version, owner) { return c === client && version === connectionVersion && matchesClientCfg() && !!session && owner === activeOwner; }
+  function assertCurrent(c, version, owner) {
+    if (c === client && !matchesClientCfg()) { resetConnection(); refreshUI(); }
+    if (!current(c, version, owner)) throw Object.assign(new Error("Operação cancelada."), { name: "AbortError" });
+  }
+
+  async function request(query) {
+    const controller = new AbortController();
+    let timer, rejectWait;
+    const interrupted = new Promise((_, reject) => { rejectWait = reject; });
+    const active = { cancel() { clearTimeout(timer); controller.abort(); rejectWait(Object.assign(new Error("Operação cancelada."), { name: "AbortError" })); } };
+    requests.add(active);
+    timer = setTimeout(() => { controller.abort(); rejectWait(Object.assign(new Error("A nuvem não respondeu a tempo."), { name: "TimeoutError" })); }, REQUEST_MS);
+    try {
+      const response = await Promise.race([typeof query.abortSignal === "function" ? query.abortSignal(controller.signal) : query, interrupted]);
+      if (response?.error) throw response.error;
+      return response;
+    } finally { clearTimeout(timer); requests.delete(active); }
+  }
 
   function getCfg() {
     try {
@@ -55,18 +292,87 @@ const Cloud = (() => {
   }
 
   function ensureClient() {
+    if (client && !matchesClientCfg()) resetConnection();
     if (client) return client;
     const cfg = getCfg();
     if (!cfg) return null;
-    client = supabase.createClient(cfg.url, cfg.anonKey);
-    client.auth.onAuthStateChange((ev, s) => {
-      session = s;
-      refreshUI();
+    if (typeof supabase === "undefined" || typeof supabase.createClient !== "function") {
+      setStatus("A conexão com a nuvem está indisponível. Seus dados locais continuam disponíveis; tente novamente com internet.", "err");
+      return null;
+    }
+    clientCfg = { url: cfg.url, anonKey: cfg.anonKey };
+    client = supabase.createClient(clientCfg.url, clientCfg.anonKey);
+    const currentClient = client;
+    const { data } = client.auth.onAuthStateChange((ev, s) => {
+      if (currentClient !== client) return;
+      activateSession(s, ev);
       // Usuário abriu o link "esqueci minha senha" do e-mail: o app carrega já
       // autenticado em modo recuperação — só falta digitar a senha nova.
       if (ev === "PASSWORD_RECOVERY") showNewPassUI();
     });
+    authSubscription = data?.subscription;
     return client;
+  }
+
+  function resetConnection() {
+    cancelSchedule();
+    cancelRequests();
+    connectionVersion++;
+    authSubscription?.unsubscribe();
+    authSubscription = null;
+    client = null;
+    clientCfg = null;
+    session = null;
+    activeOwner = "";
+    publishState();
+  }
+
+  function activateSession(nextSession, event) {
+    // Um evento de autenticação pode chegar antes do evento storage de outra aba.
+    // Nunca atribua a sessão do cliente antigo ao novo projeto configurado.
+    if (!matchesClientCfg()) { resetConnection(); refreshUI(); return; }
+    const nextOwner = ownerFor(nextSession);
+    const changed = nextOwner !== activeOwner;
+    if (changed) {
+      cancelSchedule(); cancelRequests(); connectionVersion++;
+      retryAttempt = 0; lastError = ""; accountConflictCount = 0;
+    }
+    session = nextSession;
+    activeOwner = nextOwner;
+    authRequired = false;
+    if (activeOwner) {
+      loadQueue(activeOwner);
+      const project = clientCfg.url;
+      // Somente uma sessão já existente pode migrar automaticamente a instalação
+      // antiga. Um login novo exige vínculo explícito para pastas sem proprietário.
+      if (event === "INITIAL_SESSION" && !own(ledger.projects, project)) linkUnowned(localDatasets().map((ds) => ds.id));
+      ledger.projects[project] = true;
+      persistMetadata();
+    }
+    refreshUI();
+    publishState();
+    if (session && isAuto() && (changed || event === "TOKEN_REFRESHED")) scheduleSync(0);
+  }
+
+  function linkUnowned(ids) {
+    if (!activeOwner) return 0;
+    let linked = 0;
+    for (const id of ids) {
+      if (!validId(id) || own(ledger.owners, id) || !localDataset(id)) continue;
+      ledger.owners[id] = activeOwner;
+      markDirty(activeOwner, id);
+      linked++;
+    }
+    return linked;
+  }
+
+  function linkLocalDatasets(ids) {
+    if (!session) { setStatus("Entre na conta de destino antes de vincular as pastas locais.", "err"); return 0; }
+    const selected = typeof ids === "string" ? [ids] : Array.isArray(ids) ? ids : localDatasets().map((ds) => ds.id);
+    const count = linkUnowned(selected);
+    persistMetadata(); publishState();
+    if (count) scheduleSync(0);
+    return count;
   }
 
   function showNewPassUI() {
@@ -79,36 +385,209 @@ const Cloud = (() => {
   }
 
   /* ---------- Sincronização ---------- */
-  async function pull() {
-    syncing = true;
-    try {
-      const { data, error } = await client.from(TABLE).select("id,data,updated_at");
-      if (error) throw error;
-      const raws = (data || []).map((r) => r.data);
-      const { added, updated } = mergeCloudDatasets(raws); // sanitiza tudo
-      renderFolders();
-      return added + updated;
-    } finally { syncing = false; }
+  function writeLocal(datasets) {
+    applyingRemote = true;
+    try { Store.saveDatasets(datasets, { preserveUpdatedAt: true, origin: "remote" }); }
+    finally { applyingRemote = false; }
+    renderFolders();
+    if (typeof Dashboard !== "undefined") Dashboard.refreshFromStore?.({ force: true });
   }
 
-  async function push() {
-    const payload = buildSyncPayload();
-    const rows = payload.datasets.map((ds) => ({ id: ds.id, data: ds, updated_at: ds.updatedAt }));
-    if (!rows.length) return;
-    const { error } = await client.from(TABLE).upsert(rows);
-    if (error) throw error;
+  function validRemote(row) {
+    const raw = row?.data;
+    if (!validId(row?.id) || !raw || raw.id !== row.id || !Array.isArray(raw.transactions)) return false;
+    if (typeof sanitizeDataset === "function" && !sanitizeDataset(raw, { preserveIds: true, preserveContent: true, rejectInvalidTransactions: true })) return false;
+    return typeof raw.updatedAt === "string" && Number.isFinite(Date.parse(raw.updatedAt));
   }
 
-  async function syncNow() {
-    setStatus("Sincronizando…");
-    try {
-      const n = await pull();
-      await push();
-      setStatus(n ? `Sincronizado — ${n} pasta(s) atualizada(s) ✔` : "Tudo sincronizado ✔", "ok");
-    } catch (e) {
-      console.error(e);
-      setStatus("Falha ao sincronizar: " + (e.message || e), "err");
+  async function rescan(owner, c, version) {
+    mergeQueueFromDisk(owner, loadQueue(owner));
+    for (const ds of localDatasets()) {
+      if (ledger.owners[ds.id] !== owner) continue;
+      const q = loadQueue(owner);
+      if (own(q.deletes, ds.id) || own(q.dirty, ds.id)) continue;
+      const text = canonical(ds), digest = await fingerprint(text);
+      assertCurrent(c, version, owner);
+      if (canonical(localDataset(ds.id)) !== text) { markDirty(owner, ds.id); continue; }
+      if (q.base[ds.id]?.digest !== digest) markDirty(owner, ds.id);
     }
+    requireDurableQueue();
+  }
+
+  function preserveConflict(owner, sourceId, remote, digest) {
+    const q = loadQueue(owner);
+    let entry = q.conflicts.find((item) => item.sourceId === sourceId && item.digest === digest);
+    if (!entry) {
+      entry = { sourceId, digest, copyId: uid() };
+      q.conflicts.push(entry);
+      ledger.owners[entry.copyId] = owner;
+      markDirty(owner, entry.copyId);
+      // Reserva o ID antes de salvar: se o app fechar, a próxima tentativa reutiliza-o.
+      requireDurableQueue();
+    }
+    if (!localDataset(entry.copyId)) {
+      const copy = clone(remote);
+      copy.id = entry.copyId;
+      const suffix = " — conflito da nuvem";
+      copy.name = String(remote.name || "Pasta").slice(0, 80 - suffix.length) + suffix;
+      copy.updatedAt = new Date().toISOString();
+      writeLocal([copy]);
+    }
+    return entry.copyId;
+  }
+
+  async function reconcileRow(row, owner, c, version, attempt = 0) {
+    assertCurrent(c, version, owner);
+    refreshLedger();
+    mergeQueueFromDisk(owner, loadQueue(owner));
+    if (!validRemote(row)) throw new Error("A nuvem devolveu uma pasta inválida. A cópia local foi preservada.");
+    const id = row.id, q = loadQueue(owner);
+    const knownOwner = ledger.owners[id];
+    const local = localDataset(id);
+    if (knownOwner && knownOwner !== owner || !knownOwner && local) { accountConflictCount++; return; }
+    if (!knownOwner) { ledger.owners[id] = owner; requireDurableQueue(); }
+    const localText = canonical(local), remoteText = canonical(row.data);
+    const remoteDigest = await fingerprint(remoteText);
+    const localDigest = local ? await fingerprint(localText) : null;
+    assertCurrent(c, version, owner);
+    mergeQueueFromDisk(owner, loadQueue(owner));
+    // Uma edição durante o hash/pull deve ser avaliada antes de gravar qualquer retorno.
+    if (canonical(localDataset(id)) !== localText) {
+      if (attempt >= 3) throw new Error("Há novas alterações locais. A sincronização continuará na próxima tentativa.");
+      return reconcileRow(row, owner, c, version, attempt + 1);
+    }
+    const latest = loadQueue(owner);
+    if (own(latest.deletes, id)) {
+      if (latest.base[id]?.digest !== remoteDigest) preserveConflict(owner, id, row.data, remoteDigest);
+      latest.base[id] = { digest: remoteDigest, version: row.updated_at };
+      requireDurableQueue();
+      return;
+    }
+    if (local && latest.base[id]?.digest !== localDigest && !own(latest.dirty, id)) markDirty(owner, id);
+    if (local && own(latest.dirty, id)) {
+      if (localDigest === remoteDigest) {
+        latest.base[id] = { digest: remoteDigest, version: row.updated_at };
+        delete latest.dirty[id];
+      } else if (latest.base[id]?.digest !== remoteDigest) {
+        preserveConflict(owner, id, row.data, remoteDigest);
+        latest.base[id] = { digest: remoteDigest, version: row.updated_at };
+      }
+      requireDurableQueue();
+      return;
+    }
+    if (!local || localDigest !== remoteDigest) writeLocal([clone(row.data)]);
+    latest.base[id] = { digest: remoteDigest, version: row.updated_at };
+    requireDurableQueue();
+  }
+
+  function guardVersion(query, row, userId) {
+    query = query.eq("user_id", userId);
+    if (row.updated_at == null) return query.is("updated_at", null);
+    return query.eq("updated_at", row.updated_at);
+  }
+
+  async function pushDirty(rowsById, owner, c, version) {
+    const userId = ownerParts(owner).userId;
+    // Inclui as cópias de conflito criadas durante o pull, antes de qualquer exclusão.
+    for (const id of Object.keys(loadQueue(owner).dirty)) {
+      assertCurrent(c, version, owner);
+      if (ledger.owners[id] !== owner || own(loadQueue(owner).deletes, id)) continue;
+      const observed = rowsById.get(id);
+      if (observed) await reconcileRow(observed, owner, c, version);
+      assertCurrent(c, version, owner);
+      const entry = loadQueue(owner).dirty[id];
+      if (!entry) continue;
+      const saved = localDataset(id);
+      if (!saved) throw new Error("Uma pasta pendente não está disponível localmente. A fila foi mantida para recuperação.");
+      const snapshot = clone(saved), text = canonical(snapshot), digest = await fingerprint(text);
+      assertCurrent(c, version, owner);
+      if (loadQueue(owner).dirty[id]?.rev !== entry.rev || canonical(localDataset(id)) !== text) continue;
+      // O CAS precisa avançar até quando dois saves ocorreram no mesmo milissegundo.
+      snapshot.updatedAt = new Date(Math.max(Date.now(), Date.parse(snapshot.updatedAt) + 1 || 0, Date.parse(observed?.updated_at) + 1 || 0)).toISOString();
+      const row = { user_id: userId, id, data: snapshot, updated_at: snapshot.updatedAt };
+      requireDurableQueue();
+      const result = observed
+        ? await request(guardVersion(c.from(TABLE).update({ data: snapshot, updated_at: snapshot.updatedAt }).eq("id", id), observed, userId).select("id"))
+        : await request(c.from(TABLE).insert(row).select("id"));
+      assertCurrent(c, version, owner);
+      if (!Array.isArray(result.data) || result.data.length !== 1) throw new Error("A versão da nuvem mudou durante o envio. Suas alterações continuam na fila.");
+      const latest = loadQueue(owner);
+      latest.base[id] = { digest, version: snapshot.updatedAt };
+      if (latest.dirty[id]?.rev === entry.rev && canonical(localDataset(id)) === text) delete latest.dirty[id];
+      requireDurableQueue();
+    }
+  }
+
+  async function flushDeletions(rowsById, owner, c, version) {
+    for (const id of Object.keys(loadQueue(owner).deletes)) {
+      assertCurrent(c, version, owner);
+      if (ledger.owners[id] !== owner) continue;
+      const entry = loadQueue(owner).deletes[id], observed = rowsById.get(id);
+      if (observed) {
+        await reconcileRow(observed, owner, c, version);
+        // Se surgiu uma cópia de conflito ainda não enviada, retome no próximo ciclo.
+        const q = loadQueue(owner);
+        if (q.conflicts.some((item) => item.sourceId === id && own(q.dirty, item.copyId))) continue;
+        if (q.deletes[id]?.rev !== entry.rev) continue;
+        const result = await request(guardVersion(c.from(TABLE).delete().eq("id", id), observed, ownerParts(owner).userId).select("id"));
+        assertCurrent(c, version, owner);
+        if (!Array.isArray(result.data) || result.data.length !== 1) throw new Error("A pasta mudou na nuvem durante a exclusão. A exclusão continua pendente.");
+      }
+      const latest = loadQueue(owner);
+      if (latest.deletes[id]?.rev === entry.rev) { delete latest.deletes[id]; delete latest.base[id]; }
+      requireDurableQueue();
+    }
+  }
+
+  async function syncNow(options = {}) {
+    if (!session || !client) { setStatus("Entre na sua conta para sincronizar.", "err"); return false; }
+    if (options.automatic && !isAuto()) return false;
+    if (isOffline()) { publishState(); return false; }
+    if (syncPromise) {
+      if (syncVersion === connectionVersion) return syncPromise;
+      await syncPromise;
+      return syncNow(options);
+    }
+    cancelSchedule();
+    const c = client, version = connectionVersion, owner = activeOwner;
+    syncVersion = version;
+    syncing = true;
+    accountConflictCount = 0;
+    publishState();
+    syncPromise = (async () => {
+      try {
+        await rescan(owner, c, version);
+        const response = await request(c.from(TABLE).select("id,data,updated_at"));
+        assertCurrent(c, version, owner);
+        if (!Array.isArray(response.data)) throw new Error("Resposta inválida da nuvem.");
+        const rowsById = new Map(response.data.map((row) => [row.id, row]));
+        for (const row of rowsById.values()) await reconcileRow(row, owner, c, version);
+        await rescan(owner, c, version);
+        await pushDirty(rowsById, owner, c, version);
+        await flushDeletions(rowsById, owner, c, version);
+        assertCurrent(c, version, owner);
+        retryAttempt = 0; lastError = ""; authRequired = false;
+        const q = loadQueue(owner);
+        if (!Object.keys(q.dirty).length && !Object.keys(q.deletes).length) q.lastSyncedAt = new Date().toISOString();
+        requireDurableQueue();
+        return true;
+      } catch (e) {
+        if (current(c, version, owner)) {
+          lastError = String(e?.message || "A nuvem está indisponível.").slice(0, 250);
+          authRequired = e?.status === 401 || e?.code === "PGRST301" || /jwt.*expired|invalid.*jwt/i.test(lastError);
+        }
+        return false;
+      } finally {
+        syncing = false;
+        syncPromise = null;
+        publishState();
+        if (current(c, version, owner)) {
+          if (lastError) retryPending();
+          else if (Object.keys(loadQueue(owner).dirty).length || Object.keys(loadQueue(owner).deletes).length) scheduleSync(1500);
+        }
+      }
+    })();
+    return syncPromise;
   }
 
   /* ---------- Login / conta ---------- */
@@ -125,8 +604,9 @@ const Cloud = (() => {
       const { data, error } = isSignUp
         ? await c.auth.signUp({ email, password: pass })
         : await c.auth.signInWithPassword({ email, password: pass });
+      if (c !== client) return;
       if (error) throw error;
-      session = data.session;
+      activateSession(data.session, "SIGNED_IN");
       if (!session) {
         // signUp com confirmação de e-mail ligada
         setStatus("Conta criada! Confirme pelo link enviado ao seu e-mail e depois clique em Entrar.", "ok");
@@ -146,7 +626,7 @@ const Cloud = (() => {
         : /email not confirmed/i.test(raw)
           ? "Este e-mail ainda não foi confirmado — procure o link de confirmação na caixa de entrada/spam."
         : /failed to fetch|network|load failed/i.test(raw)
-          ? "Não consegui falar com a nuvem. Confira a internet; se o projeto Supabase ficou semanas sem uso, ele hiberna — entre em supabase.com e clique em “Restore project”."
+          ? "Não consegui falar com a nuvem. Confira a internet; se o projeto foi pausado, reative-o no painel Supabase."
         : /rate limit|too many|security purposes/i.test(raw)
           ? "Muitas tentativas em sequência — aguarde um minuto e tente de novo."
         : raw || "erro inesperado";
@@ -155,10 +635,25 @@ const Cloud = (() => {
   }
 
   async function logout() {
-    try { await client?.auth.signOut(); } catch { /* offline: segue */ }
+    const previousSession = session;
+    const c = client;
+    cancelSchedule();
+    cancelRequests();
+    connectionVersion++;
     session = null;
+    activeOwner = "";
+    try {
+      const result = await c?.auth.signOut({ scope: "local" });
+      if (result?.error) throw result.error;
+    } catch {
+      if (client === c) { session = previousSession; activeOwner = ownerFor(previousSession); }
+      refreshUI();
+      setStatus("Não foi possível sair da conta. Confira a conexão e tente novamente.", "err");
+      return;
+    }
+    if (c !== client) return;
     refreshUI();
-    setStatus("Desconectado. Seus dados locais continuam intactos.");
+    publishState();
     toast("Nuvem desconectada.");
   }
 
@@ -216,23 +711,46 @@ const Cloud = (() => {
 
   /* ---------- Ganchos chamados pelo app ---------- */
   // Mudança local -> agenda um envio (debounce)
-  function onLocalChange() {
-    if (!session || syncing || !isAuto()) return;
-    clearTimeout(pushTimer);
-    pushTimer = setTimeout(async () => {
-      try { await push(); setStatus("Salvo na nuvem ✔", "ok"); }
-      catch (e) { setStatus("Falha ao salvar na nuvem: " + (e.message || e), "err"); }
-    }, 1500);
+  function onLocalChange(ids) {
+    if (applyingRemote) return;
+    refreshLedger();
+    const selected = typeof ids === "string" ? [ids] : Array.isArray(ids) ? ids : localDatasets().map((ds) => ds.id);
+    for (const id of selected) {
+      if (!validId(id) || !localDataset(id)) continue;
+      let owner = ledger.owners[id];
+      // Somente a notificação de uma gravação sob a sessão atual cria um vínculo novo.
+      if (!owner && activeOwner) { owner = activeOwner; ledger.owners[id] = owner; }
+      if (owner) markDirty(owner, id);
+    }
+    persistMetadata();
+    publishState();
+    if (!syncing && activeOwner && (selected.length || typeof Store === "undefined")) scheduleSync(1500);
   }
 
-  // Pasta excluída localmente -> remove a linha correspondente na nuvem
+  // O Store inclui estas escritas no mesmo commit da exclusão local. Nenhuma
+  // requisição ou mutação de memória ocorre antes de o commit ser concluído.
+  function prepareLocalDelete(id) {
+    refreshLedger();
+    const owner = ledger.owners[id];
+    if (!owner || !validId(id)) return [];
+    const q = clone(loadQueue(owner));
+    // O evento storage de outra aba pode ainda não ter sido entregue. Preserve
+    // suas exclusões antes de preparar a escrita atômica junto com o Store.
+    mergeQueueFromDisk(owner, q);
+    q.deletes[id] = { rev: revision(), queuedAt: new Date().toISOString() };
+    delete q.dirty[id];
+    return [{ key: queueKey(owner), value: JSON.stringify(q) }];
+  }
+
   function onLocalDelete(id) {
-    if (!session || syncing || !isAuto()) return;
-    client.from(TABLE).delete().eq("id", id)
-      .then(({ error }) => {
-        if (error) setStatus("Falha ao excluir na nuvem: " + error.message, "err");
-      })
-      .catch((e) => setStatus("Falha ao excluir na nuvem: " + (e.message || e), "err"));
+    if (applyingRemote || !validId(id)) return;
+    const owner = ledger.owners[id];
+    if (!owner) { publishState(); return; }
+    const q = loadQueue(owner, true);
+    if (!own(q.deletes, id)) q.deletes[id] = { rev: revision(), queuedAt: new Date().toISOString() };
+    delete q.dirty[id];
+    persistMetadata(); publishState();
+    if (!syncing && owner === activeOwner) scheduleSync(1500);
   }
 
   /* ---------- Configuração (URL + chave anon) ---------- */
@@ -251,11 +769,11 @@ const Cloud = (() => {
     if (!c) return;
     try {
       const { data } = await c.auth.getSession();
-      session = data.session;
+      if (c !== client) return;
+      activateSession(data.session, "INITIAL_SESSION");
       refreshUI();
       if (session && isAuto()) {
-        const n = await pull();
-        if (n) setStatus(`${n} pasta(s) atualizada(s) da nuvem ✔`, "ok");
+        await syncNow();
       }
     } catch (e) { console.error(e); }
   }
@@ -270,7 +788,11 @@ const Cloud = (() => {
     $("#btn-cloud-newpass-save").addEventListener("click", saveNewPassword);
     $("#cloud-newpass").addEventListener("keydown", (ev) => { if (ev.key === "Enter") saveNewPassword(); });
     $("#cloud-autosync").addEventListener("change", (ev) => {
-      localStorage.setItem(AUTOSYNC_STORAGE, ev.target.checked ? "1" : "0");
+      try { localStorage.setItem(AUTOSYNC_STORAGE, ev.target.checked ? "1" : "0"); }
+      catch { setStatus("Não foi possível salvar a preferência de sincronização.", "err"); return; }
+      if (ev.target.checked) scheduleSync(0);
+      else { cancelSchedule(); cancelRequests(); connectionVersion++; }
+      publishState();
     });
 
     $("#btn-cloud-setup-link").addEventListener("click", showCfgSetup);
@@ -283,14 +805,14 @@ const Cloud = (() => {
       }
       if (anonKey.length < 20) { toast("Cole a chave anon completa 🔑"); return; }
       localStorage.setItem(CFG_STORAGE, JSON.stringify({ url, anonKey }));
-      client = null; // recria com a nova config
+      resetConnection(); // invalida requisições e ouvintes da conexão anterior
       $("#cloud-cfg-wrap").classList.add("hidden");
       refreshUI();
       toast("Conexão configurada ✔ Agora crie sua conta ou entre.");
     });
     $("#btn-cloud-cfg-clear").addEventListener("click", () => {
       localStorage.removeItem(CFG_STORAGE);
-      client = null; session = null;
+      resetConnection();
       $("#cloud-cfg-wrap").classList.add("hidden");
       refreshUI();
       toast("Configuração removida deste navegador.");
@@ -299,10 +821,36 @@ const Cloud = (() => {
     init();
   });
 
+  function resumePending() {
+    if (activeOwner && isAuto() && (getSyncState().pendingCount || lastError)) scheduleSync(0);
+  }
+  if (typeof window !== "undefined" && window.addEventListener) {
+    window.addEventListener("online", resumePending);
+    window.addEventListener("offline", () => { cancelSchedule(); publishState(); });
+    window.addEventListener("storage", (event) => {
+      if (event.key === CFG_STORAGE) {
+        resetConnection(); refreshUI();
+      } else if (event.key === AUTOSYNC_STORAGE) {
+        if (!isAuto()) { cancelSchedule(); cancelRequests(); connectionVersion++; }
+        else resumePending();
+        publishState();
+      } else if (activeOwner && event.key === queueKey(activeOwner)) {
+        loadQueue(activeOwner, true); publishState(); resumePending();
+      } else if (event.key === OWNERS_STORAGE) {
+        refreshLedger(); publishState();
+      } else if (event.key?.startsWith("fyg:ds:") && activeOwner) {
+        resumePending();
+      }
+    });
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "hidden") resumePending();
+  });
+
   // Token da sessão atual (usado pela leitura de comprovante via servidor seguro)
   function getToken() {
     return session?.access_token || null;
   }
 
-  return { onLocalChange, onLocalDelete, getToken };
+  return { onLocalChange, onLocalDelete, getToken, getSyncState, linkLocalDatasets, prepareLocalDelete };
 })();

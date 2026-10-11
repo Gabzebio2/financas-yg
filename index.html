@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,35 +9,41 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://*.supabase.co wss://*.supabase.co https://open.er-api.com https://cdn.jsdelivr.net; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
-<meta name="theme-color" content="#101016">
+<meta name="theme-color" content="#17161e">
+<meta name="description" content="Organize receitas, despesas, parcelas e metas em um só lugar com o Finanças YG.">
 <title>Finanças YG</title>
-<link rel="stylesheet" href="css/style.css?v=20260723a">
+<script src="js/theme.js?v=20261010-recovery"></script>
+<link rel="stylesheet" href="css/style.css?v=20261010-recovery">
+<link rel="stylesheet" href="css/design.css?v=20261010-recovery">
 </head>
 <body>
+<a class="skip-link" href="#main">Pular para o conteúdo</a>
 
 <!-- Sidebar de ícones (desktop, estilo Mobills web) -->
-<aside class="sidebar">
-  <div class="sb-logo">YG</div>
+<aside class="sidebar" aria-label="Menu principal">
+  <div class="sb-brand"><div class="sb-logo">YG</div><span>Finanças <b>YG</b><small>finanças pessoais</small></span></div>
   <button class="sb-fab" id="sb-fab" title="Nova transação">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span>Nova transação</span>
   </button>
-  <nav class="sb-nav">
+  <div class="sb-caption">Seu espaço</div>
+  <nav class="sb-nav" aria-label="Navegação principal">
     <button class="sb-item" id="sb-home" title="Início (minhas pastas)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.8 12 3.5l9 7.3"/><path d="M5.2 9.5V20h13.6V9.5"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.8 12 3.5l9 7.3"/><path d="M5.2 9.5V20h13.6V9.5"/></svg><span>Minhas pastas</span>
     </button>
     <button class="sb-item sb-dash-only" data-scroll="#dash-hero" title="Resumo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span>Resumo</span>
     </button>
     <button class="sb-item sb-dash-only" data-scroll="#limits-block" title="Limites e metas">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1" fill="currentColor"/></svg><span>Limites e metas</span>
     </button>
     <button class="sb-item sb-dash-only" data-scroll=".charts-grid" title="Gráficos">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg><span>Gráficos</span>
     </button>
     <button class="sb-item sb-dash-only" id="sb-txs" title="Transações">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg><span>Transações</span>
     </button>
   </nav>
+<div class="sb-bottom"><span class="sb-bottom-icon" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6"/></svg></span><strong>Seu ritmo. Seus planos.</strong><p>Pequenas escolhas hoje.<br>Novas possibilidades amanhã.</p><span class="sb-shortcut">N · nova transação<br>/ · buscar transações</span></div>
 </aside>
 
 <header class="topbar">
@@ -50,25 +56,27 @@
   </div>
 </header>
 
-<main id="main">
+<main id="main" tabindex="-1">
+  <div class="workspace-bar"><span id="workspace-location">Visão geral / Minhas pastas</span><div class="workspace-actions"><span class="connection-status" id="connection-status" role="status"><i></i>Modo local</span><button type="button" class="theme-toggle" id="theme-toggle" data-theme-toggle aria-label="Ativar modo claro" title="Ativar modo claro" aria-pressed="true"><svg data-theme-icon="sun" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg data-theme-icon="moon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14a8 8 0 0 1-10-10 8.5 8.5 0 1 0 10 10Z"/></svg><span data-theme-label>Modo claro</span></button></div></div>
 
   <!-- ===================== HOME ===================== -->
   <section id="screen-home" class="screen">
+    <div class="home-page-header"><span class="eyebrow">Finanças YG</span><h1>Suas finanças, por inteiro.</h1><p>Um lugar para organizar o presente e cuidar do que vem depois.</p></div>
     <div class="hero">
-      <h1>Como você quer começar?</h1>
+      <div class="welcome-heading"><span class="welcome-kicker"><i></i>Organize o presente</span><h2>Seu dinheiro.<br>Seus próximos planos.</h2><p>Separe suas contas, acompanhe seus gastos<br class="desktop-break"> e aproxime cada objetivo.</p><div class="welcome-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-leaf"></div></div></div>
       <div class="hero-actions">
         <button class="action-card" id="card-upload">
-          <div class="action-icon icon-upload">⬆</div>
+          <div class="action-icon icon-upload"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></div>
           <div class="action-text">
-            <strong>Importar Excel (.xlsx)</strong>
-            <span>Envie sua planilha de finanças e o painel será montado automaticamente</span>
+            <strong>Importar uma planilha</strong>
+            <span>Excel (.xlsx ou .xls), do seu jeito.</span>
           </div>
         </button>
         <button class="action-card" id="card-new">
-          <div class="action-icon icon-new">✎</div>
+          <div class="action-icon icon-new"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></div>
           <div class="action-text">
-            <strong>Começar do zero</strong>
-            <span>Registre suas receitas e despesas manualmente, direto no painel</span>
+            <strong>Criar minha pasta</strong>
+            <span>Um começo simples para suas finanças.</span>
           </div>
         </button>
       </div>
@@ -77,10 +85,10 @@
     <input type="file" id="backup-input" accept=".json" hidden>
 
     <div class="folders-head">
-      <h2>Minhas pastas</h2>
+      <div><h2>Minhas pastas</h2><p class="section-caption">Cada parte da sua vida, bem organizada.</p></div>
       <div class="backup-btns">
-        <button class="btn btn-ghost btn-sm" id="btn-export-backup" title="Salva todas as pastas em um arquivo .json">Exportar backup</button>
-        <button class="btn btn-ghost btn-sm" id="btn-import-backup" title="Restaura pastas de um arquivo .json">Importar backup</button>
+        <button class="btn btn-ghost btn-sm" id="btn-export-backup" title="Salva todas as pastas em um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Exportar backup</button>
+        <button class="btn btn-ghost btn-sm" id="btn-import-backup" title="Restaura pastas de um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg> Importar backup</button>
       </div>
     </div>
     <div id="folders-grid" class="folders-grid"></div>
@@ -90,12 +98,12 @@
     <div class="card drive-card" id="cloud-card">
       <div class="drive-head">
         <div>
-          <h3>☁️ Sincronizar na nuvem</h3>
-          <span class="hint">Guarde seus dados com login e senha e acesse do PC e do celular. As regras do banco (RLS) garantem que só VOCÊ consegue ler o que é seu.</span>
+          <div class="cloud-symbol" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6"/></svg></div><span class="eyebrow">Em todos os seus dispositivos</span><h3>Suas finanças acompanham você.</h3>
+          <span class="hint">Entre na sua conta para sincronizar suas pastas entre computador e celular. Você também pode usar o app só neste navegador.</span>
         </div>
         <div class="cloud-login" id="cloud-login">
-          <input type="email" id="cloud-email" placeholder="seu e-mail" autocomplete="username">
-          <input type="password" id="cloud-pass" placeholder="senha (mín. 8)" autocomplete="current-password">
+          <input type="email" id="cloud-email" aria-label="E-mail" placeholder="seu e-mail" autocomplete="username">
+          <input type="password" id="cloud-pass" aria-label="Senha" placeholder="senha (mín. 8)" autocomplete="current-password">
           <div class="drive-connected-btns">
             <button class="btn btn-primary btn-sm" id="btn-cloud-signin">Entrar</button>
             <button class="btn btn-ghost btn-sm" id="btn-cloud-signup">Criar conta</button>
@@ -105,6 +113,8 @@
         <div class="drive-connected hidden" id="cloud-connected">
           <span class="hint" id="cloud-user"></span>
           <label class="checkline"><input type="checkbox" id="cloud-autosync"> Salvar na nuvem automaticamente</label>
+          <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-cloud-link-local">Vincular pastas locais a esta conta</button>
+          <p class="hint hidden" id="cloud-link-hint"></p>
           <div class="drive-connected-btns">
             <button class="btn btn-ghost btn-sm" id="btn-cloud-sync-now">Sincronizar agora</button>
             <button class="btn btn-ghost btn-sm" id="btn-cloud-logout">Sair</button>
@@ -114,11 +124,13 @@
       <div class="drive-cid-box hidden" id="cloud-newpass-wrap">
         <p class="hint"><b>Redefinição de senha:</b> digite a nova senha para concluir (mín. 8 caracteres).</p>
         <div class="apikey-row">
-          <input type="password" id="cloud-newpass" placeholder="nova senha (mín. 8)" autocomplete="new-password">
+          <input type="password" id="cloud-newpass" aria-label="Nova senha" placeholder="nova senha (mín. 8)" autocomplete="new-password">
           <button type="button" class="btn btn-primary btn-sm" id="btn-cloud-newpass-save">Salvar nova senha</button>
         </div>
       </div>
       <p class="drive-status" id="cloud-status"></p>
+      <p class="hint" id="cloud-queue-status" role="status"></p>
+      <p class="hint">Se a nuvem ficar indisponível, continue neste navegador. As alterações das pastas vinculadas à sua conta serão enviadas quando o serviço voltar, com o app aberto e a sincronização automática ativa. Guarde também um backup antes de limpar os dados do navegador.</p>
       <p class="hint" id="cloud-cfg-hint">Na primeira vez, configure a conexão com seu projeto (uma única vez por aparelho — guia CONFIGURAR-SUPABASE.txt).
         <button type="button" class="btn-link" id="btn-cloud-setup-link">Configurar conexão</button>
       </p>
@@ -126,10 +138,10 @@
         <p class="hint">Cole a <b>URL do projeto</b> e a <b>chave anon (public)</b> do seu Supabase.
           Elas não são secretas — a proteção real é seu login + as regras RLS do banco.</p>
         <div class="apikey-row">
-          <input type="text" id="cloud-url-input" placeholder="https://abcdefgh.supabase.co">
+          <input type="text" id="cloud-url-input" aria-label="URL do projeto Supabase" placeholder="https://abcdefgh.supabase.co">
         </div>
         <div class="apikey-row">
-          <input type="text" id="cloud-key-input" placeholder="chave anon (eyJ... ou sb_publishable_...)">
+          <input type="text" id="cloud-key-input" aria-label="Chave pública do Supabase" placeholder="chave anon (eyJ... ou sb_publishable_...)">
           <button type="button" class="btn btn-primary btn-sm" id="btn-cloud-cfg-save">Salvar</button>
         </div>
         <button type="button" class="btn-link" id="btn-cloud-cfg-clear">remover configuração salva</button>
@@ -143,7 +155,7 @@
 
     <!-- Mapeamento manual (aparece só se o formato não for reconhecido) -->
     <div id="map-box" class="card hidden">
-      <h3>Não reconheci o formato automaticamente 🤔</h3>
+      <h3>Vamos identificar as colunas da sua planilha</h3>
       <p class="hint">Me diga o que é cada coluna da sua planilha e eu monto o painel.</p>
       <div class="map-controls">
         <label>Aba: <select id="map-sheet"></select></label>
@@ -182,17 +194,18 @@
       </div>
       <div class="modal-actions sticky-actions">
         <button class="btn btn-ghost" id="btn-import-cancel">Cancelar</button>
-        <button class="btn btn-primary btn-lg" id="btn-import-save">💾 Salvar e abrir painel</button>
+        <button class="btn btn-primary btn-lg" id="btn-import-save"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h7l2 2h9v11H3zM3 7V4h7l2 3h7v2"/></svg> Salvar e abrir painel</button>
       </div>
     </div>
   </section>
 
   <!-- ===================== PAINEL ===================== -->
   <section id="screen-dash" class="screen hidden">
+    <div class="section-intro"><span class="eyebrow">Seu resumo</span></div>
     <div class="dash-header">
       <div class="ds-name-wrap">
         <h1 id="ds-name" title="Clique para renomear">—</h1>
-        <button class="btn-icon" id="btn-rename-ds" title="Renomear pasta">✎</button>
+        <button class="btn-icon" id="btn-rename-ds" title="Renomear pasta"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-4-4L5 15z"/></svg></button>
         <div class="cat-filter" id="cat-filter">
           <button class="btn-icon" id="cat-filter-btn" title="Filtrar categorias (todas vêm selecionadas)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" width="19" height="19"><path d="M3.5 5h17l-6.7 8v5.5l-3.6 1.8v-7.3z"/></svg>
@@ -201,17 +214,18 @@
         </div>
       </div>
       <div class="dash-header-btns">
-        <button class="btn btn-ghost hidden" id="btn-undo" title="Desfazer a última alteração (Ctrl+Z)">↩ Desfazer</button>
-        <button class="btn btn-primary" id="btn-add-tx">＋ Nova transação</button>
+        <button class="btn btn-ghost hidden" id="btn-undo" title="Desfazer a última alteração (Ctrl+Z)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5 4 10l5 5M4 10h9a6 6 0 0 1 0 12"/></svg> Desfazer</button>
+        <button class="btn btn-ghost" id="dash-view-txs">Ver transações <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></button><button class="btn btn-primary" id="btn-add-tx"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nova transação</button>
       </div>
     </div>
 
+    <p id="currency-warning" class="currency-warning hidden" role="status"></p>
     <!-- Cabeçalho estilo app Mobills: mês centralizado, saldo grande e
          Receitas × Despesas com ícones redondos -->
     <div class="dash-hero" id="dash-hero">
       <!-- Topo: [conta]  Mês ⌄  [categorias][moeda BRL ▾] -->
       <div class="hero-top">
-        <div class="hero-top-left">
+        <div class="hero-top-left"><span class="period-caption">Seu mês em números</span>
           <button class="btn-icon hero-top-icon" id="hero-acct" title="Trocar de painel (ex: pessoa física / empresa)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.7"/><path d="M4.8 20c.9-4 3.9-5.6 7.2-5.6s6.3 1.6 7.2 5.6"/></svg>
           </button>
@@ -223,7 +237,7 @@
           </button>
           <button class="btn-icon hero-month-arrow" id="hero-month-next" title="Próximo mês">›</button>
         </div>
-        <div class="hero-top-right">
+        <div class="hero-top-right"><button type="button" class="theme-toggle theme-toggle-icon" id="hero-theme-toggle" data-theme-toggle aria-label="Ativar modo claro" title="Ativar modo claro" aria-pressed="true"><svg data-theme-icon="sun" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg data-theme-icon="moon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14a8 8 0 0 1-10-10 8.5 8.5 0 1 0 10 10Z"/></svg></button>
           <button class="hero-cur" id="hero-cur" title="Moeda do painel">
             <span id="hero-cur-code">BRL</span><span class="cur-tri"></span>
           </button>
@@ -248,8 +262,8 @@
         <div class="pop-menu hidden" id="cur-menu"></div>
       </div>
       <div class="hero-balance">
-        <span class="hero-balance-label" id="hero-saldo-label">Saldo em contas</span>
-        <div class="hero-balance-value" id="hero-saldo">—</div>
+        <span class="hero-balance-label" id="hero-saldo-label">Saldo do mês</span>
+        <div class="hero-balance-value" id="hero-saldo">—</div><span class="balance-caption">Receitas menos despesas no período</span><span class="balance-decoration" aria-hidden="true"></span>
         <button class="btn-icon hero-eye" id="hero-eye" title="Ocultar/mostrar valores">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.7"/></svg>
         </button>
@@ -259,21 +273,21 @@
           <span class="sum-ico ico-rec"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
           <span class="hero-flow-txt">
             <span class="hero-flow-label">Receitas</span>
-            <span class="hero-flow-value pos" id="hero-rec">—</span>
+            <span class="hero-flow-value pos" id="hero-rec">—</span><span class="flow-caption">Entradas no período</span>
           </span>
         </button>
         <button type="button" class="hero-flow-item" id="hero-flow-desp" title="Adicionar despesa">
           <span class="sum-ico ico-desp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></span>
           <span class="hero-flow-txt">
             <span class="hero-flow-label">Despesas</span>
-            <span class="hero-flow-value neg" id="hero-desp">—</span>
+            <span class="hero-flow-value neg" id="hero-desp">—</span><span class="flow-caption">Saídas no período</span>
           </span>
         </button>
         <div class="hero-flow-item hero-flow-acc">
           <span class="sum-ico ico-acc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.3 12 4l9 5.3"/><path d="M5 10.5V18M9.7 10.5V18M14.3 10.5V18M19 10.5V18"/><path d="M3 20h18"/></svg></span>
           <span class="hero-flow-txt">
             <span class="hero-flow-label">Saldo acumulado</span>
-            <span class="hero-flow-value" id="hero-acc">—</span>
+            <span class="hero-flow-value" id="hero-acc">—</span><span class="flow-caption">Até o mês selecionado</span>
           </span>
         </div>
       </div>
@@ -283,17 +297,17 @@
     <div class="card limits-block" id="limits-block">
       <div class="limits-block-head">
         <div>
-          <h3>🎯 Limites e Metas</h3>
+          <span class="eyebrow">Planejamento</span><h3>Limites e metas</h3>
           <span class="hint" id="limits-overview"></span>
         </div>
         <div class="limits-head-btns">
           <button class="btn btn-primary btn-sm" data-action="add-limit">＋ Novo limite</button>
-          <button class="btn btn-ghost btn-sm" data-action="add-meta">＋ Nova Meta</button>
+          <button class="btn btn-ghost btn-sm" data-action="add-meta">＋ Nova meta</button>
         </div>
       </div>
       <div class="limits-block-body" id="limits-body">
         <div id="limits-groups"></div>
-        <div class="chart-box chart-box-limits" id="limits-chart-box"><canvas id="chart-limits"></canvas></div>
+        <div class="chart-box chart-box-limits" id="limits-chart-box"><canvas id="chart-limits">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
       <!-- Metas de valor (independentes das transações) -->
       <div class="metas-sec hidden" id="metas-sec">
@@ -302,22 +316,23 @@
       </div>
     </div>
 
+    <div class="section-heading"><div><h2>Um olhar mais atento</h2><p class="section-caption">Entenda os movimentos do seu dinheiro.</p></div><span class="section-tag">Análise financeira</span></div>
     <div class="charts-grid">
       <div class="card chart-card">
-        <h3>Gastos por categoria</h3>
-        <div class="chart-box"><canvas id="chart-cat"></canvas></div>
+        <h3>Gastos por categoria</h3><p class="chart-subtitle">Despesas por categoria no período selecionado</p>
+        <div class="chart-box"><canvas id="chart-cat">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
       <div class="card chart-card">
-        <h3>Receitas × Despesas por mês</h3>
-        <div class="chart-box"><canvas id="chart-evo"></canvas></div>
+        <h3>Entradas e saídas</h3><p class="chart-subtitle">Compare receitas e despesas ao longo dos meses</p>
+        <div class="chart-box"><canvas id="chart-evo">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
       <div class="card chart-card">
-        <h3>Saldo mensal e acumulado</h3>
-        <div class="chart-box"><canvas id="chart-saldo"></canvas></div>
+        <h3>Evolução do saldo</h3><p class="chart-subtitle">Resultado mensal e saldo acumulado</p>
+        <div class="chart-box"><canvas id="chart-saldo">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
       <div class="card chart-card">
-        <h3>Gastos por cartão / conta</h3>
-        <div class="chart-box"><canvas id="chart-conta"></canvas></div>
+        <h3>Cartões e contas</h3><p class="chart-subtitle">Distribuição das despesas no período selecionado</p>
+        <div class="chart-box"><canvas id="chart-conta">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
     </div>
 
@@ -327,13 +342,13 @@
   <section id="screen-txs" class="screen hidden">
     <div class="txs-head">
       <button class="btn-icon" id="btn-txs-back" title="Voltar ao painel">←</button>
-      <h1>Transações</h1>
+      <div><span class="eyebrow">SEU HISTÓRICO</span><h1>Transações</h1></div><button class="btn btn-primary txs-add" id="btn-txs-add"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nova transação</button>
     </div>
     <div class="txs-month">
       <div class="month-nav">
-        <button class="btn-icon" id="month-prev">‹</button>
+        <button class="btn-icon" id="month-prev" title="Mês anterior">‹</button>
         <span id="txs-month-label">—</span>
-        <button class="btn-icon" id="month-next">›</button>
+        <button class="btn-icon" id="month-next" title="Próximo mês">›</button>
       </div>
     </div>
     <div class="card txs-stats">
@@ -341,16 +356,18 @@
       <div class="txs-stat"><span>Balanço mensal</span><b id="txs-saldo">—</b></div>
     </div>
 
+    <p id="tx-currency-warning" class="currency-warning hidden" role="status"></p>
     <div class="card table-card">
       <div class="table-head">
         <h3>Transações <span id="tx-count" class="badge"></span></h3>
-        <input type="search" id="tx-search" placeholder="Buscar por descrição, categoria, cartão...">
+        <button class="btn btn-ghost btn-sm" id="btn-export-csv" title="Exportar todas as transações que correspondem aos filtros"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Exportar CSV</button>
       </div>
+      <div class="transaction-filters"><label class="search-field"><span class="sr-only">Buscar transações</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input type="search" id="tx-search" placeholder="Buscar descrição, categoria ou conta…"></label><label><span class="sr-only">Tipo de transação</span><select id="tx-type-filter"><option value="all">Todos os tipos</option><option value="receita">Receitas</option><option value="despesa">Despesas</option></select></label><label><span class="sr-only">Filtrar por conta</span><select id="tx-account-filter"><option value="all">Todas as contas</option></select></label><button class="btn-link" id="btn-clear-tx-filters">Limpar filtros</button></div><p class="filter-help">Os filtros refinam a lista e a exportação. Os saldos acima mostram o período.</p>
       <div class="bulk-bar hidden" id="tx-bulk-bar">
         <span id="tx-bulk-count">0 selecionadas</span>
         <div class="bulk-actions">
-          <button class="btn btn-ghost btn-sm" id="btn-bulk-edit">✎ Editar selecionadas</button>
-          <button class="btn btn-danger btn-sm" id="btn-bulk-delete">🗑 Excluir selecionadas</button>
+          <button class="btn btn-ghost btn-sm" id="btn-bulk-edit"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-4-4L5 15z"/></svg> Editar selecionadas</button>
+          <button class="btn btn-danger btn-sm" id="btn-bulk-delete"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6m4-6v6"/></svg> Excluir selecionadas</button>
           <button class="btn-link" id="btn-bulk-clear">limpar seleção</button>
         </div>
       </div>
@@ -388,11 +405,11 @@
     <!-- Leitura de comprovante com IA -->
     <div class="receipt-box" id="receipt-box">
       <div class="receipt-btns">
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-camera">📷 Tirar foto</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-upload" title="Envie uma foto ou PDF (comprovante ou fatura/lista) ou um arquivo Excel — serve tanto para um gasto só quanto para vários de uma vez">📎 Upload do comprovante</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-camera"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="4"/></svg> Tirar foto</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-upload" title="Envie uma foto ou PDF (comprovante ou fatura/lista) ou um arquivo Excel — serve tanto para um gasto só quanto para vários de uma vez"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 16 8-8a3 3 0 0 0-4-4L4 13a5 5 0 0 0 7 7l9-9M7 14l7-7"/></svg> Anexar comprovante</button>
         <span class="receipt-status hidden" id="receipt-status"></span>
         <button type="button" class="btn-link hidden" id="btn-apikey-remove"
-          title="Apaga a chave de IA salva neste navegador">🔒 remover chave</button>
+          title="Apaga a chave de IA salva neste navegador">Remover chave</button>
       </div>
       <input type="file" id="receipt-input-camera" accept="image/*" capture="environment" hidden>
       <input type="file" id="receipt-input-upload" accept="image/*,.pdf,application/pdf,.xlsx,.xls" multiple hidden>
@@ -400,7 +417,7 @@
         <p class="hint">Para a IA ler comprovantes, cole sua chave da API Anthropic
           (crie em <b>console.anthropic.com</b> → API Keys). Ela fica salva só neste navegador.</p>
         <div class="apikey-row">
-          <input type="password" id="apikey-input" placeholder="sk-ant-...">
+          <input type="password" id="apikey-input" aria-label="Chave da API" placeholder="sk-ant-...">
           <button type="button" class="btn btn-primary btn-sm" id="btn-apikey-save">Salvar chave</button>
         </div>
       </div>
@@ -457,7 +474,7 @@
 <div class="modal-backdrop hidden" id="modal-name">
   <div class="modal modal-sm">
     <h3 id="modal-name-title">Nome da pasta</h3>
-    <input type="text" id="modal-name-input" class="input-lg" placeholder="Ex: Minhas finanças 2026">
+    <input type="text" id="modal-name-input" aria-label="Nome ou valor solicitado" class="input-lg" placeholder="Ex: Minhas finanças 2026">
     <div class="modal-actions">
       <button class="btn btn-ghost" id="btn-name-cancel">Cancelar</button>
       <button class="btn btn-primary" id="btn-name-ok">Confirmar</button>
@@ -494,16 +511,16 @@
 <div class="modal-backdrop hidden" id="modal-batch">
   <div class="modal modal-batch">
     <div class="meta-modal-head">
-      <div class="meta-modal-icon batch-icon">📄</div>
+      <div class="meta-modal-icon batch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 3H5v18h14V8zm0 0v5h5M9 12h6m-6 4h6" stroke-linejoin="round"/></svg></div>
       <div>
         <h3 id="batch-title">Importar em lote</h3>
-        <p class="meta-modal-sub">Mande fotos ou PDFs de fatura/planilha (ou Excel) — o app lê tudo e você dá um só OK</p>
+        <p class="meta-modal-sub">Envie uma fatura, comprovante ou planilha e confira os itens reconhecidos antes de adicionar.</p>
       </div>
     </div>
 
     <div class="batch-sources">
-      <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-photo">📷 Foto ou PDF</button>
-      <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-file">📊 Arquivo Excel</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7h5l2-3h4l2 3h5v13H3z" stroke-linejoin="round"/><circle cx="12" cy="13" r="4"/></svg> Foto ou PDF</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M3 15h18"/></svg> Arquivo Excel</button>
       <span class="receipt-status hidden" id="batch-status"></span>
     </div>
     <input type="file" id="batch-input-photo" accept="image/*,.pdf,application/pdf" multiple hidden>
@@ -511,7 +528,7 @@
 
     <div id="batch-preview" class="hidden">
       <div class="batch-controls">
-        <label title="Detectado pela IA a partir da fatura; C6 quando não dá para identificar">Cartão/Conta
+        <label title="Confira o cartão identificado. Se não for reconhecido, escolha o correto ou deixe sem cartão.">Cartão/Conta
           <select id="batch-acc"></select>
         </label>
         <label title="A IA sugere por item (coluna Categoria); mudar aqui aplica a todas as linhas">Categoria
@@ -522,6 +539,9 @@
         </label>
         <span class="hint" id="batch-count"></span>
       </div>
+      <p class="hint">A IA pode errar. Confira valores, datas, categorias, estornos e possíveis duplicados. Campos não identificados precisam ser preenchidos.</p>
+      <label class="checkline hidden" id="batch-generated-wrap"><input type="checkbox" id="batch-include-generated"> Incluir também parcelas e meses estimados que não aparecem no documento</label>
+      <p class="hint hidden" id="batch-review-summary" role="status"></p>
       <div class="table-wrap batch-table-wrap">
         <table id="batch-table">
           <thead>
@@ -574,16 +594,16 @@
 <div class="modal-backdrop hidden" id="modal-meta">
   <div class="modal modal-sm modal-meta">
     <div class="meta-modal-head">
-      <div class="meta-modal-icon">🎯</div>
+      <div class="meta-modal-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg></div>
       <div>
         <h3 id="modal-meta-title">Nova Meta</h3>
-        <p class="meta-modal-sub">Defina o objetivo e veja a barrinha encher</p>
+        <p class="meta-modal-sub">Defina um objetivo e acompanhe seu progresso.</p>
       </div>
     </div>
     <div class="form-grid">
       <div class="span2 meta-mode-toggle" id="meta-mode-toggle">
-        <button type="button" data-mode="manual" class="active">💰 Poupança</button>
-        <button type="button" data-mode="linked">🤝 Cobrança de amigo</button>
+        <button type="button" data-mode="manual" class="active">Poupança</button>
+        <button type="button" data-mode="linked">Cobrança de amigo</button>
       </div>
       <label class="span2">Nome da meta
         <input type="text" id="meta-name" placeholder="Ex: Reserva de emergência">
@@ -608,7 +628,7 @@
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="btn-meta-cancel">Cancelar</button>
-      <button class="btn btn-primary" id="btn-meta-save">Salvar meta 🎯</button>
+      <button class="btn btn-primary" id="btn-meta-save"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg> Salvar meta</button>
     </div>
   </div>
 </div>
@@ -647,10 +667,10 @@
   </div>
 </div>
 
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- Navegação inferior (celular, estilo app Mobills) -->
-<nav class="bottomnav" id="bottomnav">
+<nav class="bottomnav" id="bottomnav" aria-label="Navegação principal">
   <button class="bn-item" id="bn-home">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.8 12 3.5l9 7.3"/><path d="M5.2 9.5V20h13.6V9.5"/></svg>
     Início
@@ -675,13 +695,13 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20260722g"></script>
-<script src="js/rates.js?v=20260718a"></script>
-<script src="js/importer.js?v=20260718d"></script>
-<script src="js/dashboard.js?v=20260723a"></script>
-<script src="js/receipt.js?v=20260722h"></script>
-<script src="js/batch.js?v=20260723a"></script>
-<script src="js/cloud.js?v=20260718i"></script>
-<script src="js/shell.js?v=20260720a"></script>
+<script src="js/app.js?v=20261010-recovery"></script>
+<script src="js/rates.js?v=20261010-recovery"></script>
+<script src="js/importer.js?v=20261010-recovery"></script>
+<script src="js/dashboard.js?v=20261010-recovery"></script>
+<script src="js/receipt.js?v=20261010-recovery"></script>
+<script src="js/batch.js?v=20261010-recovery"></script>
+<script src="js/cloud.js?v=20261010-recovery"></script>
+<script src="js/navigation.js?v=20261010-recovery"></script>
 </body>
 </html>

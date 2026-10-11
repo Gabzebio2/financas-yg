@@ -6,6 +6,7 @@ const Importer = (() => {
   let fileName = "";
   let pending = null; // { txs, notes }
   let importCurrency = "BRL"; // moeda escolhida para as transações importadas
+  let readVersion = 0;
 
   /* Meses em PT/ES (sem acento — comparação via stripAccents) */
   const MONTH_MAP = {
@@ -209,7 +210,7 @@ const Importer = (() => {
           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
           desc: rawDesc || "(sem descrição)",
           category, account,
-          type: "despesa",
+          type: v.value < 0 ? "receita" : "despesa",
           amount: Math.abs(v.value),
           installment,
           totalValue: totalValue != null ? Math.abs(totalValue) : null,
@@ -314,12 +315,17 @@ const Importer = (() => {
   let addToCurrent = false; // true = adicionar à pasta aberta, sem criar nova
 
   async function handleFile(file, opts) {
+    const version = ++readVersion;
+    pending = null;
     addToCurrent = !!(opts && opts.addToCurrent);
+    if (!file) return;
     if (file.size > 30 * 1024 * 1024) { toast("Arquivo grande demais (máx. 30 MB)."); return; }
     try {
       const buf = await file.arrayBuffer();
+      if (version !== readVersion) return;
       workbook = XLSX.read(buf, { type: "array", cellDates: false });
     } catch (e) {
+      if (version !== readVersion) return;
       console.error(e);
       toast("Não consegui abrir esse arquivo 😕 Confira se é um .xlsx válido.");
       return;
@@ -394,10 +400,10 @@ const Importer = (() => {
 
   // Palpite da moeda da planilha pelos símbolos/códigos presentes nas células.
   // "$" sozinho é ambíguo (peso chileno × dólar), então não decide por ele.
-  function guessCurrency() {
+  function guessCurrency(wb = workbook) {
     let txt = "";
-    for (const name of workbook.SheetNames) {
-      const rows = sheetRows(name);
+    for (const name of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
       for (let i = 0; i < Math.min(rows.length, 60); i++) txt += " " + (rows[i] || []).join(" ");
       if (txt.length > 20000) break;
     }
@@ -554,6 +560,7 @@ const Importer = (() => {
      Lê um .xlsx e devolve só as transações detectadas, sem tela de
      importação. Usado pela importação em lote (Batch). */
   async function readForBatch(file) {
+    if (!file || file.size > 30 * 1024 * 1024) throw new Error("Arquivo grande demais (máx. 30 MB).");
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: "array", cellDates: false });
     const txs = [];
@@ -569,6 +576,10 @@ const Importer = (() => {
       //    (fatura/cobrança): positivo = gasto (despesa); negativo = pagamento
       //    ou estorno (receita) — oposto da convenção bancária do importador.
       const sl = detectSimple(rows);
+      if (sl && (sl.cols.type != null || sl.cols.income != null || sl.cols.expense != null)) {
+        txs.push(...parseSimple(rows, sl).txs);
+        continue;
+      }
       if (sl && sl.cols.date != null && sl.cols.amount != null) {
         for (let i = sl.headerRow + 1; i < rows.length; i++) {
           const row = rows[i] || [];
@@ -584,13 +595,15 @@ const Importer = (() => {
         }
       }
     }
-    return txs;
+    const currency = guessCurrency(wb);
+    return txs.map((t) => ({ ...t, currency }));
   }
 
   /* ---------- Eventos ---------- */
   document.addEventListener("DOMContentLoaded", () => {
     $("#btn-import-save").addEventListener("click", savePending);
     $("#btn-import-cancel").addEventListener("click", () => {
+      readVersion++;
       pending = null;
       if (addToCurrent) { addToCurrent = false; showScreen("screen-dash"); }
       else goHome();

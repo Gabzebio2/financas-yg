@@ -19,6 +19,20 @@ const Rates = (() => {
   const listeners = [];
   let fetching = false;
 
+  function validRates(map) {
+    return map && CURRENCY_CODES.every((k) => Number.isFinite(map[k]) && map[k] > 0) && map.USD === 1;
+  }
+
+  async function request(url) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch(url, { cache: "no-store", signal: controller.signal });
+      if (!response.ok) throw new Error("cotacao " + response.status);
+      return await response.json();
+    } finally { clearTimeout(timer); }
+  }
+
   function save() {
     try { localStorage.setItem(STORAGE, JSON.stringify({ rate, at })); } catch { /* cota cheia */ }
   }
@@ -26,9 +40,9 @@ const Rates = (() => {
   // Aceita um mapa {BRL,CLP,PYG,USD} em unidades por 1 USD e publica se cobrir
   // todas as 4 moedas. Notifica quem estiver ouvindo (re-render do painel).
   function apply(map, when) {
+    if (!validRates(map)) return false;
     const next = { USD: 1 };
-    CURRENCY_CODES.forEach((k) => { if (typeof map[k] === "number" && map[k] > 0) next[k] = map[k]; });
-    if (!CURRENCY_CODES.every((k) => next[k])) return false;
+    CURRENCY_CODES.forEach((k) => { next[k] = map[k]; });
     rate = next;
     at = when || new Date().toISOString();
     save();
@@ -37,18 +51,14 @@ const Rates = (() => {
   }
 
   async function fetchPrimary() {
-    const r = await fetch(PRIMARY, { cache: "no-store" });
-    if (!r.ok) throw new Error("primary " + r.status);
-    const j = await r.json();
+    const j = await request(PRIMARY);
     if (j.result !== "success" || !j.rates) throw new Error("primary_shape");
     const when = j.time_last_update_unix ? new Date(j.time_last_update_unix * 1000).toISOString() : null;
     if (!apply(j.rates, when)) throw new Error("primary_incompleto");
   }
 
   async function fetchFallback() {
-    const r = await fetch(FALLBACK, { cache: "no-store" });
-    if (!r.ok) throw new Error("fallback " + r.status);
-    const j = await r.json();
+    const j = await request(FALLBACK);
     const usd = j.usd || {};
     const map = { USD: 1 };
     CURRENCY_CODES.forEach((k) => { const v = usd[k.toLowerCase()]; if (typeof v === "number") map[k] = v; });
@@ -75,20 +85,25 @@ const Rates = (() => {
   function load() {
     try {
       const c = JSON.parse(localStorage.getItem(STORAGE));
-      if (c && c.rate && c.rate.USD) { rate = c.rate; at = c.at || null; }
+      if (c && validRates(c.rate)) {
+        rate = Object.fromEntries(CURRENCY_CODES.map((k) => [k, c.rate[k]]));
+        at = typeof c.at === "string" && Number.isFinite(Date.parse(c.at)) ? c.at : null;
+      }
     } catch { /* cache corrompido: ignora */ }
-    if (!at || (Date.now() - Date.parse(at)) > TTL) refresh();
+    if (!at || Date.parse(at) > Date.now() + TTL || (Date.now() - Date.parse(at)) > TTL) refresh();
     return rate;
   }
 
   // Converte 'v' da moeda 'from' para 'to' pela cotação atual.
   function convert(v, from, to) {
-    v = Number(v) || 0;
+    v = Number(v);
+    if (!Number.isFinite(v)) return 0;
     from = normCur(from); to = normCur(to);
     if (from === to) return v;
     const rf = rate[from], rt = rate[to];
-    if (!rf || !rt) return v; // sem cotação para o par: melhor esforço (não converte)
-    return v * (rt / rf);
+    if (!rf || !rt) return NaN; // o painel deve indicar cotação indisponível, nunca trocar só o símbolo
+    const converted = v * (rt / rf);
+    return Number.isFinite(converted) ? converted : NaN;
   }
 
   // true se dá para converter esse par agora (mesma moeda ou cotação disponível)
