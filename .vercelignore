@@ -2,11 +2,11 @@
 # Personal documents, images, backups, credentials and development files stay excluded.
 *
 !/.vercelignore
-!/api/
-!/css/
-!/fonts/
-!/js/
-!/lib/
+!/api
+!/css
+!/fonts
+!/js
+!/lib
 !/api/receipt.js
 !/css/design.css
 !/css/style.css
