@@ -100,7 +100,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const available = connected && state?.repairableRemoteCount > 0;
       const saved = connected && state?.hasRepairBackup;
       const busy = state?.repairing || state?.status === "syncing";
-      const show = available || saved || (connected && state?.repairing);
+      const needsReview = connected && invalidRemote > 0;
+      const show = available || saved || needsReview || (connected && state?.repairing);
       repairArea.classList.toggle("hidden", !show);
       repair.classList.toggle("hidden", !available && !state?.repairing);
       repair.disabled = !available || offline || !!busy;
@@ -112,8 +113,10 @@ document.addEventListener("DOMContentLoaded", () => {
       repairHint.textContent = !show ? "" : state?.repairing
         ? "Guardando a cópia anterior e conferindo as datas antes de corrigir a nuvem. Aguarde a confirmação."
         : available
-          ? `${state.repairableDateCount} data(s) antiga(s) em ${state.repairableRemoteCount} pasta(s) podem ser corrigidas pela sequência das parcelas.${preview ? ` Datas: ${preview}.` : ""} O app guarda uma cópia dos registros originais antes de alterar as datas. Se você já importou uma cópia dessa pasta, as duas serão preservadas.`
-          : "A cópia anterior à correção está guardada neste navegador. Baixe o arquivo para manter esse histórico fora do app.";
+          ? `${state.repairableDateCount} data(s) antiga(s) em ${state.repairableRemoteCount} pasta(s) podem ser corrigidas pela sequência das parcelas.${preview ? ` Datas: ${preview}.` : ""} O app guarda uma cópia dos registros originais antes de alterar as datas e preserva as alterações locais pendentes. Se você já importou uma cópia dessa pasta, as duas serão preservadas.`
+          : needsReview
+            ? "Os dados antigos foram preservados, mas a correção automática ainda não está disponível para esta pasta. Pode haver uma exclusão pendente, dados de outra conta ou inconsistências que exigem revisão. Nenhuma pasta foi descartada."
+            : "A cópia anterior à correção está guardada neste navegador. Baixe o arquivo para manter esse histórico fora do app.";
     }
   }
   wire("#btn-cloud-link-local", () => { if (typeof Cloud !== "undefined") Cloud.linkLocalDatasets?.(); });

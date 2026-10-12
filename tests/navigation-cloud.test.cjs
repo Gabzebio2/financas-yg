@@ -53,12 +53,27 @@ test('o reparo exibe a data proposta e exige uma conta conectada',()=>{
   assert.equal(nodes.get('#cloud-repair-actions').classList.contains('hidden'),false);
   assert.match(nodes.get('#cloud-repair-hint').textContent,/20\/00\/2025 → 20\/12\/2025/);
   assert.match(nodes.get('#cloud-repair-hint').textContent,/cópia dos registros originais/);
+  assert.match(nodes.get('#cloud-repair-hint').textContent,/preserva as alterações locais pendentes/);
   assert.match(nodes.get('#cloud-repair-hint').textContent,/as duas serão preservadas/);
   const loggedOut = render({...proposal,connected:false,hasRepairBackup:true});
   assert.equal(loggedOut.get('#cloud-repair-actions').classList.contains('hidden'),true);
   assert.equal(loggedOut.get('#btn-cloud-repair').disabled,true);
   assert.equal(loggedOut.get('#cloud-repair-hint').textContent,'');
   assert.equal(loggedOut.get('#btn-cloud-repair-backup').classList.contains('hidden'),true);
+});
+
+test('pendência local não esconde o reparo quando as datas podem ser corrigidas',()=>{
+  const nodes = render({status:'error',pendingUploads:1,pendingCount:1,invalidRemoteCount:1,blockedPendingCount:1,repairableRemoteCount:1,repairableDateCount:3});
+  assert.equal(nodes.get('#btn-cloud-repair').classList.contains('hidden'),false);
+  assert.equal(nodes.get('#btn-cloud-repair').disabled,false);
+  assert.equal(nodes.get('#cloud-repair-actions').classList.contains('hidden'),false);
+});
+
+test('uma pasta sem reparo comprovado explica o bloqueio em vez de ocultar a seção',()=>{
+  const nodes = render({status:'error',invalidRemoteCount:1,repairableRemoteCount:0});
+  assert.equal(nodes.get('#cloud-repair-actions').classList.contains('hidden'),false);
+  assert.equal(nodes.get('#btn-cloud-repair').classList.contains('hidden'),true);
+  assert.match(nodes.get('#cloud-repair-hint').textContent,/correção automática ainda não está disponível/);
 });
 
 test('o botão de reparo aguarda a sincronização e mostra andamento explícito',()=>{

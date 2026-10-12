@@ -629,8 +629,9 @@ test("falha parcial conserva backups de cada revisão e retry não duplica o mes
   const newer = putRepairableRemote(h, "repair002");
   newer.data.extraField.original.push("nova revisão"); newer.updated_at = newer.data.updatedAt = "2027-03-01T00:00:00.000Z";
   h.server.rows.set("user-a|repair002", newer);
-  assert.equal(await h.cloud.repairLegacyDates(), true); assert.equal(repairBackups(h).length, 3);
-  assert.equal(repairBackups(h).filter((entry) => entry.id === "repair002").length, 2);
+  assert.equal(await h.cloud.repairLegacyDates(), true); assert.equal(repairBackups(h).length, 4);
+  assert.equal(repairBackups(h).filter((entry) => entry.id === "repair002" && entry.sourceKind === "cloud").length, 2);
+  assert.equal(repairBackups(h).filter((entry) => entry.id === "repair002" && entry.sourceKind === "local").length, 1);
 });
 
 test("reparo aguarda sync normal ocupado, clique duplo compartilha operação e não duplica escrita", async () => {
@@ -669,7 +670,7 @@ test("backup de reparo continua disponível após reload somente para a conta de
   assert.equal(restarted.cloud.exportRepairBackup(), false); assert.equal(restarted.downloads.length, 1);
 });
 
-test("reparo pula IDs com alteração, exclusão ou conflito de proprietário locais", async () => {
+test("reparo permite pendência do dono atual e mantém bloqueio de exclusão e outro proprietário", async () => {
   const h = await seeded(); putRepairableRemote(h, "folder0001"); h.add("Local pendente");
   h.create("folder0002"); await h.sync(); putRepairableRemote(h, "folder0002"); h.Store.deleteDataset("folder0002");
   h.create("folder0003"); await h.sync(); await h.cloud.logout(); h.login("user-b"); putRepairableRemote(h, "folder0003", "user-b");
@@ -678,12 +679,14 @@ test("reparo pula IDs com alteração, exclusão ou conflito de proprietário lo
   assert.equal(h.server.calls.filter((call) => call.operation !== "select").length, writesBefore);
   assert.equal(repairBackups(h).length, 0);
   h.login("user-a"); assert.equal(await h.cloud.repairLegacyDates(), false);
-  assert.equal(repairBackups(h).length, 0);
-  assert.equal(storedQueue(h).dirty.folder0001 != null, true);
+  assert.equal(repairBackups(h).length, 2);
+  assert.ok(h.remote().data.transactions.some((t) => t.desc === "Local pendente"));
+  assert.equal(storedQueue(h).dirty.folder0001, undefined);
   assert.equal(storedQueue(h).deletes.folder0002 != null, true);
+  assert.equal(h.remote("folder0002").data.transactions[1].date, "2025-00-20");
 });
 
-test("edição ou exclusão em outra aba durante pull do reparo impede CAS mesmo sem evento storage", async () => {
+test("edição em outra aba antes do plano é preservada e exclusão durante pull impede reparo", async () => {
   for (const action of ["edit", "delete"]) {
     const first = await seeded(); const original = putRepairableRemote(first, "folder0001");
     const second = harness({ values: first.values, server: first.server }); second.login("user-a", "INITIAL_SESSION");
@@ -692,11 +695,18 @@ test("edição ou exclusão em outra aba durante pull do reparo impede CAS mesmo
     const repair = first.cloud.repairLegacyDates(); await settle();
     if (action === "edit") second.add("Mudança em outra aba");
     else second.Store.deleteDataset("folder0001");
-    gate.resolve(); assert.equal(await repair, false);
-    assert.deepEqual(first.remote(), original);
-    assert.equal(repairBackups(first).length, 0);
-    assert.equal(first.server.calls.filter((call) => call.operation !== "select").length, writesBefore);
-    assert.equal(first.cloud.getSyncState().pendingCount, 1);
+    gate.resolve(); assert.equal(await repair, action === "edit");
+    if (action === "delete") {
+      assert.deepEqual(first.remote(), original);
+      assert.equal(repairBackups(first).length, 0);
+      assert.equal(first.server.calls.filter((call) => call.operation !== "select").length, writesBefore);
+      assert.equal(first.cloud.getSyncState().pendingCount, 1);
+    } else {
+      assert.ok(first.remote().data.transactions.some((t) => t.desc === "Mudança em outra aba"));
+      assert.ok(first.local().transactions.some((t) => t.desc === "Mudança em outra aba"));
+      assert.equal(repairBackups(first).length, 2);
+      assert.equal(first.cloud.getSyncState().pendingCount, 0);
+    }
   }
 });
 
@@ -711,4 +721,191 @@ test("troca de conta durante leitura do próprio reparo cancela antes de backup 
   assert.equal(h.cloud.getSyncState().repairing, false);
   assert.equal(h.cloud.getSyncState().lastRepairCount, 0);
   assert.ok(h.server.calls.every((call) => call.operation === "select"));
+});
+
+test("dirty do usuário mantém reparo disponível sem migração automática, com datas deduplicadas local/nuvem", async () => {
+  const h = harness(); h.login(); const original = putRepairableRemote(h);
+  h.Store.saveDataset(copy(original.data)); h.add("Compra pendente", original.id);
+  const localBefore = copy(h.local(original.id)), revisionBefore = storedQueue(h).dirty[original.id].rev;
+  assert.equal(await h.sync(), false);
+  assert.equal(h.cloud.getSyncState().repairableRemoteCount, 1);
+  assert.equal(h.cloud.getSyncState().repairableDateCount, 1, "mesma data local/remota conta uma vez");
+  assert.equal(h.cloud.getSyncState().blockedPendingCount, 1);
+  assert.deepEqual(copy(h.local(original.id)), localBefore);
+  assert.deepEqual(h.remote(original.id), original);
+  assert.equal(repairBackups(h).length, 0);
+  h.server.beforeWrite = (call) => {
+    const backups = repairBackups(h);
+    assert.equal(backups.length, 2);
+    assert.deepEqual(backups.find((b) => b.sourceKind === "cloud").dataset, original.data);
+    assert.deepEqual(backups.find((b) => b.sourceKind === "local").dataset, localBefore);
+    assert.equal(backups.find((b) => b.sourceKind === "local").sourceRevision, revisionBefore);
+    assert.notEqual(storedQueue(h).dirty[original.id].rev, revisionBefore);
+    const correctedLocal = copy(h.local(original.id));
+    assert.equal(correctedLocal.transactions[1].date, "2025-12-20");
+    correctedLocal.transactions[1].date = localBefore.transactions[1].date;
+    correctedLocal.updatedAt = localBefore.updatedAt;
+    assert.deepEqual(correctedLocal, localBefore, "correção local não modifica nenhum outro campo");
+    const correctedRemote = copy(call.payload.data);
+    correctedRemote.transactions[1].date = original.data.transactions[1].date;
+    correctedRemote.updatedAt = original.data.updatedAt;
+    assert.deepEqual(correctedRemote, original.data, "primeiro CAS remoto só corrige a data");
+  };
+  assert.equal(await h.cloud.repairLegacyDates(), true);
+  assert.equal(h.cloud.getSyncState().pendingCount, 0);
+  assert.equal(h.cloud.getSyncState().status, "synced");
+  assert.equal(h.local(original.id).transactions.length, 4);
+  assert.equal(h.remote(original.id).data.transactions.length, 4);
+  assert.equal(h.cloud.exportRepairBackup(), true);
+  const exported = JSON.parse(await h.downloads[0].blob.text());
+  assert.deepEqual(exported.repairs.find((b) => b.sourceKind === "local").dataset, localBefore);
+  assert.equal(JSON.stringify(exported).includes("fake-user-a"), false);
+});
+
+test("local dirty já válido não recebe save pelo reparo e seu conteúdo vai para nuvem após CAS", async () => {
+  const h = harness(); h.login(); const original = putRepairableRemote(h);
+  const valid = copy(original.data); valid.transactions[1].date = "2025-12-20";
+  h.Store.saveDataset(valid); h.add("Compra válida pendente", original.id);
+  const localBefore = copy(h.local(original.id)), revBefore = storedQueue(h).dirty[original.id].rev;
+  await h.sync(); assert.equal(h.cloud.getSyncState().repairableRemoteCount, 1);
+  h.server.beforeWrite = () => {
+    assert.deepEqual(copy(h.local(original.id)), localBefore);
+    assert.equal(storedQueue(h).dirty[original.id].rev, revBefore);
+    assert.equal(repairBackups(h).length, 2);
+  };
+  assert.equal(await h.cloud.repairLegacyDates(), true);
+  assert.deepEqual(copy(h.local(original.id)), localBefore);
+  assert.equal(h.remote(original.id).data.transactions.length, 4);
+});
+
+test("falha no segundo backup interrompe antes de corrigir local ou nuvem", async () => {
+  const h = harness(); h.login(); const original = putRepairableRemote(h);
+  h.Store.saveDataset(copy(original.data)); h.add("Pendente protegida", original.id);
+  const localBefore = copy(h.local(original.id)), revBefore = storedQueue(h).dirty[original.id].rev;
+  h.storage.fail = (key, value) => key.startsWith("fyg:cloud-repair-backup:") && JSON.parse(value).sourceKind === "local";
+  assert.equal(await h.cloud.repairLegacyDates(), false);
+  assert.deepEqual(copy(h.local(original.id)), localBefore);
+  assert.deepEqual(h.remote(original.id), original);
+  assert.equal(storedQueue(h).dirty[original.id].rev, revBefore);
+  assert.equal(repairBackups(h).length, 1, "backup remoto confirmado continua disponível");
+  assert.ok(h.server.calls.every((call) => call.operation === "select"));
+  assert.match(h.cloud.getSyncState().error, /backup original/);
+});
+
+test("local inconclusivo, dirty sem dados e local sem dono continuam inelegíveis", async () => {
+  for (const cause of ["invalid", "missing", "unowned"]) {
+    const h = harness(); h.login(); const original = putRepairableRemote(h);
+    const local = copy(original.data);
+    if (cause === "invalid") local.transactions[0].amount = "valor quebrado";
+    h.Store.saveDataset(local, cause === "unowned" ? { origin: "remote" } : undefined);
+    if (cause === "missing") h.values.delete("fyg:ds:" + original.id);
+    assert.equal(await h.sync(), false);
+    assert.equal(h.cloud.getSyncState().repairableRemoteCount, 0);
+    assert.equal(await h.cloud.repairLegacyDates(), false);
+    assert.deepEqual(h.remote(original.id), original);
+    assert.equal(repairBackups(h).length, 0);
+    assert.ok(h.server.calls.every((call) => call.operation === "select"));
+  }
+});
+
+test("falha CAS após correção local conserva originais e nova revisão pendente", async () => {
+  const h = harness(); h.login(); const original = putRepairableRemote(h);
+  h.Store.saveDataset(copy(original.data)); h.add("Pendente protegida", original.id);
+  const oldRevision = storedQueue(h).dirty[original.id].rev;
+  h.server.beforeWrite = () => { h.remote(original.id).updated_at = "2027-02-01T00:00:00.000Z"; };
+  assert.equal(await h.cloud.repairLegacyDates(), false);
+  assert.equal(h.local(original.id).transactions[1].date, "2025-12-20");
+  assert.equal(h.local(original.id).transactions.length, 4);
+  assert.equal(h.remote(original.id).data.transactions[1].date, "2025-00-20");
+  assert.notEqual(storedQueue(h).dirty[original.id].rev, oldRevision);
+  assert.equal(repairBackups(h).length, 2);
+  assert.match(h.cloud.getSyncState().error, /mudou na nuvem/);
+});
+
+test("edição em outra aba durante hash invalida plano sem perder revisão nem executar CAS", async () => {
+  for (const action of ["edit", "delete"]) {
+    const h = harness(); h.login(); const original = putRepairableRemote(h);
+    h.Store.saveDataset(copy(original.data));
+    const other = harness({ values: h.values, server: h.server }); other.login("user-a", "INITIAL_SESSION");
+    const gate = deferred(); let held = false;
+    h.context.TextEncoder = TextEncoder;
+    h.context.crypto = { subtle: { async digest(algorithm, bytes) {
+      if (!held) { held = true; await gate.promise; }
+      return Uint8Array.from(require("node:crypto").createHash("sha256").update(Buffer.from(bytes)).digest()).buffer;
+    } } };
+    const repair = h.cloud.repairLegacyDates(); await settle(); assert.equal(held, true);
+    if (action === "edit") other.add("Alteração durante conferência", original.id);
+    else other.Store.deleteDataset(original.id);
+    gate.resolve(); assert.equal(await repair, false);
+    assert.deepEqual(h.remote(original.id), original);
+    assert.equal(repairBackups(h).length, 0);
+    assert.ok(h.server.calls.every((call) => call.operation === "select"));
+    if (action === "edit") assert.equal(h.local(original.id).transactions.length, 4);
+    else assert.equal(h.local(original.id), null);
+    assert.equal(h.cloud.getSyncState().pendingCount, 1);
+  }
+});
+
+test("save novo durante CAS permanece intacto e dado inválido nunca volta à nuvem", async () => {
+  for (const invalid of [false, true]) {
+    const h = harness(); h.login(); const original = putRepairableRemote(h);
+    h.Store.saveDataset(copy(original.data));
+    const gate = deferred(); h.server.holdWrite = gate;
+    const repair = h.cloud.repairLegacyDates(); await settle();
+    assert.equal(h.remote(original.id).data.transactions[1].date, "2025-12-20");
+    h.add("Save durante CAS", original.id);
+    if (invalid) { const newer = h.local(original.id); newer.transactions[1].date = "2025-00-20"; h.Store.saveDataset(newer); }
+    gate.resolve(); assert.equal(await repair, !invalid);
+    assert.equal(h.local(original.id).transactions.length, 4);
+    assert.equal(h.remote(original.id).data.transactions[1].date, "2025-12-20");
+    assert.ok(h.server.calls.filter((c) => c.operation !== "select").every((c) => !c.payload?.data?.transactions?.some((t) => /-00-/.test(t.date))));
+    if (invalid) {
+      assert.equal(h.cloud.getSyncState().pendingUploads, 1);
+      assert.equal(h.cloud.getSyncState().repairableRemoteCount, 1);
+      assert.match(h.cloud.getSyncState().error, /pasta local contém dados inválidos/);
+      assert.equal(await h.cloud.repairLegacyDates(), true, "reparo local-only continua disponível");
+    }
+    assert.equal(h.remote(original.id).data.transactions.length, 4);
+    assert.equal(h.cloud.getSyncState().pendingCount, 0);
+  }
+});
+
+test("guarda de upload persiste após reload e permite reparo somente local com remoto válido ou ausente", async () => {
+  for (const remotePresent of [true, false]) {
+    const h = harness(); h.login(); const original = putRepairableRemote(h);
+    h.Store.saveDataset(copy(original.data)); h.add("Compra local pendente", original.id);
+    if (remotePresent) h.remote(original.id).data.transactions[1].date = "2025-12-20";
+    else h.server.rows.clear();
+    const restored = harness({ values: h.values, server: h.server }); restored.login("user-a", "INITIAL_SESSION");
+    assert.equal(await restored.sync(), false);
+    assert.equal(restored.cloud.getSyncState().repairableRemoteCount, 1);
+    assert.equal(restored.cloud.getSyncState().repairableDateCount, 1);
+    assert.equal(restored.cloud.getSyncState().status, "error");
+    assert.equal(restored.local(original.id).transactions[1].date, "2025-00-20");
+    assert.equal(repairBackups(restored).length, 0);
+    assert.ok(restored.server.calls.filter((c) => c.operation !== "select").every((c) => !c.payload?.data?.transactions?.some((t) => /-00-/.test(t.date))));
+    assert.equal(await restored.cloud.repairLegacyDates(), true);
+    assert.equal(restored.cloud.getSyncState().pendingCount, 0);
+    assert.equal(restored.remote(original.id).data.transactions.length, 4);
+    assert.equal(repairBackups(restored).length, remotePresent ? 2 : 1);
+    assert.ok(repairBackups(restored).some((b) => b.sourceKind === "local" && b.dataset.transactions[1].date === "2025-00-20"));
+  }
+});
+
+test("pasta local inválida não impede outros uploads e exclusões nem produz falso sincronizado", async () => {
+  const h = await seeded({ auto: true });
+  const invalid = h.local(); invalid.transactions[0].date = "2025-00-20"; h.Store.saveDataset(invalid);
+  h.create("valid0002"); h.create("delete0003");
+  // Registra um remoto válido diretamente para isolar a ordem da fila em teste.
+  const toDelete = copy(h.local("delete0003"));
+  h.server.rows.set("user-a|delete0003", { user_id: "user-a", id: toDelete.id, data: toDelete, updated_at: toDelete.updatedAt });
+  h.Store.deleteDataset("delete0003");
+  assert.equal(await h.sync(), false);
+  assert.ok(h.remote("valid0002"));
+  assert.equal(h.remote("delete0003"), undefined);
+  assert.equal(h.cloud.getSyncState().pendingUploads, 1);
+  assert.equal(h.cloud.getSyncState().status, "error");
+  assert.match(h.cloud.getSyncState().error, /pasta local contém dados inválidos/);
+  assert.ok([...h.timers.values()].some((timer) => timer.delay === 5000));
+  assert.equal(h.remote().data.transactions[0].date, "2026-10-10");
 });

@@ -198,17 +198,19 @@ const Cloud = (() => {
     try { return readRepairBackups(activeOwner).length > 0; } catch { return false; }
   }
 
-  function saveRepairBackup(row, analysis, digest, owner) {
+  function saveRepairBackup(row, analysis, digest, owner, sourceKind = "cloud", sourceRevision = null) {
     try {
-      const existing = readRepairBackups(owner).find(({ entry }) => entry.id === row.id && entry.sourceVersion === row.updated_at && canonical(entry.dataset, false) === canonical(row.data, false));
+      // Backups anteriores sem sourceKind são originais da nuvem. Uma cópia
+      // local nunca substitui esse original, mesmo quando os conteúdos coincidem.
+      const existing = readRepairBackups(owner).find(({ entry }) => entry.id === row.id && (entry.sourceKind || "cloud") === sourceKind && (entry.sourceRevision || null) === sourceRevision && entry.sourceVersion === row.updated_at && canonical(entry.dataset, false) === canonical(row.data, false));
       if (existing) {
         if (localStorage.getItem(existing.key) !== existing.value) throw new Error("Backup alterado durante a conferência.");
         return;
       }
       const { url, userId } = ownerParts(owner);
       const entry = { version: 1, purpose: "legacy-date-repair", project: url, userId, id: row.id,
-        sourceVersion: row.updated_at, sourceDigest: digest, savedAt: new Date().toISOString(),
-        dataset: clone(row.data), changes: clone(analysis.changes) };
+        sourceKind, sourceRevision, sourceVersion: row.updated_at, sourceDigest: digest, savedAt: new Date().toISOString(),
+        dataset: clone(row.data), changes: clone(analysis?.changes || []) };
       const value = JSON.stringify(entry);
       let key;
       do { key = repairBackupPrefix(owner) + row.id + ":" + revision(); } while (localStorage.getItem(key) !== null);
@@ -496,22 +498,50 @@ const Cloud = (() => {
     return analysis;
   }
 
-  function canRepairRow(row, owner) {
+  function repairPlan(row, owner, hasRemote = true) {
+    if (!validId(row?.id)) return null;
     refreshLedger();
     const q = loadQueue(owner);
     mergeQueueFromDisk(owner, q);
-    const knownOwner = ledger.owners[row.id];
-    return !(own(q.dirty, row.id) || own(q.deletes, row.id) || knownOwner && knownOwner !== owner || !knownOwner && localDataset(row.id));
+    const knownOwner = ledger.owners[row.id], local = localDataset(row.id);
+    if (own(q.deletes, row.id) || knownOwner && knownOwner !== owner || !knownOwner && local) return null;
+    if (own(q.dirty, row.id) && (knownOwner !== owner || !local)) return null;
+    const remoteAnalysis = hasRemote ? analyzeRepair(row) : null;
+    if (hasRemote && !validRemote(row) && !remoteAnalysis) return null;
+    const localRow = local ? { id: row.id, data: local, updated_at: local.updatedAt } : null;
+    const localAnalysis = localRow ? analyzeRepair(localRow) : null;
+    // Nunca restaurar uma cópia da nuvem por cima de alterações locais cuja
+    // integridade não pôde ser comprovada pelo reparo estrito.
+    if (localRow && !validRemote(localRow) && !localAnalysis) return null;
+    if (!remoteAnalysis && !localAnalysis) return null;
+    const changes = new Map();
+    for (const change of [...(remoteAnalysis?.changes || []), ...(localAnalysis?.changes || [])]) changes.set(JSON.stringify([change.transactionId, change.before, change.after]), change);
+    return { remoteAnalysis, localAnalysis, localRow, localText: canonical(local, false),
+      localRevision: q.dirty[row.id]?.rev || null, knownOwner, changes: [...changes.values()] };
+  }
+
+  function repairRows(rowsById, owner) {
+    const rows = new Map(rowsById);
+    for (const id of Object.keys(loadQueue(owner).dirty)) if (!rows.has(id)) rows.set(id, { id });
+    return rows;
+  }
+
+  function sameRepairLocal(row, owner, plan) {
+    refreshLedger();
+    const q = loadQueue(owner);
+    mergeQueueFromDisk(owner, q);
+    return !own(q.deletes, row.id) && ledger.owners[row.id] === plan.knownOwner &&
+      (q.dirty[row.id]?.rev || null) === plan.localRevision && canonical(localDataset(row.id), false) === plan.localText;
   }
 
   function classifyRemote(rowsById, owner) {
     invalidRemoteIds = new Set([...rowsById].filter(([, row]) => !validRemote(row)).map(([id]) => id));
     repairableRemoteCount = 0; repairableDateCount = 0; repairDatePreview = [];
-    for (const row of rowsById.values()) {
-      const analysis = analyzeRepair(row);
-      if (!analysis || !canRepairRow(row, owner)) continue;
-      repairableRemoteCount++; repairableDateCount += analysis.changes.length;
-      for (const { before, after } of analysis.changes) if (repairDatePreview.length < 6 && !repairDatePreview.some((pair) => pair.before === before && pair.after === after)) repairDatePreview.push({ before, after });
+    for (const row of repairRows(rowsById, owner).values()) {
+      const plan = repairPlan(row, owner, rowsById.has(row.id));
+      if (!plan) continue;
+      repairableRemoteCount++; repairableDateCount += plan.changes.length;
+      for (const { before, after } of plan.changes) if (repairDatePreview.length < 6 && !repairDatePreview.some((pair) => pair.before === before && pair.after === after)) repairDatePreview.push({ before, after });
     }
   }
 
@@ -523,25 +553,43 @@ const Cloud = (() => {
   }
 
   async function repairRemoteRows(rowsById, owner, c, version) {
-    for (const row of rowsById.values()) {
+    for (const row of repairRows(rowsById, owner).values()) {
       assertCurrent(c, version, owner);
-      const analysis = analyzeRepair(row);
-      if (!analysis || !canRepairRow(row, owner)) continue;
-      const localText = canonical(localDataset(row.id));
-      const digest = await fingerprint(canonical(row.data, false));
+      const hasRemote = rowsById.has(row.id), plan = repairPlan(row, owner, hasRemote);
+      if (!plan) continue;
+      const digest = hasRemote ? await fingerprint(canonical(row.data, false)) : null;
+      assertCurrent(c, version, owner);
+      const localDigest = plan.localRow ? await fingerprint(plan.localText) : null;
       assertCurrent(c, version, owner);
       // Também recupera saves que terminaram antes de o hook dirty ser gravado.
       await rescan(owner, c, version);
       assertCurrent(c, version, owner);
-      if (!canRepairRow(row, owner) || canonical(localDataset(row.id)) !== localText) continue;
-      saveRepairBackup(row, analysis, digest, owner);
+      if (!sameRepairLocal(row, owner, plan)) continue;
+      // Ambos os originais são conferidos antes de qualquer mudança financeira.
+      if (hasRemote) saveRepairBackup(row, plan.remoteAnalysis, digest, owner);
+      if (plan.localRow) saveRepairBackup(plan.localRow, plan.localAnalysis, localDigest, owner, "local", plan.localRevision);
       assertCurrent(c, version, owner);
-      if (!canRepairRow(row, owner) || canonical(localDataset(row.id)) !== localText) continue;
-      const repaired = clone(analysis.dataset);
-      repaired.updatedAt = new Date(Math.max(Date.now(), Date.parse(row.data.updatedAt) + 1 || 0, Date.parse(row.updated_at) + 1 || 0)).toISOString();
-      const result = await request(guardVersion(c.from(TABLE).update({ data: repaired, updated_at: repaired.updatedAt }).eq("id", row.id), row, ownerParts(owner).userId).select("id"));
+      if (!sameRepairLocal(row, owner, plan)) continue;
+      if (plan.localAnalysis) {
+        const repairedLocal = clone(plan.localAnalysis.dataset);
+        repairedLocal.updatedAt = new Date(Math.max(Date.now(), Date.parse(repairedLocal.updatedAt) + 1 || 0)).toISOString();
+        // Save normal: cria uma revisão pendente nova e mantém a base intacta.
+        Store.saveDataset(repairedLocal, { preserveUpdatedAt: true });
+        requireDurableQueue();
+        plan.localText = canonical(repairedLocal, false);
+        plan.localRevision = loadQueue(owner).dirty[row.id]?.rev || null;
+        renderFolders();
+        if (typeof Dashboard !== "undefined") Dashboard.refreshFromStore?.({ force: true });
+      }
       assertCurrent(c, version, owner);
-      if (!Array.isArray(result.data) || result.data.length !== 1) throw new Error("A pasta mudou na nuvem durante a correção. Esta versão não foi sobrescrita; o backup original foi mantido. Sincronize e revise antes de tentar novamente.");
+      if (!sameRepairLocal(row, owner, plan)) continue;
+      if (plan.remoteAnalysis) {
+        const repaired = clone(plan.remoteAnalysis.dataset);
+        repaired.updatedAt = new Date(Math.max(Date.now(), Date.parse(row.data.updatedAt) + 1 || 0, Date.parse(row.updated_at) + 1 || 0)).toISOString();
+        const result = await request(guardVersion(c.from(TABLE).update({ data: repaired, updated_at: repaired.updatedAt }).eq("id", row.id), row, ownerParts(owner).userId).select("id"));
+        assertCurrent(c, version, owner);
+        if (!Array.isArray(result.data) || result.data.length !== 1) throw new Error("A pasta mudou na nuvem durante a correção. Esta versão não foi sobrescrita; os backups e as alterações locais foram mantidos. Sincronize e revise antes de tentar novamente.");
+      }
       lastRepairCount++;
       publishState();
     }
@@ -651,6 +699,7 @@ const Cloud = (() => {
 
   async function pushDirty(rowsById, owner, c, version) {
     const userId = ownerParts(owner).userId;
+    let invalidLocalCount = 0;
     // Inclui as cópias de conflito criadas durante o pull, antes de qualquer exclusão.
     for (const id of Object.keys(loadQueue(owner).dirty)) {
       assertCurrent(c, version, owner);
@@ -662,8 +711,18 @@ const Cloud = (() => {
       if (!entry) continue;
       const saved = localDataset(id);
       if (!saved) throw new Error("Uma pasta pendente não está disponível localmente. A fila foi mantida para recuperação.");
+      if (!validRemote({ id, data: saved })) {
+        // Uma outra aba pode ter gravado durante o CAS de reparo. Atualize a
+        // ação disponível para corrigir a origem local sem reenviar a data ruim.
+        classifyRemote(rowsById, owner);
+        invalidLocalCount++;
+        continue;
+      }
       const snapshot = clone(saved), text = canonical(snapshot), digest = await fingerprint(text);
       assertCurrent(c, version, owner);
+      refreshLedger();
+      mergeQueueFromDisk(owner, loadQueue(owner));
+      if (ledger.owners[id] !== owner || own(loadQueue(owner).deletes, id)) continue;
       if (loadQueue(owner).dirty[id]?.rev !== entry.rev || canonical(localDataset(id)) !== text) continue;
       // O CAS precisa avançar até quando dois saves ocorreram no mesmo milissegundo.
       snapshot.updatedAt = new Date(Math.max(Date.now(), Date.parse(snapshot.updatedAt) + 1 || 0, Date.parse(observed?.updated_at) + 1 || 0)).toISOString();
@@ -679,6 +738,7 @@ const Cloud = (() => {
       if (latest.dirty[id]?.rev === entry.rev && canonical(localDataset(id)) === text) delete latest.dirty[id];
       requireDurableQueue();
     }
+    return invalidLocalCount;
   }
 
   async function flushDeletions(rowsById, owner, c, version) {
@@ -734,9 +794,10 @@ const Cloud = (() => {
         }
         for (const row of rowsById.values()) await reconcileRow(row, owner, c, version);
         await rescan(owner, c, version);
-        await pushDirty(rowsById, owner, c, version);
+        const invalidLocalCount = await pushDirty(rowsById, owner, c, version);
         await flushDeletions(rowsById, owner, c, version);
         assertCurrent(c, version, owner);
+        if (invalidLocalCount) throw new Error("Uma pasta local contém dados inválidos e não foi enviada. As alterações continuam salvas e pendentes. Use a correção de datas, quando disponível, ou revise a pasta antes de sincronizar.");
         if (!invalidRemoteIds.size) retryAttempt = 0;
         lastError = ""; authRequired = false;
         const q = loadQueue(owner);
