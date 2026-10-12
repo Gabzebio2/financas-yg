@@ -12,9 +12,9 @@
 <meta name="theme-color" content="#17161e">
 <meta name="description" content="Organize receitas, despesas, parcelas e metas em um só lugar com o Finanças YG.">
 <title>Finanças YG</title>
-<script src="js/theme.js?v=20261011-cloud-fix"></script>
-<link rel="stylesheet" href="css/style.css?v=20261011-cloud-fix">
-<link rel="stylesheet" href="css/design.css?v=20261011-cloud-fix">
+<script src="js/theme.js?v=20261011-cloud-repair"></script>
+<link rel="stylesheet" href="css/style.css?v=20261011-cloud-repair">
+<link rel="stylesheet" href="css/design.css?v=20261011-cloud-repair">
 </head>
 <body>
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -130,6 +130,13 @@
       </div>
       <p class="drive-status" id="cloud-status"></p>
       <p class="hint" id="cloud-queue-status" role="status"></p>
+      <div class="hidden" id="cloud-repair-actions">
+        <p class="hint" id="cloud-repair-hint" role="status"></p>
+        <div class="drive-connected-btns">
+          <button type="button" class="btn btn-primary btn-sm hidden" id="btn-cloud-repair" aria-describedby="cloud-repair-hint">Corrigir datas antigas</button>
+          <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-cloud-repair-backup">Baixar cópia anterior</button>
+        </div>
+      </div>
       <p class="hint">Se a nuvem ficar indisponível, continue neste navegador. As alterações das pastas vinculadas à sua conta serão enviadas quando o serviço voltar, com o app aberto e a sincronização automática ativa. Guarde também um backup antes de limpar os dados do navegador.</p>
       <p class="hint" id="cloud-cfg-hint">Na primeira vez, configure a conexão com seu projeto (uma única vez por aparelho — guia CONFIGURAR-SUPABASE.txt).
         <button type="button" class="btn-link" id="btn-cloud-setup-link">Configurar conexão</button>
@@ -695,13 +702,14 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20261011-cloud-fix"></script>
-<script src="js/rates.js?v=20261011-cloud-fix"></script>
-<script src="js/importer.js?v=20261011-cloud-fix"></script>
-<script src="js/dashboard.js?v=20261011-cloud-fix"></script>
-<script src="js/receipt.js?v=20261011-cloud-fix"></script>
-<script src="js/batch.js?v=20261011-cloud-fix"></script>
-<script src="js/cloud.js?v=20261011-cloud-fix"></script>
-<script src="js/navigation.js?v=20261011-cloud-fix"></script>
+<script src="js/app.js?v=20261011-cloud-repair"></script>
+<script src="js/rates.js?v=20261011-cloud-repair"></script>
+<script src="js/importer.js?v=20261011-cloud-repair"></script>
+<script src="js/dashboard.js?v=20261011-cloud-repair"></script>
+<script src="js/receipt.js?v=20261011-cloud-repair"></script>
+<script src="js/batch.js?v=20261011-cloud-repair"></script>
+<script src="js/cloud-repair.js?v=20261011-cloud-repair"></script>
+<script src="js/cloud.js?v=20261011-cloud-repair"></script>
+<script src="js/navigation.js?v=20261011-cloud-repair"></script>
 </body>
 </html>

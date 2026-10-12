@@ -5,9 +5,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const coreSource = fs.readFileSync(path.join(__dirname, "../js/app.js"), "utf8");
+const repairSource = fs.readFileSync(path.join(__dirname, "../js/cloud-repair.js"), "utf8");
 const cloudSource = fs.readFileSync(path.join(__dirname, "../js/cloud.js"), "utf8").replace(
-  "return { onLocalChange, onLocalDelete, getToken, getSyncState, linkLocalDatasets, prepareLocalDelete };",
-  "return { onLocalChange, onLocalDelete, getToken, getSyncState, linkLocalDatasets, prepareLocalDelete, ensureClient, syncNow, logout };"
+  "repairLegacyDates, exportRepairBackup };",
+  "repairLegacyDates, exportRepairBackup, ensureClient, syncNow, logout };"
 );
 const copy = (value) => JSON.parse(JSON.stringify(value));
 const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(setImmediate); };
@@ -29,12 +30,12 @@ function makeServer() {
 function harness({ values = new Map(), server = makeServer(), auto = false } = {}) {
   if (!values.has("fyg:cloud-autosync")) values.set("fyg:cloud-autosync", auto ? "1" : "0");
   let now = Date.parse("2026-10-10T12:00:00.000Z"), timerId = 0, currentUser = null, authListener;
-  const timers = new Map(), nodes = new Map(), events = [];
+  const timers = new Map(), nodes = new Map(), events = [], downloads = [];
   class ClockDate extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
   const storage = {
-    fail: null,
+    fail: null, readTransform: null,
     get length() { return values.size; }, key: (index) => [...values.keys()][index] ?? null,
-    getItem: (key) => values.get(key) ?? null,
+    getItem: (key) => storage.readTransform ? storage.readTransform(key, values.get(key) ?? null) : values.get(key) ?? null,
     setItem(key, value) { if (storage.fail?.(key, value)) throw new Error("QuotaExceededError"); values.set(key, String(value)); },
     removeItem: (key) => values.delete(key),
   };
@@ -50,6 +51,8 @@ function harness({ values = new Map(), server = makeServer(), auto = false } = {
       return nodes.get(selector);
     },
     querySelectorAll: () => [],
+    body: { appendChild() {} },
+    createElement() { return { href: "", download: "", click() { downloads.at(-1).filename = this.download; }, remove() {} }; },
   });
   class Query {
     constructor(user) { this.user = user; this.operation = "select"; this.filters = []; }
@@ -66,7 +69,7 @@ function harness({ values = new Map(), server = makeServer(), auto = false } = {
       server.calls.push(call);
       if (server.paused) return { error: { message: "Project is paused", status: 503 } };
       if (this.operation === "select") {
-        const data = [...server.rows.values()].filter((row) => row.user_id === this.user).map(copy);
+        const data = [...server.rows.values()].filter((row) => row.user_id === this.user && this.filters.every(([field, value]) => row[field] === value)).map(copy);
         if (server.holdSelect) { const gate = server.holdSelect; server.holdSelect = null; await gate.promise; }
         return { data };
       }
@@ -109,11 +112,13 @@ function harness({ values = new Map(), server = makeServer(), auto = false } = {
     clearTimeout(id) { timers.delete(id); },
     supabase: { createClient: () => client },
     Dashboard: { refreshFromStore() {} },
+    Blob, URL: { createObjectURL(blob) { downloads.push({ blob }); return "blob:synthetic-test"; }, revokeObjectURL() {} },
   });
   vm.runInContext(coreSource + "\nthis.core = { Store }; renderFolders = () => {}; toast = () => {};", context);
+  vm.runInContext(repairSource, context);
   vm.runInContext(cloudSource + "\nthis.subject = Cloud;", context);
   const { Store } = context.core, cloud = context.subject;
-  return { values, server, storage, timers, nodes, events, context, Store, cloud,
+  return { values, server, storage, timers, nodes, events, downloads, context, Store, cloud,
     login(id = "user-a", event = "SIGNED_IN") { cloud.ensureClient(); currentUser = id; authListener(event, session(id)); },
     refreshAuth(id = "user-a") { authListener("TOKEN_REFRESHED", session(id)); },
     async sync() { const result = await cloud.syncNow(); await settle(); return result; },
@@ -531,4 +536,179 @@ test("mensagem de erro pendente é apresentada como texto sem interpretar HTML",
   assert.equal(h.cloud.getSyncState().error, message);
   assert.ok(h.nodes.get("#cloud-status").textContent.includes(message));
   assert.equal(h.nodes.get("#cloud-status").innerHTML, "");
+});
+
+function putRepairableRemote(h, id = "repair001", user = "user-a") {
+  const ds = dataset(id);
+  ds.transactions = ["2025-11-20", "2025-00-20", "2026-01-20"].map((date, index) => ({
+    ...tx("Notebook", index + 1), date, groupId: "installment-group", installment: `${index + 1}/3`,
+    customNote: { preserved: "valor original " + index },
+  }));
+  ds.extraField = { original: [1, "texto", null] };
+  const row = { user_id: user, id, data: ds, updated_at: ds.updatedAt };
+  h.server.rows.set(user + "|" + id, copy(row));
+  return copy(row);
+}
+function repairBackups(h) {
+  return [...h.values].filter(([key]) => key.startsWith("fyg:cloud-repair-backup:v1:")).map(([, value]) => JSON.parse(value));
+}
+
+test("sincronização normal só identifica datas reparáveis; não migra nem salva backup automaticamente", async () => {
+  const h = harness({ auto: true }); h.login();
+  const original = putRepairableRemote(h); await h.tick(0);
+  const state = h.cloud.getSyncState();
+  assert.equal(state.repairableRemoteCount, 1); assert.equal(state.repairableDateCount, 1);
+  assert.deepEqual(copy(state.repairDatePreview), [{ before: "2025-00-20", after: "2025-12-20" }]);
+  assert.equal(state.repairing, false); assert.equal(state.hasRepairBackup, false);
+  assert.deepEqual(h.remote("repair001"), original);
+  assert.equal(repairBackups(h).length, 0);
+  assert.deepEqual(h.server.calls.map((call) => call.operation), ["select"]);
+});
+
+test("reparo explícito confere backup original antes do CAS e muda somente datas comprovadas e updatedAt", async () => {
+  const h = harness(); h.login(); const original = putRepairableRemote(h);
+  h.server.beforeWrite = (call) => {
+    assert.equal(call.operation, "update");
+    const backup = repairBackups(h); assert.equal(backup.length, 1);
+    assert.deepEqual(backup[0].dataset, original.data);
+    assert.equal(backup[0].sourceVersion, original.updated_at);
+    assert.equal(backup[0].userId, "user-a");
+    assert.ok(call.filters.some(([key, value]) => key === "user_id" && value === "user-a"));
+    assert.ok(call.filters.some(([key, value]) => key === "updated_at" && value === original.updated_at));
+  };
+  assert.equal(await h.cloud.repairLegacyDates(), true);
+  const updated = copy(h.remote("repair001").data);
+  assert.equal(updated.transactions[1].date, "2025-12-20");
+  assert.ok(Date.parse(updated.updatedAt) > Date.parse(original.updated_at));
+  updated.transactions[1].date = original.data.transactions[1].date; updated.updatedAt = original.data.updatedAt;
+  assert.deepEqual(updated, original.data);
+  assert.equal(h.local("repair001").transactions[1].date, "2025-12-20");
+  const state = h.cloud.getSyncState();
+  assert.equal(state.invalidRemoteCount, 0); assert.equal(state.lastRepairCount, 1);
+  assert.equal(state.hasRepairBackup, true); assert.equal(state.repairing, false);
+  assert.equal(state.status, "synced");
+  assert.deepEqual(h.server.calls.map((call) => call.operation), ["select", "update", "select"]);
+  assert.ok(h.server.calls.filter((call) => call.operation === "select").every((call) => call.filters.some(([key, value]) => key === "user_id" && value === "user-a")));
+});
+
+test("falha de espaço ou conferência do backup impede qualquer CAS de reparo", async () => {
+  for (const failure of ["write", "readback"]) {
+    const h = harness(); h.login(); const original = putRepairableRemote(h);
+    if (failure === "write") h.storage.fail = (key) => key.startsWith("fyg:cloud-repair-backup:");
+    else h.storage.readTransform = (key, value) => key.startsWith("fyg:cloud-repair-backup:") && value ? value + " " : value;
+    assert.equal(await h.cloud.repairLegacyDates(), false);
+    assert.deepEqual(h.remote("repair001"), original);
+    assert.ok(h.server.calls.every((call) => call.operation === "select"));
+    assert.match(h.cloud.getSyncState().error, /salvar e conferir o backup/);
+    assert.equal(h.cloud.getSyncState().lastRepairCount, 0);
+  }
+});
+
+test("CAS de reparo perde a corrida sem sobrescrever o outro escritor e mantém backup", async () => {
+  const h = harness(); h.login(); const original = putRepairableRemote(h);
+  h.server.beforeWrite = () => {
+    const row = h.remote("repair001"); row.updated_at = row.data.updatedAt = "2027-02-01T00:00:00.000Z";
+    row.data.name = "Nome alterado no outro aparelho";
+  };
+  assert.equal(await h.cloud.repairLegacyDates(), false);
+  assert.equal(h.remote("repair001").data.name, "Nome alterado no outro aparelho");
+  assert.equal(h.remote("repair001").data.transactions[1].date, "2025-00-20");
+  assert.deepEqual(repairBackups(h)[0].dataset, original.data);
+  assert.match(h.cloud.getSyncState().error, /mudou na nuvem durante a correção/);
+  assert.equal(h.cloud.getSyncState().lastRepairCount, 0);
+});
+
+test("falha parcial conserva backups de cada revisão e retry não duplica o mesmo original", async () => {
+  const h = harness(); h.login(); putRepairableRemote(h); putRepairableRemote(h, "repair002");
+  h.server.beforeWrite = () => { h.server.beforeWrite = () => { throw new Error("Falha na segunda pasta"); }; };
+  assert.equal(await h.cloud.repairLegacyDates(), false);
+  assert.equal(h.cloud.getSyncState().lastRepairCount, 1); assert.equal(repairBackups(h).length, 2);
+  assert.equal(h.remote("repair001").data.transactions[1].date, "2025-12-20");
+  assert.equal(h.remote("repair002").data.transactions[1].date, "2025-00-20");
+  assert.equal(await h.cloud.repairLegacyDates(), true); assert.equal(repairBackups(h).length, 2);
+  const newer = putRepairableRemote(h, "repair002");
+  newer.data.extraField.original.push("nova revisão"); newer.updated_at = newer.data.updatedAt = "2027-03-01T00:00:00.000Z";
+  h.server.rows.set("user-a|repair002", newer);
+  assert.equal(await h.cloud.repairLegacyDates(), true); assert.equal(repairBackups(h).length, 3);
+  assert.equal(repairBackups(h).filter((entry) => entry.id === "repair002").length, 2);
+});
+
+test("reparo aguarda sync normal ocupado, clique duplo compartilha operação e não duplica escrita", async () => {
+  const h = harness(); h.login(); putRepairableRemote(h);
+  const gate = deferred(); h.server.holdSelect = gate;
+  const normal = h.cloud.syncNow(); await settle();
+  const first = h.cloud.repairLegacyDates(), second = h.cloud.repairLegacyDates();
+  assert.equal(first, second); assert.equal(h.cloud.getSyncState().repairing, true);
+  gate.resolve(); await normal; assert.equal(await first, true);
+  assert.equal(h.server.calls.filter((call) => call.operation === "update").length, 1);
+  assert.equal(repairBackups(h).length, 1);
+});
+
+test("troca de conta cancela clique de reparo enfileirado sem adotá-lo na conta seguinte", async () => {
+  const h = harness(); h.login(); const original = putRepairableRemote(h); putRepairableRemote(h, "repair002", "user-b");
+  const gate = deferred(); h.server.holdSelect = gate;
+  const normal = h.cloud.syncNow(); await settle(); const repair = h.cloud.repairLegacyDates();
+  h.login("user-b"); gate.resolve(); await normal;
+  assert.equal(await repair, false); assert.deepEqual(h.remote("repair001", "user-a"), original);
+  assert.equal(h.remote("repair002", "user-b").data.transactions[1].date, "2025-00-20");
+  assert.equal(repairBackups(h).length, 0); assert.equal(h.cloud.getSyncState().lastRepairCount, 0);
+  assert.equal(h.cloud.getSyncState().repairing, false);
+});
+
+test("backup de reparo continua disponível após reload somente para a conta de origem", async () => {
+  const h = harness(); h.login(); const original = putRepairableRemote(h); await h.cloud.repairLegacyDates();
+  const restarted = harness({ values: h.values, server: h.server }); restarted.login("user-a", "INITIAL_SESSION");
+  assert.equal(restarted.cloud.getSyncState().hasRepairBackup, true);
+  assert.equal(restarted.cloud.exportRepairBackup(), true);
+  const download = JSON.parse(await restarted.downloads[0].blob.text());
+  assert.deepEqual(download.datasets[0], original.data);
+  assert.equal(JSON.stringify(download).includes("fake-user-a"), false);
+  assert.equal(JSON.stringify(download).includes("access_token"), false);
+  restarted.login("user-b");
+  assert.equal(restarted.cloud.getSyncState().hasRepairBackup, false);
+  assert.equal(restarted.cloud.exportRepairBackup(), false); assert.equal(restarted.downloads.length, 1);
+});
+
+test("reparo pula IDs com alteração, exclusão ou conflito de proprietário locais", async () => {
+  const h = await seeded(); putRepairableRemote(h, "folder0001"); h.add("Local pendente");
+  h.create("folder0002"); await h.sync(); putRepairableRemote(h, "folder0002"); h.Store.deleteDataset("folder0002");
+  h.create("folder0003"); await h.sync(); await h.cloud.logout(); h.login("user-b"); putRepairableRemote(h, "folder0003", "user-b");
+  const writesBefore = h.server.calls.filter((call) => call.operation !== "select").length;
+  assert.equal(await h.cloud.repairLegacyDates(), false);
+  assert.equal(h.server.calls.filter((call) => call.operation !== "select").length, writesBefore);
+  assert.equal(repairBackups(h).length, 0);
+  h.login("user-a"); assert.equal(await h.cloud.repairLegacyDates(), false);
+  assert.equal(repairBackups(h).length, 0);
+  assert.equal(storedQueue(h).dirty.folder0001 != null, true);
+  assert.equal(storedQueue(h).deletes.folder0002 != null, true);
+});
+
+test("edição ou exclusão em outra aba durante pull do reparo impede CAS mesmo sem evento storage", async () => {
+  for (const action of ["edit", "delete"]) {
+    const first = await seeded(); const original = putRepairableRemote(first, "folder0001");
+    const second = harness({ values: first.values, server: first.server }); second.login("user-a", "INITIAL_SESSION");
+    const gate = deferred(); first.server.holdSelect = gate;
+    const writesBefore = first.server.calls.filter((call) => call.operation !== "select").length;
+    const repair = first.cloud.repairLegacyDates(); await settle();
+    if (action === "edit") second.add("Mudança em outra aba");
+    else second.Store.deleteDataset("folder0001");
+    gate.resolve(); assert.equal(await repair, false);
+    assert.deepEqual(first.remote(), original);
+    assert.equal(repairBackups(first).length, 0);
+    assert.equal(first.server.calls.filter((call) => call.operation !== "select").length, writesBefore);
+    assert.equal(first.cloud.getSyncState().pendingCount, 1);
+  }
+});
+
+test("troca de conta durante leitura do próprio reparo cancela antes de backup e CAS", async () => {
+  const h = harness(); h.login(); const original = putRepairableRemote(h);
+  const gate = deferred(); h.server.holdSelect = gate;
+  const repair = h.cloud.repairLegacyDates(); await settle();
+  h.login("user-b"); gate.resolve();
+  assert.equal(await repair, false);
+  assert.deepEqual(h.remote("repair001", "user-a"), original);
+  assert.equal(repairBackups(h).length, 0);
+  assert.equal(h.cloud.getSyncState().repairing, false);
+  assert.equal(h.cloud.getSyncState().lastRepairCount, 0);
+  assert.ok(h.server.calls.every((call) => call.operation === "select"));
 });

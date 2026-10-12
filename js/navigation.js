@@ -46,6 +46,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const connected = state ? state.connected : !document.querySelector("#cloud-connected").classList.contains("hidden");
     const pending = state?.pendingCount || 0;
     const invalidRemote = state?.invalidRemoteCount || 0;
+    const repeatedInvalidNotice = invalidRemote && state?.error === `${invalidRemote} pasta(s) da nuvem têm dados inválidos e foram preservadas sem alterações. Confira essas pastas antes de sincronizá-las.`;
+    const errorDetail = repeatedInvalidNotice ? "" : state?.error;
     let label = connected ? "Conta conectada" : "Modo local";
     let detail = "Dados salvos neste navegador. Exporte um backup para guardar uma cópia.";
     if (state) {
@@ -59,10 +61,11 @@ document.addEventListener("DOMContentLoaded", () => {
       else if (invalidRemote) label = "Conferir pastas antigas";
       else if (state.otherAccountPending) label = "Pendências de outra conta";
       else if (state.accountConflictCount) label = "Conferir pastas da nuvem";
+      if (state.repairing) label = "Corrigindo datas…";
       if (pending) detail = "Alterações salvas neste navegador e aguardando envio à nuvem.";
       else if (invalidRemote) detail = "Há pastas com dados inválidos na nuvem. Elas foram preservadas; as demais pastas podem sincronizar.";
       else if (state.status === "synced") detail = "Todas as alterações vinculadas a esta conta foram confirmadas pela nuvem.";
-      if (state.error && state.status !== "syncing") detail += ` Motivo: ${state.error}`;
+      if (errorDetail && state.status !== "syncing") detail += ` Motivo: ${errorDetail}`;
       if (!state.autoSync && connected) detail += " A sincronização automática está desativada; use Sincronizar agora.";
       if (state.status === "auth-required") detail += " Entre novamente na mesma conta para enviar as pendências.";
       if (!state.queueDurable) detail += " Não foi possível guardar a fila de envio. Exporte um backup e libere espaço no navegador.";
@@ -77,7 +80,7 @@ document.addEventListener("DOMContentLoaded", () => {
       let message = pending ? `${state.pendingUploads} pasta(s) com alterações e ${state.pendingDeletes} exclusão(ões) aguardando confirmação da nuvem. ` : "";
       if (invalidRemote) message += `${invalidRemote} pasta(s) da nuvem têm dados inválidos e foram preservadas sem alterações. As demais pastas podem sincronizar. `;
       if (state?.blockedPendingCount) message += `${state.blockedPendingCount} pendência(s) dependem da correção dessas pastas. `;
-      if (state?.error && state.status !== "syncing") message += `Motivo: ${state.error} `;
+      if (errorDetail && state.status !== "syncing") message += `Motivo: ${errorDetail} `;
       if (state?.nextRetryAt && state.autoSync) message += "O app tentará novamente automaticamente. ";
       if (state?.otherAccountPending) message += "Há pendências de outra conta. Entre na conta correspondente para enviá-las. ";
       if (state?.accountConflictCount) message += "Uma pasta da nuvem tem o mesmo identificador de uma pasta de outra conta neste aparelho; ambas foram preservadas nos seus locais de origem. ";
@@ -91,8 +94,31 @@ document.addEventListener("DOMContentLoaded", () => {
       link.classList.toggle("hidden", !show); hint.classList.toggle("hidden", !show);
       hint.textContent = show ? `${state.unlinkedCount} pasta(s) estão salvas só neste navegador. Para enviá-las à conta conectada, clique em “Vincular pastas locais a esta conta”.` : "";
     }
+    const repairArea = document.querySelector("#cloud-repair-actions"), repair = document.querySelector("#btn-cloud-repair");
+    const backup = document.querySelector("#btn-cloud-repair-backup"), repairHint = document.querySelector("#cloud-repair-hint");
+    if (repairArea && repair && backup && repairHint) {
+      const available = connected && state?.repairableRemoteCount > 0;
+      const saved = connected && state?.hasRepairBackup;
+      const busy = state?.repairing || state?.status === "syncing";
+      const show = available || saved || (connected && state?.repairing);
+      repairArea.classList.toggle("hidden", !show);
+      repair.classList.toggle("hidden", !available && !state?.repairing);
+      repair.disabled = !available || offline || !!busy;
+      repair.textContent = state?.repairing ? "Corrigindo datas…" : "Corrigir datas antigas";
+      backup.classList.toggle("hidden", !saved);
+      backup.disabled = !saved || !!state?.repairing;
+      const formatDate = value => typeof value === "string" ? value.split("-").reverse().join("/") : "";
+      const preview = (state?.repairDatePreview || []).slice(0, 6).map(change => `${formatDate(change.before)} → ${formatDate(change.after)}`).join("; ");
+      repairHint.textContent = !show ? "" : state?.repairing
+        ? "Guardando a cópia anterior e conferindo as datas antes de corrigir a nuvem. Aguarde a confirmação."
+        : available
+          ? `${state.repairableDateCount} data(s) antiga(s) em ${state.repairableRemoteCount} pasta(s) podem ser corrigidas pela sequência das parcelas.${preview ? ` Datas: ${preview}.` : ""} O app guarda uma cópia dos registros originais antes de alterar as datas. Se você já importou uma cópia dessa pasta, as duas serão preservadas.`
+          : "A cópia anterior à correção está guardada neste navegador. Baixe o arquivo para manter esse histórico fora do app.";
+    }
   }
   wire("#btn-cloud-link-local", () => { if (typeof Cloud !== "undefined") Cloud.linkLocalDatasets?.(); });
+  wire("#btn-cloud-repair", () => { if (typeof Cloud !== "undefined") Cloud.repairLegacyDates?.(); });
+  wire("#btn-cloud-repair-backup", () => { if (typeof Cloud !== "undefined") Cloud.exportRepairBackup?.(); });
   window.addEventListener("online", refreshConnection); window.addEventListener("offline", refreshConnection);
   document.addEventListener("fyg:cloudstate", refreshConnection);
   new MutationObserver(refreshConnection).observe(document.querySelector("#cloud-connected"), { attributes: true, attributeFilter: ["class"] });

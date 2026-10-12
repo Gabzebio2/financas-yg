@@ -21,6 +21,7 @@ const Cloud = (() => {
   const DEFAULT_KEY = "sb_publishable_fB3B_MW3VgJBcJpUbN1wvg_1Glbr2r5";
 
   const OWNERS_STORAGE = "fyg:cloud-owners:v1";
+  const REPAIR_BACKUP_PREFIX = "fyg:cloud-repair-backup:v1:";
   const RETRY_MS = [5000, 15000, 30000, 60000, 120000, 300000];
   const REQUEST_MS = 20000;
   let client = null, clientCfg = null, session = null, activeOwner = "";
@@ -33,6 +34,8 @@ const Cloud = (() => {
   // Diagnóstico da conexão atual, reavaliado a cada leitura completa da nuvem.
   // Os registros inválidos continuam no servidor e nunca viram uma inserção nova.
   let invalidRemoteIds = new Set();
+  let repairableRemoteCount = 0, repairableDateCount = 0, repairDatePreview = [];
+  let repairing = false, lastRepairCount = 0, repairRequest = null;
   const queues = new Map();
   const queueReads = new Map();
   const requests = new Set();
@@ -176,6 +179,64 @@ const Cloud = (() => {
     return "json:" + text;
   }
 
+  const repairBackupPrefix = (owner) => REPAIR_BACKUP_PREFIX + encodeURIComponent(owner) + ":";
+  function readRepairBackups(owner) {
+    if (!owner) return [];
+    const prefix = repairBackupPrefix(owner), { url, userId } = ownerParts(owner);
+    const entries = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith(prefix)) continue;
+      const value = localStorage.getItem(key), entry = JSON.parse(value);
+      if (entry?.version !== 1 || entry.project !== url || entry.userId !== userId || !validId(entry.id) || entry.dataset?.id !== entry.id) throw new Error("Backup de reparo inválido.");
+      entries.push({ key, value, entry });
+    }
+    return entries;
+  }
+
+  function hasRepairBackup() {
+    try { return readRepairBackups(activeOwner).length > 0; } catch { return false; }
+  }
+
+  function saveRepairBackup(row, analysis, digest, owner) {
+    try {
+      const existing = readRepairBackups(owner).find(({ entry }) => entry.id === row.id && entry.sourceVersion === row.updated_at && canonical(entry.dataset, false) === canonical(row.data, false));
+      if (existing) {
+        if (localStorage.getItem(existing.key) !== existing.value) throw new Error("Backup alterado durante a conferência.");
+        return;
+      }
+      const { url, userId } = ownerParts(owner);
+      const entry = { version: 1, purpose: "legacy-date-repair", project: url, userId, id: row.id,
+        sourceVersion: row.updated_at, sourceDigest: digest, savedAt: new Date().toISOString(),
+        dataset: clone(row.data), changes: clone(analysis.changes) };
+      const value = JSON.stringify(entry);
+      let key;
+      do { key = repairBackupPrefix(owner) + row.id + ":" + revision(); } while (localStorage.getItem(key) !== null);
+      // Uma chave nova por original preserva backups de outras abas e revisões.
+      localStorage.setItem(key, value);
+      if (localStorage.getItem(key) !== value) throw new Error("Não foi possível conferir a gravação.");
+    } catch {
+      throw Object.assign(new Error("A correção foi interrompida: não foi possível salvar e conferir o backup original neste navegador. Libere espaço antes de tentar novamente; esta pasta não foi alterada."), { name: "RepairBackupError" });
+    }
+  }
+
+  function exportRepairBackup() {
+    if (!activeOwner || !session) { setStatus("Entre na conta de origem para baixar o backup da correção.", "err"); return false; }
+    try {
+      const entries = readRepairBackups(activeOwner).map(({ entry }) => entry);
+      if (!entries.length) { setStatus("Não há backup de correção para esta conta neste navegador."); return false; }
+      const data = { app: "financas-yg", version: 1, purpose: "legacy-date-repair", exportedAt: new Date().toISOString(),
+        datasets: entries.map((entry) => entry.dataset), repairs: entries };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `financas-yg-antes-da-correcao-${todayISO()}.json`;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      return true;
+    } catch { setStatus("Não foi possível baixar o backup da correção. Os originais continuam guardados neste navegador.", "err"); return false; }
+  }
+
   function getSyncState() {
     const owners = new Set(Object.values(ledger.owners));
     if (activeOwner) owners.add(activeOwner);
@@ -205,13 +266,16 @@ const Cloud = (() => {
     else if (connected && q?.lastSyncedAt) status = "synced";
     return { status, connected, autoSync, pendingUploads, pendingDeletes, pendingCount, otherAccountPending, unlinkedCount,
       lastSyncedAt: q?.lastSyncedAt || null, nextRetryAt, error, conflictCount: q?.conflicts.length || 0,
-      accountConflictCount, invalidRemoteCount, blockedPendingCount, queueDurable };
+      accountConflictCount, invalidRemoteCount, blockedPendingCount, queueDurable,
+      repairableRemoteCount, repairableDateCount, repairDatePreview: repairDatePreview.map((pair) => ({ ...pair })),
+      repairing, hasRepairBackup: hasRepairBackup(), lastRepairCount };
   }
 
   function publishState() {
     const state = getSyncState();
     let message;
     if (!state.queueDurable) message = state.error;
+    else if (state.repairing) message = "Conferindo o backup e corrigindo somente as datas antigas identificadas…";
     else if (state.status === "syncing") message = "Sincronizando as alterações salvas neste aparelho…";
     else if (state.pendingCount) {
       const count = `${state.pendingCount} alteração(ões) salva(s) neste aparelho, aguardando envio.`;
@@ -227,6 +291,7 @@ const Cloud = (() => {
     else if (state.accountConflictCount) message = "Uma pasta da nuvem coincide com dados de outra conta neste aparelho. As duas versões foram mantidas nos seus locais de origem.";
     else if (state.status === "synced") message = "Tudo sincronizado ✔" + (state.conflictCount ? " Versões divergentes foram preservadas em pastas de conflito." : "");
     else message = "Seus dados estão salvos neste aparelho.";
+    if (!state.repairing && state.lastRepairCount) message += ` ${state.lastRepairCount} pasta(s) corrigida(s); o backup original está disponível para baixar.`;
     setStatus(message, state.status === "synced" ? "ok" : state.status === "error" ? "err" : state.pendingCount ? "warn" : "");
     if (typeof CustomEvent !== "undefined" && document.dispatchEvent) document.dispatchEvent(new CustomEvent("fyg:cloudstate", { detail: state }));
   }
@@ -333,6 +398,7 @@ const Cloud = (() => {
     session = null;
     activeOwner = "";
     invalidRemoteIds.clear();
+    resetRepairState();
     lastError = "";
     authRequired = false;
     publishState();
@@ -348,6 +414,7 @@ const Cloud = (() => {
       cancelSchedule(); cancelRequests(); connectionVersion++;
       retryAttempt = 0; lastError = ""; accountConflictCount = 0;
       invalidRemoteIds.clear();
+      resetRepairState();
     }
     session = nextSession;
     activeOwner = nextOwner;
@@ -410,6 +477,87 @@ const Cloud = (() => {
     if (!validId(row?.id) || !raw || raw.id !== row.id || !Array.isArray(raw.transactions)) return false;
     if (typeof sanitizeDataset === "function" && !sanitizeDataset(raw, { preserveIds: true, preserveContent: true, rejectInvalidTransactions: true })) return false;
     return typeof raw.updatedAt === "string" && Number.isFinite(Date.parse(raw.updatedAt));
+  }
+
+  function resetRepairState() {
+    repairableRemoteCount = 0; repairableDateCount = 0; repairDatePreview = [];
+    lastRepairCount = 0; repairing = false; repairRequest = null;
+  }
+
+  function analyzeRepair(row) {
+    if (validRemote(row) || !validId(row?.id) || !row?.data || typeof row.data !== "object" || typeof CloudRepair === "undefined" || typeof CloudRepair.analyzeDataset !== "function") return null;
+    const analysis = CloudRepair.analyzeDataset(clone(row.data));
+    if (!analysis?.repairable || !Array.isArray(analysis.changes) || !analysis.changes.length || !validRemote({ ...row, data: analysis.dataset })) return null;
+    // Defesa adicional: o helper pode alterar apenas o campo date das transações.
+    const unchanged = clone(analysis.dataset);
+    if (unchanged.transactions.length !== row.data.transactions.length) return null;
+    unchanged.transactions.forEach((tx, index) => { tx.date = row.data.transactions[index].date; });
+    if (canonical(unchanged, false) !== canonical(row.data, false)) return null;
+    return analysis;
+  }
+
+  function canRepairRow(row, owner) {
+    refreshLedger();
+    const q = loadQueue(owner);
+    mergeQueueFromDisk(owner, q);
+    const knownOwner = ledger.owners[row.id];
+    return !(own(q.dirty, row.id) || own(q.deletes, row.id) || knownOwner && knownOwner !== owner || !knownOwner && localDataset(row.id));
+  }
+
+  function classifyRemote(rowsById, owner) {
+    invalidRemoteIds = new Set([...rowsById].filter(([, row]) => !validRemote(row)).map(([id]) => id));
+    repairableRemoteCount = 0; repairableDateCount = 0; repairDatePreview = [];
+    for (const row of rowsById.values()) {
+      const analysis = analyzeRepair(row);
+      if (!analysis || !canRepairRow(row, owner)) continue;
+      repairableRemoteCount++; repairableDateCount += analysis.changes.length;
+      for (const { before, after } of analysis.changes) if (repairDatePreview.length < 6 && !repairDatePreview.some((pair) => pair.before === before && pair.after === after)) repairDatePreview.push({ before, after });
+    }
+  }
+
+  async function readRemoteRows(c, version, owner) {
+    const response = await request(c.from(TABLE).select("id,data,updated_at").eq("user_id", ownerParts(owner).userId));
+    assertCurrent(c, version, owner);
+    if (!Array.isArray(response.data)) throw new Error("Resposta inválida da nuvem.");
+    return new Map(response.data.map((row) => [row?.id, row]));
+  }
+
+  async function repairRemoteRows(rowsById, owner, c, version) {
+    for (const row of rowsById.values()) {
+      assertCurrent(c, version, owner);
+      const analysis = analyzeRepair(row);
+      if (!analysis || !canRepairRow(row, owner)) continue;
+      const localText = canonical(localDataset(row.id));
+      const digest = await fingerprint(canonical(row.data, false));
+      assertCurrent(c, version, owner);
+      // Também recupera saves que terminaram antes de o hook dirty ser gravado.
+      await rescan(owner, c, version);
+      assertCurrent(c, version, owner);
+      if (!canRepairRow(row, owner) || canonical(localDataset(row.id)) !== localText) continue;
+      saveRepairBackup(row, analysis, digest, owner);
+      assertCurrent(c, version, owner);
+      if (!canRepairRow(row, owner) || canonical(localDataset(row.id)) !== localText) continue;
+      const repaired = clone(analysis.dataset);
+      repaired.updatedAt = new Date(Math.max(Date.now(), Date.parse(row.data.updatedAt) + 1 || 0, Date.parse(row.updated_at) + 1 || 0)).toISOString();
+      const result = await request(guardVersion(c.from(TABLE).update({ data: repaired, updated_at: repaired.updatedAt }).eq("id", row.id), row, ownerParts(owner).userId).select("id"));
+      assertCurrent(c, version, owner);
+      if (!Array.isArray(result.data) || result.data.length !== 1) throw new Error("A pasta mudou na nuvem durante a correção. Esta versão não foi sobrescrita; o backup original foi mantido. Sincronize e revise antes de tentar novamente.");
+      lastRepairCount++;
+      publishState();
+    }
+  }
+
+  function repairLegacyDates() {
+    if (!session || !client) { setStatus("Entre na conta de origem antes de corrigir as datas.", "err"); return Promise.resolve(false); }
+    const c = client, version = connectionVersion, owner = activeOwner;
+    if (repairRequest && repairRequest.c === c && repairRequest.version === version && repairRequest.owner === owner) return repairRequest.promise;
+    const ticket = { c, version, owner, promise: null };
+    repairRequest = ticket; repairing = true; lastRepairCount = 0;
+    ticket.promise = Promise.resolve().then(() => syncNow({ repairLegacy: true, repairContext: ticket })).finally(() => {
+      if (repairRequest === ticket) { repairRequest = null; repairing = false; publishState(); }
+    });
+    publishState();
+    return ticket.promise;
   }
 
   async function rescan(owner, c, version) {
@@ -555,11 +703,13 @@ const Cloud = (() => {
   }
 
   async function syncNow(options = {}) {
+    const repairContext = options.repairContext;
+    if (options.repairLegacy && (!repairContext || !current(repairContext.c, repairContext.version, repairContext.owner))) return false;
     if (!session || !client) { setStatus("Entre na sua conta para sincronizar.", "err"); return false; }
     if (options.automatic && !isAuto()) return false;
     if (isOffline()) { publishState(); return false; }
     if (syncPromise) {
-      if (syncVersion === connectionVersion) return syncPromise;
+      if (!options.repairLegacy && syncVersion === connectionVersion) return syncPromise;
       await syncPromise;
       return syncNow(options);
     }
@@ -572,13 +722,16 @@ const Cloud = (() => {
     syncPromise = (async () => {
       try {
         await rescan(owner, c, version);
-        const response = await request(c.from(TABLE).select("id,data,updated_at"));
-        assertCurrent(c, version, owner);
-        if (!Array.isArray(response.data)) throw new Error("Resposta inválida da nuvem.");
-        const rowsById = new Map(response.data.map((row) => [row?.id, row]));
+        let rowsById = await readRemoteRows(c, version, owner);
         // Classifique antes de aplicar qualquer retorno: uma pasta antiga inválida
         // não bloqueia as demais, mas seu ID permanece protegido contra escrita.
-        invalidRemoteIds = new Set([...rowsById].filter(([, row]) => !validRemote(row)).map(([id]) => id));
+        classifyRemote(rowsById, owner);
+        if (options.repairLegacy) {
+          if (typeof CloudRepair === "undefined") throw new Error("O recurso de correção não foi carregado. Atualize o app antes de tentar novamente.");
+          await repairRemoteRows(rowsById, owner, c, version);
+          rowsById = await readRemoteRows(c, version, owner);
+          classifyRemote(rowsById, owner);
+        }
         for (const row of rowsById.values()) await reconcileRow(row, owner, c, version);
         await rescan(owner, c, version);
         await pushDirty(rowsById, owner, c, version);
@@ -656,6 +809,7 @@ const Cloud = (() => {
   async function logout() {
     const previousSession = session;
     const previousInvalidRemoteIds = new Set(invalidRemoteIds);
+    const previousRepairState = { repairableRemoteCount, repairableDateCount, repairDatePreview, lastRepairCount };
     const c = client;
     cancelSchedule();
     cancelRequests();
@@ -663,11 +817,15 @@ const Cloud = (() => {
     session = null;
     activeOwner = "";
     invalidRemoteIds.clear();
+    resetRepairState();
     try {
       const result = await c?.auth.signOut({ scope: "local" });
       if (result?.error) throw result.error;
     } catch {
-      if (client === c) { session = previousSession; activeOwner = ownerFor(previousSession); invalidRemoteIds = previousInvalidRemoteIds; }
+      if (client === c) {
+        session = previousSession; activeOwner = ownerFor(previousSession); invalidRemoteIds = previousInvalidRemoteIds;
+        ({ repairableRemoteCount, repairableDateCount, repairDatePreview, lastRepairCount } = previousRepairState);
+      }
       refreshUI();
       setStatus("Não foi possível sair da conta. Confira a conexão e tente novamente.", "err");
       return;
@@ -859,6 +1017,8 @@ const Cloud = (() => {
         loadQueue(activeOwner, true); publishState(); resumePending();
       } else if (event.key === OWNERS_STORAGE) {
         refreshLedger(); publishState();
+      } else if (activeOwner && event.key?.startsWith(repairBackupPrefix(activeOwner))) {
+        publishState();
       } else if (event.key?.startsWith("fyg:ds:") && activeOwner) {
         resumePending();
       }
@@ -873,5 +1033,5 @@ const Cloud = (() => {
     return session?.access_token || null;
   }
 
-  return { onLocalChange, onLocalDelete, getToken, getSyncState, linkLocalDatasets, prepareLocalDelete };
+  return { onLocalChange, onLocalDelete, getToken, getSyncState, linkLocalDatasets, prepareLocalDelete, repairLegacyDates, exportRepairBackup };
 })();
