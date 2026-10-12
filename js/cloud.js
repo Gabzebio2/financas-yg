@@ -30,6 +30,9 @@ const Cloud = (() => {
   let syncPromise = null, syncVersion = -1;
   let queueDurable = true, lastError = "", authRequired = false;
   let accountConflictCount = 0, revisionCounter = 0;
+  // Diagnóstico da conexão atual, reavaliado a cada leitura completa da nuvem.
+  // Os registros inválidos continuam no servidor e nunca viram uma inserção nova.
+  let invalidRemoteIds = new Set();
   const queues = new Map();
   const queueReads = new Map();
   const requests = new Set();
@@ -185,6 +188,10 @@ const Cloud = (() => {
     }
     const q = activeOwner ? loadQueue(activeOwner) : null;
     const pendingCount = pendingUploads + pendingDeletes;
+    const invalidRemoteCount = activeOwner ? invalidRemoteIds.size : 0;
+    const blockedPendingCount = q ? [...invalidRemoteIds].filter((id) => own(q.dirty, id) || own(q.deletes, id)).length : 0;
+    const error = lastError || (invalidRemoteCount
+      ? `${invalidRemoteCount} pasta(s) da nuvem têm dados inválidos e foram preservadas sem alterações. Confira essas pastas antes de sincronizá-las.` : null);
     const unlinkedCount = localDatasets().filter((ds) => !own(ledger.owners, ds.id)).length;
     const connected = !!session, autoSync = isAuto();
     let status = "local";
@@ -192,13 +199,13 @@ const Cloud = (() => {
     else if (!queueDurable) status = "error";
     else if (authRequired || (!connected && pendingCount)) status = "auth-required";
     else if (pendingCount && isOffline()) status = "offline";
-    else if (pendingCount) status = lastError ? "error" : "pending";
-    else if (lastError || accountConflictCount) status = "error";
+    else if (pendingCount) status = error ? "error" : "pending";
+    else if (error || accountConflictCount) status = "error";
     else if (unlinkedCount) status = "unlinked";
     else if (connected && q?.lastSyncedAt) status = "synced";
     return { status, connected, autoSync, pendingUploads, pendingDeletes, pendingCount, otherAccountPending, unlinkedCount,
-      lastSyncedAt: q?.lastSyncedAt || null, nextRetryAt, error: lastError || null, conflictCount: q?.conflicts.length || 0,
-      accountConflictCount, queueDurable };
+      lastSyncedAt: q?.lastSyncedAt || null, nextRetryAt, error, conflictCount: q?.conflicts.length || 0,
+      accountConflictCount, invalidRemoteCount, blockedPendingCount, queueDurable };
   }
 
   function publishState() {
@@ -212,12 +219,13 @@ const Cloud = (() => {
       else if (!state.autoSync) message = count + " A sincronização automática está desligada.";
       else if (state.status === "offline") message = count + " O envio será retomado quando a conexão voltar com o app aberto.";
       else message = count + (state.nextRetryAt ? " Nova tentativa automática com o app aberto." : "");
-    } else if (state.unlinkedCount) message = state.connected
+      if (state.error) message += " " + state.error;
+    } else if (state.error) message = state.error;
+    else if (state.unlinkedCount) message = state.connected
       ? "Há pastas locais sem vínculo. Vincule-as explicitamente à conta desejada para enviá-las."
       : "Há pastas locais sem vínculo. Entre na conta desejada para vincular e enviar essas pastas.";
     else if (state.accountConflictCount) message = "Uma pasta da nuvem coincide com dados de outra conta neste aparelho. As duas versões foram mantidas nos seus locais de origem.";
     else if (state.status === "synced") message = "Tudo sincronizado ✔" + (state.conflictCount ? " Versões divergentes foram preservadas em pastas de conflito." : "");
-    else if (state.error) message = "Nuvem indisponível agora. Seus dados locais continuam disponíveis.";
     else message = "Seus dados estão salvos neste aparelho.";
     setStatus(message, state.status === "synced" ? "ok" : state.status === "error" ? "err" : state.pendingCount ? "warn" : "");
     if (typeof CustomEvent !== "undefined" && document.dispatchEvent) document.dispatchEvent(new CustomEvent("fyg:cloudstate", { detail: state }));
@@ -324,6 +332,9 @@ const Cloud = (() => {
     clientCfg = null;
     session = null;
     activeOwner = "";
+    invalidRemoteIds.clear();
+    lastError = "";
+    authRequired = false;
     publishState();
   }
 
@@ -336,6 +347,7 @@ const Cloud = (() => {
     if (changed) {
       cancelSchedule(); cancelRequests(); connectionVersion++;
       retryAttempt = 0; lastError = ""; accountConflictCount = 0;
+      invalidRemoteIds.clear();
     }
     session = nextSession;
     activeOwner = nextOwner;
@@ -440,7 +452,10 @@ const Cloud = (() => {
     assertCurrent(c, version, owner);
     refreshLedger();
     mergeQueueFromDisk(owner, loadQueue(owner));
-    if (!validRemote(row)) throw new Error("A nuvem devolveu uma pasta inválida. A cópia local foi preservada.");
+    if (invalidRemoteIds.has(row?.id) || !validRemote(row)) {
+      invalidRemoteIds.add(row?.id);
+      return;
+    }
     const id = row.id, q = loadQueue(owner);
     const knownOwner = ledger.owners[id];
     const local = localDataset(id);
@@ -491,7 +506,7 @@ const Cloud = (() => {
     // Inclui as cópias de conflito criadas durante o pull, antes de qualquer exclusão.
     for (const id of Object.keys(loadQueue(owner).dirty)) {
       assertCurrent(c, version, owner);
-      if (ledger.owners[id] !== owner || own(loadQueue(owner).deletes, id)) continue;
+      if (invalidRemoteIds.has(id) || ledger.owners[id] !== owner || own(loadQueue(owner).deletes, id)) continue;
       const observed = rowsById.get(id);
       if (observed) await reconcileRow(observed, owner, c, version);
       assertCurrent(c, version, owner);
@@ -521,7 +536,7 @@ const Cloud = (() => {
   async function flushDeletions(rowsById, owner, c, version) {
     for (const id of Object.keys(loadQueue(owner).deletes)) {
       assertCurrent(c, version, owner);
-      if (ledger.owners[id] !== owner) continue;
+      if (invalidRemoteIds.has(id) || ledger.owners[id] !== owner) continue;
       const entry = loadQueue(owner).deletes[id], observed = rowsById.get(id);
       if (observed) {
         await reconcileRow(observed, owner, c, version);
@@ -560,17 +575,21 @@ const Cloud = (() => {
         const response = await request(c.from(TABLE).select("id,data,updated_at"));
         assertCurrent(c, version, owner);
         if (!Array.isArray(response.data)) throw new Error("Resposta inválida da nuvem.");
-        const rowsById = new Map(response.data.map((row) => [row.id, row]));
+        const rowsById = new Map(response.data.map((row) => [row?.id, row]));
+        // Classifique antes de aplicar qualquer retorno: uma pasta antiga inválida
+        // não bloqueia as demais, mas seu ID permanece protegido contra escrita.
+        invalidRemoteIds = new Set([...rowsById].filter(([, row]) => !validRemote(row)).map(([id]) => id));
         for (const row of rowsById.values()) await reconcileRow(row, owner, c, version);
         await rescan(owner, c, version);
         await pushDirty(rowsById, owner, c, version);
         await flushDeletions(rowsById, owner, c, version);
         assertCurrent(c, version, owner);
-        retryAttempt = 0; lastError = ""; authRequired = false;
+        if (!invalidRemoteIds.size) retryAttempt = 0;
+        lastError = ""; authRequired = false;
         const q = loadQueue(owner);
-        if (!Object.keys(q.dirty).length && !Object.keys(q.deletes).length) q.lastSyncedAt = new Date().toISOString();
+        if (!invalidRemoteIds.size && !Object.keys(q.dirty).length && !Object.keys(q.deletes).length) q.lastSyncedAt = new Date().toISOString();
         requireDurableQueue();
-        return true;
+        return invalidRemoteIds.size === 0;
       } catch (e) {
         if (current(c, version, owner)) {
           lastError = String(e?.message || "A nuvem está indisponível.").slice(0, 250);
@@ -582,7 +601,7 @@ const Cloud = (() => {
         syncPromise = null;
         publishState();
         if (current(c, version, owner)) {
-          if (lastError) retryPending();
+          if (lastError || invalidRemoteIds.size) retryPending();
           else if (Object.keys(loadQueue(owner).dirty).length || Object.keys(loadQueue(owner).deletes).length) scheduleSync(1500);
         }
       }
@@ -636,17 +655,19 @@ const Cloud = (() => {
 
   async function logout() {
     const previousSession = session;
+    const previousInvalidRemoteIds = new Set(invalidRemoteIds);
     const c = client;
     cancelSchedule();
     cancelRequests();
     connectionVersion++;
     session = null;
     activeOwner = "";
+    invalidRemoteIds.clear();
     try {
       const result = await c?.auth.signOut({ scope: "local" });
       if (result?.error) throw result.error;
     } catch {
-      if (client === c) { session = previousSession; activeOwner = ownerFor(previousSession); }
+      if (client === c) { session = previousSession; activeOwner = ownerFor(previousSession); invalidRemoteIds = previousInvalidRemoteIds; }
       refreshUI();
       setStatus("Não foi possível sair da conta. Confira a conexão e tente novamente.", "err");
       return;

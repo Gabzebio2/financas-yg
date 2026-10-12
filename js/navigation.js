@@ -45,6 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const state = typeof Cloud !== "undefined" && Cloud.getSyncState ? Cloud.getSyncState() : null;
     const connected = state ? state.connected : !document.querySelector("#cloud-connected").classList.contains("hidden");
     const pending = state?.pendingCount || 0;
+    const invalidRemote = state?.invalidRemoteCount || 0;
     let label = connected ? "Conta conectada" : "Modo local";
     let detail = "Dados salvos neste navegador. Exporte um backup para guardar uma cópia.";
     if (state) {
@@ -55,10 +56,13 @@ document.addEventListener("DOMContentLoaded", () => {
       };
       label = labels[state.status] || label;
       if (pending) label = state.status === "syncing" ? "Sincronizando…" : `${pending} pasta${pending === 1 ? "" : "s"} pendente${pending === 1 ? "" : "s"}`;
+      else if (invalidRemote) label = "Conferir pastas antigas";
       else if (state.otherAccountPending) label = "Pendências de outra conta";
       else if (state.accountConflictCount) label = "Conferir pastas da nuvem";
       if (pending) detail = "Alterações salvas neste navegador e aguardando envio à nuvem.";
+      else if (invalidRemote) detail = "Há pastas com dados inválidos na nuvem. Elas foram preservadas; as demais pastas podem sincronizar.";
       else if (state.status === "synced") detail = "Todas as alterações vinculadas a esta conta foram confirmadas pela nuvem.";
+      if (state.error && state.status !== "syncing") detail += ` Motivo: ${state.error}`;
       if (!state.autoSync && connected) detail += " A sincronização automática está desativada; use Sincronizar agora.";
       if (state.status === "auth-required") detail += " Entre novamente na mesma conta para enviar as pendências.";
       if (!state.queueDurable) detail += " Não foi possível guardar a fila de envio. Exporte um backup e libere espaço no navegador.";
@@ -71,6 +75,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const queue = document.querySelector("#cloud-queue-status");
     if (queue) {
       let message = pending ? `${state.pendingUploads} pasta(s) com alterações e ${state.pendingDeletes} exclusão(ões) aguardando confirmação da nuvem. ` : "";
+      if (invalidRemote) message += `${invalidRemote} pasta(s) da nuvem têm dados inválidos e foram preservadas sem alterações. As demais pastas podem sincronizar. `;
+      if (state?.blockedPendingCount) message += `${state.blockedPendingCount} pendência(s) dependem da correção dessas pastas. `;
+      if (state?.error && state.status !== "syncing") message += `Motivo: ${state.error} `;
       if (state?.nextRetryAt && state.autoSync) message += "O app tentará novamente automaticamente. ";
       if (state?.otherAccountPending) message += "Há pendências de outra conta. Entre na conta correspondente para enviá-las. ";
       if (state?.accountConflictCount) message += "Uma pasta da nuvem tem o mesmo identificador de uma pasta de outra conta neste aparelho; ambas foram preservadas nos seus locais de origem. ";
@@ -82,7 +89,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (link && hint) {
       const show = connected && state?.unlinkedCount > 0;
       link.classList.toggle("hidden", !show); hint.classList.toggle("hidden", !show);
-      hint.textContent = show ? `${state.unlinkedCount} pasta(s) deste navegador ainda não estão vinculadas. O botão acima autoriza o envio dessas pastas à conta conectada.` : "";
+      hint.textContent = show ? `${state.unlinkedCount} pasta(s) estão salvas só neste navegador. Para enviá-las à conta conectada, clique em “Vincular pastas locais a esta conta”.` : "";
     }
   }
   wire("#btn-cloud-link-local", () => { if (typeof Cloud !== "undefined") Cloud.linkLocalDatasets?.(); });
