@@ -12,6 +12,7 @@
 const Cloud = (() => {
   const CFG_STORAGE = "fyg:supabase-config";   // {url, anonKey} por aparelho
   const AUTOSYNC_STORAGE = "fyg:cloud-autosync";
+  const AUTH_REDIRECT_URL = "https://financas-yg.vercel.app/";
   const TABLE = "pastas";
 
   // Conexão padrão do projeto — embutida para não precisar colar em cada
@@ -36,11 +37,17 @@ const Cloud = (() => {
   let invalidRemoteIds = new Set();
   let repairableRemoteCount = 0, repairableDateCount = 0, repairDatePreview = [];
   let repairing = false, lastRepairCount = 0, repairRequest = null;
-  let passkeysEnabled = null, authOptionsLoading = false, authOptionsError = "";
+  let passkeysEnabled = null, signupsAllowed = null, authOptionsLoading = false, authOptionsError = "";
   let authOperation = null, authSettingsRequest = null, authCooldownTimer = null, linkCooldownUntil = 0;
+  let pendingCodeEmail = "", recoveryOwner = "";
   // O SDK pode emitir INITIAL_SESSION antes de SIGNED_IN ao abrir um link novo.
   // Esse retorno nunca autoriza vincular automaticamente pastas locais antigas.
-  const openedAuthLink = /(?:^|[?#&])(?:access_token|refresh_token|code|token_hash|error_description)=/.test(String(location.hash || "") + String(location.search || ""));
+  const authCallbackParameters = String(location.hash || "") + "&" + String(location.search || "");
+  const openedAuthLink = /(?:^|[?#&])(?:access_token|refresh_token|code|token_hash|error|error_code|error_description)=/.test(authCallbackParameters);
+  const authCallbackError = /(?:^|[?#&])error_code=otp_expired(?:&|$)/.test(authCallbackParameters)
+    ? "Este link de acesso expirou ou já foi usado. Peça um novo e use somente o e-mail mais recente."
+    : /(?:^|[?#&])(?:error|error_code)=/.test(authCallbackParameters)
+      ? "Não foi possível validar este link de acesso. Peça um novo ou entre com e-mail e senha." : "";
   const queues = new Map();
   const queueReads = new Map();
   const requests = new Set();
@@ -369,14 +376,16 @@ const Cloud = (() => {
       $("#cloud-user").textContent = session.user?.email || "";
       $("#cloud-autosync").checked = isAuto();
     }
+    $("#cloud-newpass-wrap")?.classList.toggle("hidden", !recoveryOwner || recoveryOwner !== activeOwner);
     publishAuthOptions();
   }
 
   function getAuthOptions() {
     const supported = typeof window !== "undefined" && window.isSecureContext === true &&
       typeof window.PublicKeyCredential === "function" && typeof navigator?.credentials?.get === "function" && typeof navigator?.credentials?.create === "function";
-    return { passkeysEnabled, passkeysSupported: supported, busy: !!authOperation,
+    return { passkeysEnabled, signupsAllowed, passkeysSupported: supported, busy: !!authOperation,
       busyAction: authOperation?.action || null, linkCooldownUntil, loading: authOptionsLoading,
+      codeRequested: !!pendingCodeEmail, recoveryActive: !!recoveryOwner && recoveryOwner === activeOwner,
       error: authOptionsError || null };
   }
 
@@ -412,7 +421,7 @@ const Cloud = (() => {
     ticket.timer = setTimeout(() => {
       ticket.controller.abort();
       ticket.reject(Object.assign(new Error("A confirmação demorou demais. Tente novamente."), { name: "TimeoutError" }));
-    }, action === "link" ? REQUEST_MS : 90000);
+    }, action.startsWith("passkey-") ? 90000 : REQUEST_MS);
     authOperation = ticket;
     publishAuthOptions();
     return ticket;
@@ -423,20 +432,29 @@ const Cloud = (() => {
     if (authOperation === ticket) { authOperation = null; publishAuthOptions(); }
   }
 
-  // O signal do SDK cancela a janela WebAuthn, mas não seu POST de verificação.
-  // Proteja também a resposta antes de o SDK persistir uma sessão já cancelada.
+  // Proteja as operações de acesso também na camada HTTP, antes de o SDK
+  // persistir uma sessão cuja tentativa já foi cancelada ou expirou.
   async function guardedAuthFetch(input, options) {
     const url = typeof input === "string" ? input : input?.url || "";
-    if (!/\/auth\/v1\/passkeys\//.test(url)) return fetch(input, options);
+    let actions = null;
+    if (/\/auth\/v1\/passkeys\//.test(url)) actions = ["passkey-login", "passkey-register"];
+    else if (/\/auth\/v1\/token\?[^#]*\bgrant_type=password(?:&|$)/.test(url)) actions = ["password-login"];
+    else if (/\/auth\/v1\/signup(?:\?|$)/.test(url)) actions = ["signup"];
+    else if (/\/auth\/v1\/otp(?:\?|$)/.test(url)) actions = ["link", "code-request"];
+    else if (/\/auth\/v1\/recover(?:\?|$)/.test(url)) actions = ["recovery-email"];
+    else if (/\/auth\/v1\/verify(?:\?|$)/.test(url)) actions = ["code-verify"];
+    else if (/\/auth\/v1\/user(?:\?|$)/.test(url) && String(options?.method).toUpperCase() === "PUT") actions = ["new-password"];
+    // Renovação de sessão, leitura de usuário e callback PKCE continuam no SDK.
+    if (!actions) return fetch(input, options);
     const ticket = authOperation;
-    if (!ticket || !ticket.action.startsWith("passkey-") || !authCurrent(ticket)) throw authAbort();
+    if (!ticket || !actions.includes(ticket.action) || !authCurrent(ticket)) throw authAbort();
     const response = await fetch(input, { ...options, signal: ticket.controller.signal });
     if (!authCurrent(ticket) || ticket.controller.signal.aborted) throw authAbort();
     const readJson = response.json.bind(response);
     response.json = async () => {
       const body = await readJson();
       if (!authCurrent(ticket) || ticket.controller.signal.aborted) throw authAbort();
-      if (ticket.action === "passkey-login" && /\/passkeys\/authentication\/verify(?:\?|$)/.test(url) && body?.access_token && validId(body?.user?.id)) ticket.expectedUserId = body.user.id;
+      if (["passkey-login", "password-login", "signup", "code-verify"].includes(ticket.action) && body?.access_token && validId(body?.user?.id)) ticket.expectedUserId = body.user.id;
       return body;
     };
     return response;
@@ -445,7 +463,7 @@ const Cloud = (() => {
   async function loadAuthOptions(c, cfg) {
     authSettingsRequest?.abort();
     const controller = new AbortController(); authSettingsRequest = controller;
-    passkeysEnabled = null; authOptionsLoading = true; authOptionsError = ""; publishAuthOptions();
+    passkeysEnabled = null; signupsAllowed = null; authOptionsLoading = true; authOptionsError = ""; publishAuthOptions();
     let timer;
     try {
       if (typeof fetch !== "function") throw new Error("Consulta indisponível.");
@@ -455,6 +473,7 @@ const Cloud = (() => {
       const settings = await response.json();
       if (c !== client || authSettingsRequest !== controller || !matchesClientCfg()) return;
       passkeysEnabled = settings?.passkeys_enabled === true;
+      signupsAllowed = typeof settings?.disable_signup === "boolean" ? !settings.disable_signup : null;
     } catch {
       if (c === client && authSettingsRequest === controller && matchesClientCfg()) authOptionsError = "Não foi possível verificar a disponibilidade das chaves de acesso. O login por senha e e-mail continua disponível.";
     } finally {
@@ -464,19 +483,33 @@ const Cloud = (() => {
   }
 
   function authErrorMessage(error) {
-    const code = error?.code || "", name = error?.name || "";
+    const code = error?.code || "", name = error?.name || "", raw = String(error?.message || "");
+    if (code === "invalid_credentials" || /invalid login credentials/i.test(raw)) return "E-mail ou senha incorretos. Confira o e-mail da sua conta ou use “Esqueci minha senha” para redefini-la.";
+    if (code === "otp_expired" || /token.*expired|expired.*token/i.test(raw)) return "Este código ou link expirou ou já foi usado. Peça um novo e use somente o e-mail mais recente.";
+    if (code === "otp_disabled") return "Use o e-mail de uma conta já cadastrada. Não foi possível enviar o acesso para este e-mail.";
+    if (code === "signup_disabled" || /signups not allowed/i.test(raw)) return "O cadastro de novas contas está desativado. Entre com uma conta existente ou recupere sua senha.";
+    if (code === "same_password" || /should be different/i.test(raw)) return "A nova senha precisa ser diferente da senha anterior.";
+    if (code === "weak_password" || /password.*least/i.test(raw)) return "A nova senha não atende aos requisitos. Use pelo menos 8 caracteres e uma combinação mais forte.";
+    if (code === "session_not_found" || name === "AuthSessionMissingError" || /invalid.*jwt|jwt.*expired/i.test(raw)) return "A sessão de recuperação expirou. Peça outro e-mail em “Esqueci minha senha” e abra o link mais recente.";
     if (code === "passkey_disabled") { passkeysEnabled = false; return "As chaves de acesso ainda não foram habilitadas neste projeto. Use e-mail e senha ou o link de acesso."; }
     if (name === "NotAllowedError" || name === "AbortError" || code === "ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY" && /cancel|notallowed/i.test(error?.message || "")) return "Confirmação cancelada. Você pode tentar novamente ou usar outra forma de entrada.";
     if (name === "TimeoutError") return "A confirmação demorou demais. Tente novamente.";
     if (code === "webauthn_credential_exists") return "Este dispositivo já tem uma chave de acesso cadastrada para a conta.";
     if (code === "webauthn_credential_not_found") return "Nenhuma chave de acesso foi reconhecida. Entre com e-mail e senha e cadastre uma chave.";
-    if (code === "email_not_confirmed" || code === "phone_not_confirmed") return "Confirme seu e-mail antes de cadastrar ou usar uma chave de acesso.";
+    if (code === "email_not_confirmed" || code === "phone_not_confirmed" || /email not confirmed/i.test(raw)) return "Seu e-mail ainda não foi confirmado. Abra o e-mail de confirmação antes de entrar.";
     if (code === "over_email_send_rate_limit" || code === "over_request_rate_limit" || error?.status === 429) return "Muitas tentativas. Aguarde um minuto antes de pedir outro link.";
-    if (code === "otp_disabled" || code === "signup_disabled") return "Use o e-mail de uma conta já cadastrada. Este app não cria uma conta ao enviar o link.";
+    if (/failed to fetch|network|load failed/i.test(raw) || error?.status >= 500) return "Não foi possível falar com a nuvem. Confira sua conexão e tente novamente. Seus dados locais continuam salvos.";
     return "Não foi possível concluir o acesso. Confira a conexão e tente novamente, ou entre com e-mail e senha.";
   }
 
-  async function sendSignInLink() {
+  function beginEmailCooldown() {
+    linkCooldownUntil = Date.now() + 60000;
+    clearTimeout(authCooldownTimer);
+    authCooldownTimer = setTimeout(() => { authCooldownTimer = null; publishAuthOptions(); }, 60000);
+    publishAuthOptions();
+  }
+
+  async function sendEmailAccess(codeMode) {
     if (authOperation) return false;
     if (session) { setAccessStatus("Você já está conectado à sua conta."); return false; }
     const email = $("#cloud-email")?.value.trim() || "";
@@ -486,17 +519,55 @@ const Cloud = (() => {
     try {
       const c = ensureClient();
       if (!c) { setAccessStatus("A conexão está indisponível. Tente novamente com internet.", true); return false; }
-      ticket = beginAuthOperation("link", c);
+      ticket = beginAuthOperation(codeMode ? "code-request" : "link", c);
       if (!ticket) return false;
-      linkCooldownUntil = Date.now() + 60000;
-      clearTimeout(authCooldownTimer);
-      authCooldownTimer = setTimeout(() => { authCooldownTimer = null; publishAuthOptions(); }, 60000);
-      publishAuthOptions(); setAccessStatus("Enviando o link de acesso…");
-      const result = await Promise.race([c.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } }), ticket.interrupted]);
+      pendingCodeEmail = ""; beginEmailCooldown();
+      setAccessStatus(codeMode ? "Enviando o acesso por e-mail…" : "Enviando o link de acesso…");
+      const result = await Promise.race([c.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: AUTH_REDIRECT_URL } }), ticket.interrupted]);
       if (!authCurrent(ticket)) return false;
       if (result?.error) throw result.error;
-      setAccessStatus("Se este e-mail pertence a uma conta cadastrada, você receberá um link para entrar. Confira também o spam.");
+      pendingCodeEmail = codeMode ? email : "";
+      setAccessStatus(codeMode ? "Se este e-mail pertence a uma conta cadastrada, o acesso foi enviado. Digite abaixo o código exibido no e-mail mais recente." : "Se este e-mail pertence a uma conta cadastrada, você receberá um link para entrar. Confira também o spam.");
       return true;
+    } catch (error) {
+      if (!ticket || authCurrent(ticket)) setAccessStatus(authErrorMessage(error), true);
+      return false;
+    } finally { if (ticket) finishAuthOperation(ticket); }
+  }
+
+  function sendSignInLink() { return sendEmailAccess(false); }
+  function sendSignInCode() { return sendEmailAccess(true); }
+
+  async function completeSignIn(ticket, data, message) {
+    if (!authCurrent(ticket) || !validId(data?.session?.user?.id)) throw new Error("Sessão não confirmada.");
+    if (!session) activateSession(data.session, "SIGNED_IN", ticket);
+    if (!authCurrent(ticket) || session?.user?.id !== data.session.user.id) return false;
+    pendingCodeEmail = "";
+    $("#cloud-code") && ($("#cloud-code").value = "");
+    setAccessStatus(message);
+    // O limite de 20s é para autenticação. Sincronização tem seu próprio prazo/status.
+    finishAuthOperation(ticket);
+    await syncNow();
+    return true;
+  }
+
+  async function verifySignInCode() {
+    if (authOperation) return false;
+    if (session) { setAccessStatus("Você já está conectado à sua conta."); return false; }
+    const email = $("#cloud-email")?.value.trim() || "", token = $("#cloud-code")?.value.trim() || "";
+    if (!pendingCodeEmail || email.toLowerCase() !== pendingCodeEmail.toLowerCase()) { setAccessStatus("Peça um código para este e-mail antes de confirmar.", true); return false; }
+    if (!/^\d{6,10}$/.test(token)) { setAccessStatus("Digite somente os 6 a 10 números do código recebido por e-mail.", true); return false; }
+    let ticket;
+    try {
+      const c = ensureClient();
+      if (!c) return false;
+      ticket = beginAuthOperation("code-verify", c);
+      if (!ticket) return false;
+      setAccessStatus("Conferindo seu código…");
+      const result = await Promise.race([c.auth.verifyOtp({ email: pendingCodeEmail, token, type: "email" }), ticket.interrupted]);
+      if (!authCurrent(ticket)) return false;
+      if (result?.error) throw result.error;
+      return await completeSignIn(ticket, result?.data, "Entrada confirmada com o código de e-mail.");
     } catch (error) {
       if (!ticket || authCurrent(ticket)) setAccessStatus(authErrorMessage(error), true);
       return false;
@@ -523,11 +594,7 @@ const Cloud = (() => {
         if (!result?.data?.id) throw new Error("Cadastro não confirmado.");
         setAccessStatus("Chave de acesso cadastrada. Na próxima entrada, confirme com a biometria ou o PIN do dispositivo.");
       } else {
-        if (!result?.data?.session?.user?.id) throw new Error("Sessão não confirmada.");
-        if (!session) activateSession(result.data.session, "SIGNED_IN", ticket);
-        if (!authCurrent(ticket) || session?.user?.id !== result.data.session.user.id) return false;
-        setAccessStatus("Entrada confirmada com sua chave de acesso.");
-        await syncNow();
+        return await completeSignIn(ticket, result?.data, "Entrada confirmada com sua chave de acesso.");
       }
       return true;
     } catch (error) {
@@ -555,11 +622,11 @@ const Cloud = (() => {
     const { data } = client.auth.onAuthStateChange((ev, s) => {
       if (currentClient !== client) return;
       const ticket = authOperation;
-      const accepted = ev === "SIGNED_IN" && ticket?.action === "passkey-login" && authCurrent(ticket) && ticket.expectedUserId === s?.user?.id ? ticket : null;
+      const accepted = ev === "SIGNED_IN" && ticket && ["passkey-login", "password-login", "signup", "code-verify"].includes(ticket.action) && authCurrent(ticket) && ticket.expectedUserId === s?.user?.id ? ticket : null;
       activateSession(s, ev, accepted);
       // Usuário abriu o link "esqueci minha senha" do e-mail: o app carrega já
       // autenticado em modo recuperação — só falta digitar a senha nova.
-      if (ev === "PASSWORD_RECOVERY") showNewPassUI();
+      if (ev === "PASSWORD_RECOVERY" && s?.user?.id) showNewPassUI();
     });
     authSubscription = data?.subscription;
     void loadAuthOptions(currentClient, { ...clientCfg });
@@ -569,7 +636,9 @@ const Cloud = (() => {
   function resetConnection() {
     cancelAuthOperation(); authSettingsRequest?.abort(); authSettingsRequest = null;
     clearTimeout(authCooldownTimer); authCooldownTimer = null; linkCooldownUntil = 0;
-    passkeysEnabled = null; authOptionsLoading = false; authOptionsError = "";
+    passkeysEnabled = null; signupsAllowed = null; authOptionsLoading = false; authOptionsError = "";
+    pendingCodeEmail = ""; recoveryOwner = "";
+    for (const selector of ["#cloud-pass", "#cloud-newpass", "#cloud-code"]) if ($(selector)) $(selector).value = "";
     cancelSchedule();
     cancelRequests();
     connectionVersion++;
@@ -599,6 +668,8 @@ const Cloud = (() => {
       retryAttempt = 0; lastError = ""; accountConflictCount = 0;
       invalidRemoteIds.clear();
       resetRepairState();
+      pendingCodeEmail = "";
+      if (recoveryOwner !== nextOwner) { recoveryOwner = ""; if ($("#cloud-newpass")) $("#cloud-newpass").value = ""; }
     }
     session = nextSession;
     activeOwner = nextOwner;
@@ -640,10 +711,12 @@ const Cloud = (() => {
   }
 
   function showNewPassUI() {
+    recoveryOwner = activeOwner;
+    publishAuthOptions();
     const wrap = $("#cloud-newpass-wrap");
     if (!wrap) return;
     wrap.classList.remove("hidden");
-    setStatus("Quase lá! Digite a nova senha abaixo para concluir a redefinição 🔑");
+    setAccessStatus("Digite a nova senha abaixo para concluir a redefinição.");
     $("#cloud-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
     setTimeout(() => $("#cloud-newpass").focus(), 300);
   }
@@ -880,13 +953,13 @@ const Cloud = (() => {
     return query.eq("updated_at", row.updated_at);
   }
 
-  async function pushDirty(rowsById, owner, c, version) {
+  async function pushDirty(rowsById, owner, c, version, archivedIds = new Set()) {
     const userId = ownerParts(owner).userId;
     let invalidLocalCount = 0;
     // Inclui as cópias de conflito criadas durante o pull, antes de qualquer exclusão.
     for (const id of Object.keys(loadQueue(owner).dirty)) {
       assertCurrent(c, version, owner);
-      if (invalidRemoteIds.has(id) || ledger.owners[id] !== owner || own(loadQueue(owner).deletes, id)) continue;
+      if (archivedIds.has(id) || invalidRemoteIds.has(id) || ledger.owners[id] !== owner || own(loadQueue(owner).deletes, id)) continue;
       const observed = rowsById.get(id);
       if (observed) await reconcileRow(observed, owner, c, version);
       assertCurrent(c, version, owner);
@@ -976,10 +1049,31 @@ const Cloud = (() => {
           classifyRemote(rowsById, owner);
         }
         for (const row of rowsById.values()) await reconcileRow(row, owner, c, version);
+        let archiveResult = { removedCount: 0, archivedIds: [], blockedIds: [] };
+        if (typeof CloudArchive !== "undefined") {
+          archiveResult = await CloudArchive.reconcile({
+            client: c, userId: ownerParts(owner).userId, remoteRows: rowsById, request,
+            assertCurrent: () => assertCurrent(c, version, owner),
+            ownsLocal: id => { refreshLedger(); return ledger.owners[id] === owner; },
+            getLocal: localDataset,
+            removeLocal: id => Store.deleteDataset(id),
+          });
+          assertCurrent(c, version, owner);
+          // Um arquivo permanente impede recriar IDs retirados da lista ativa.
+          // Só removemos metadados órfãos quando não há conteúdo local a salvar.
+          const archiveQueue = loadQueue(owner);
+          for (const id of archiveResult.archivedIds) if (!localDataset(id)) delete archiveQueue.dirty[id];
+          requireDurableQueue();
+          if (archiveResult.removedCount) {
+            renderFolders();
+            if (typeof Dashboard !== "undefined") Dashboard.refreshFromStore?.({ force: true });
+          }
+        }
         await rescan(owner, c, version);
-        const invalidLocalCount = await pushDirty(rowsById, owner, c, version);
+        const invalidLocalCount = await pushDirty(rowsById, owner, c, version, new Set(archiveResult.archivedIds));
         await flushDeletions(rowsById, owner, c, version);
         assertCurrent(c, version, owner);
+        if (archiveResult.blockedIds.length) throw new Error("Há cópias antigas com alterações ou vínculo que precisam de conferência. Elas foram preservadas neste aparelho; a CASINHA unificada e as demais pastas continuam sincronizando.");
         if (invalidLocalCount) throw new Error("Uma pasta local contém dados inválidos e não foi enviada. As alterações continuam salvas e pendentes. Use a correção de datas, quando disponível, ou revise a pasta antes de sincronizar.");
         if (!invalidRemoteIds.size) retryAttempt = 0;
         lastError = ""; authRequired = false;
@@ -1008,50 +1102,38 @@ const Cloud = (() => {
 
   /* ---------- Login / conta ---------- */
   async function signInOrUp(isSignUp) {
-    const c = ensureClient();
-    if (!c) { showCfgSetup(); setStatus("Configure a conexão primeiro (uma vez só) 👇", "err"); return; }
-    const email = $("#cloud-email").value.trim();
-    const pass = $("#cloud-pass").value;
-    if (!/^\S+@\S+\.\S+$/.test(email)) { toast("Digite um e-mail válido 📧"); return; }
-    if (pass.length < 8) { toast("A senha precisa ter pelo menos 8 caracteres 🔑"); return; }
-
-    setStatus(isSignUp ? "Criando conta…" : "Entrando…");
+    if (authOperation) return false;
+    if (session) { setAccessStatus("Você já está conectado à sua conta."); return false; }
+    if (isSignUp && signupsAllowed === false) { setAccessStatus("O cadastro de novas contas está desativado. Entre com sua conta existente.", true); return false; }
+    const email = $("#cloud-email").value.trim(), pass = $("#cloud-pass").value;
+    if (!/^\S+@\S+\.\S+$/.test(email)) { setAccessStatus("Digite o e-mail da sua conta.", true); return false; }
+    if (!pass || isSignUp && pass.length < 8) { setAccessStatus(isSignUp ? "Crie uma senha com pelo menos 8 caracteres." : "Digite sua senha para entrar.", true); return false; }
+    let ticket;
     try {
-      const { data, error } = isSignUp
-        ? await c.auth.signUp({ email, password: pass })
-        : await c.auth.signInWithPassword({ email, password: pass });
-      if (c !== client) return;
-      if (error) throw error;
-      activateSession(data.session, "SIGNED_IN");
-      if (!session) {
-        // signUp com confirmação de e-mail ligada
-        setStatus("Conta criada! Confirme pelo link enviado ao seu e-mail e depois clique em Entrar.", "ok");
-        return;
-      }
+      const c = ensureClient();
+      if (!c) { setAccessStatus("A conexão está indisponível. Tente novamente com internet.", true); return false; }
+      ticket = beginAuthOperation(isSignUp ? "signup" : "password-login", c);
+      if (!ticket) return false;
+      setAccessStatus(isSignUp ? "Criando conta…" : "Conferindo e-mail e senha…");
+      const operation = isSignUp ? c.auth.signUp({ email, password: pass, options: { emailRedirectTo: AUTH_REDIRECT_URL } }) : c.auth.signInWithPassword({ email, password: pass });
+      const result = await Promise.race([operation, ticket.interrupted]);
+      if (!authCurrent(ticket)) return false;
+      if (result?.error) throw result.error;
       $("#cloud-pass").value = "";
-      refreshUI();
-      await syncNow();
-      toast("Nuvem conectada ✔");
-    } catch (e) {
-      console.error(e);
-      const raw = e.message || "";
-      const msg = /invalid login credentials/i.test(raw)
-        ? "E-mail ou senha incorretos. Confira se digitou o MESMO e-mail dos outros aparelhos; se esqueceu a senha, use “esqueci minha senha” logo abaixo."
-        : /signups not allowed/i.test(raw)
-          ? "Sua conta JÁ EXISTE — em aparelho novo, use o botão “Entrar” (os cadastros foram trancados de propósito na configuração)."
-        : /email not confirmed/i.test(raw)
-          ? "Este e-mail ainda não foi confirmado — procure o link de confirmação na caixa de entrada/spam."
-        : /failed to fetch|network|load failed/i.test(raw)
-          ? "Não consegui falar com a nuvem. Confira a internet; se o projeto foi pausado, reative-o no painel Supabase."
-        : /rate limit|too many|security purposes/i.test(raw)
-          ? "Muitas tentativas em sequência — aguarde um minuto e tente de novo."
-        : raw || "erro inesperado";
-      setStatus("Não deu para " + (isSignUp ? "criar a conta" : "entrar") + ": " + msg, "err");
-    }
+      if (isSignUp && !result?.data?.session) { setAccessStatus("Pedido de cadastro recebido. Confira o e-mail de confirmação antes de entrar."); return true; }
+      return await completeSignIn(ticket, result?.data, "Entrada confirmada. Sua conta está conectada.");
+    } catch (error) {
+      if (!ticket || authCurrent(ticket)) setAccessStatus(authErrorMessage(error), true);
+      return false;
+    } finally { if (ticket) finishAuthOperation(ticket); }
   }
+
 
   async function logout() {
     cancelAuthOperation(); setAccessStatus("");
+    pendingCodeEmail = ""; recoveryOwner = "";
+    for (const selector of ["#cloud-pass", "#cloud-newpass", "#cloud-code"]) if ($(selector)) $(selector).value = "";
+    $("#cloud-newpass-wrap")?.classList.add("hidden");
     const previousSession = session;
     const previousInvalidRemoteIds = new Set(invalidRemoteIds);
     const previousRepairState = { repairableRemoteCount, repairableDateCount, repairDatePreview, lastRepairCount };
@@ -1084,53 +1166,54 @@ const Cloud = (() => {
   // "Esqueci minha senha": manda o e-mail de redefinição. O link abre o app
   // de volta (redirectTo) e o gancho PASSWORD_RECOVERY mostra o campo de nova senha.
   async function forgotPassword() {
-    const c = ensureClient();
-    if (!c) { showCfgSetup(); setStatus("Configure a conexão primeiro (uma vez só) 👇", "err"); return; }
+    if (authOperation) return false;
+    if (session) { setAccessStatus("Você já está conectado. Saia da conta antes de solicitar recuperação de senha."); return false; }
     const email = $("#cloud-email").value.trim();
-    if (!/^\S+@\S+\.\S+$/.test(email)) {
-      toast("Digite seu e-mail no campo acima e clique de novo 📧");
-      $("#cloud-email").focus();
-      return;
-    }
-    setStatus("Enviando e-mail de redefinição…");
+    if (!/^\S+@\S+\.\S+$/.test(email)) { setAccessStatus("Digite o e-mail da sua conta antes de recuperar a senha.", true); return false; }
+    if (Date.now() < linkCooldownUntil) { setAccessStatus("Aguarde um minuto antes de pedir outro e-mail."); return false; }
+    let ticket;
     try {
-      const { error } = await c.auth.resetPasswordForEmail(email, {
-        redirectTo: location.origin + location.pathname,
-      });
-      if (error) throw error;
-      setStatus("Enviado ✔ Abra o link do e-mail NESTE aparelho — ele volta pro app já no passo de criar a nova senha. (Não chegou? Veja o spam.)", "ok");
-    } catch (e) {
-      console.error(e);
-      const raw = e.message || "";
-      const msg = /rate limit|too many|security purposes/i.test(raw)
-        ? "Muitas tentativas em sequência — aguarde uns minutos e tente de novo."
-        : raw || "erro inesperado";
-      setStatus("Não deu para enviar a redefinição: " + msg, "err");
-    }
+      const c = ensureClient();
+      if (!c) { setAccessStatus("A conexão está indisponível. Tente novamente com internet.", true); return false; }
+      ticket = beginAuthOperation("recovery-email", c);
+      if (!ticket) return false;
+      pendingCodeEmail = ""; beginEmailCooldown(); setAccessStatus("Enviando e-mail de recuperação…");
+      const result = await Promise.race([c.auth.resetPasswordForEmail(email, { redirectTo: AUTH_REDIRECT_URL }), ticket.interrupted]);
+      if (!authCurrent(ticket)) return false;
+      if (result?.error) throw result.error;
+      setAccessStatus("Se este e-mail pertence a uma conta cadastrada, você receberá a recuperação. Abra somente o link do e-mail mais recente para criar sua nova senha.");
+      return true;
+    } catch (error) {
+      if (!ticket || authCurrent(ticket)) setAccessStatus(authErrorMessage(error), true);
+      return false;
+    } finally { if (ticket) finishAuthOperation(ticket); }
   }
 
+
   async function saveNewPassword() {
+    if (authOperation) return false;
     const pass = $("#cloud-newpass").value;
-    if (pass.length < 8) { toast("A nova senha precisa ter pelo menos 8 caracteres 🔑"); $("#cloud-newpass").focus(); return; }
-    if (!client) return;
-    setStatus("Salvando nova senha…");
+    if (pass.length < 8) { setAccessStatus("Crie uma nova senha com pelo menos 8 caracteres.", true); return false; }
+    if (!client || !session || !recoveryOwner || recoveryOwner !== activeOwner) { setAccessStatus("Abra o link de recuperação mais recente antes de salvar uma nova senha.", true); return false; }
+    let ticket;
     try {
-      const { error } = await client.auth.updateUser({ password: pass });
-      if (error) throw error;
-      $("#cloud-newpass").value = "";
-      $("#cloud-newpass-wrap").classList.add("hidden");
-      refreshUI();
-      setStatus("Senha atualizada ✔ Você já está conectado neste aparelho.", "ok");
-      toast("Nova senha salva ✔");
+      const c = client;
+      ticket = beginAuthOperation("new-password", c);
+      if (!ticket) return false;
+      setAccessStatus("Salvando nova senha…");
+      const result = await Promise.race([c.auth.updateUser({ password: pass }), ticket.interrupted]);
+      if (!authCurrent(ticket) || recoveryOwner !== activeOwner) return false;
+      if (result?.error) throw result.error;
+      $("#cloud-newpass").value = ""; recoveryOwner = "";
+      $("#cloud-newpass-wrap").classList.add("hidden"); refreshUI();
+      setAccessStatus("Senha atualizada. Você já está conectado neste aparelho.");
+      finishAuthOperation(ticket);
       await syncNow();
-    } catch (e) {
-      console.error(e);
-      const raw = e.message || "";
-      const msg = /should be different/i.test(raw) ? "A nova senha precisa ser diferente da anterior."
-        : /session|jwt|token/i.test(raw) ? "O link de redefinição expirou — peça outro em “esqueci minha senha”."
-        : raw || "erro inesperado";
-      setStatus("Não deu para salvar a nova senha: " + msg, "err");
-    }
+      return true;
+    } catch (error) {
+      if (!ticket || authCurrent(ticket)) setAccessStatus(authErrorMessage(error), true);
+      return false;
+    } finally { if (ticket) finishAuthOperation(ticket); }
   }
 
   /* ---------- Ganchos chamados pelo app ---------- */
@@ -1188,14 +1271,16 @@ const Cloud = (() => {
 
   /* ---------- Inicialização e eventos ---------- */
   async function init() {
+    if (authCallbackError) setAccessStatus(authCallbackError, true);
     const c = ensureClient();
     const initialVersion = connectionVersion;
     refreshUI();
     if (!c) return;
     try {
-      const { data } = await c.auth.getSession();
+      const { data, error } = await c.auth.getSession();
       if (c !== client || initialVersion !== connectionVersion) return;
-      activateSession(data.session, "INITIAL_SESSION");
+      if (error && !authCallbackError) setAccessStatus(authErrorMessage(error), true);
+      activateSession(data?.session || null, "INITIAL_SESSION");
       refreshUI();
       if (session && isAuto()) {
         await syncNow();
@@ -1204,6 +1289,9 @@ const Cloud = (() => {
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    $("#btn-cloud-code-send")?.addEventListener("click", sendSignInCode);
+    $("#btn-cloud-code-verify")?.addEventListener("click", verifySignInCode);
+    $("#cloud-code")?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") verifySignInCode(); });
     $("#btn-cloud-magic-link")?.addEventListener("click", sendSignInLink);
     $("#btn-cloud-passkey-login")?.addEventListener("click", signInWithPasskey);
     $("#btn-cloud-passkey-register")?.addEventListener("click", registerPasskey);
@@ -1282,5 +1370,5 @@ const Cloud = (() => {
     return session?.access_token || null;
   }
 
-  return { onLocalChange, onLocalDelete, getToken, getSyncState, getAuthOptions, sendSignInLink, signInWithPasskey, registerPasskey, linkLocalDatasets, prepareLocalDelete, repairLegacyDates, exportRepairBackup };
+  return { onLocalChange, onLocalDelete, getToken, getSyncState, getAuthOptions, sendSignInLink, sendSignInCode, verifySignInCode, signInWithPasskey, registerPasskey, linkLocalDatasets, prepareLocalDelete, repairLegacyDates, exportRepairBackup };
 })();

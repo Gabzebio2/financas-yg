@@ -14,9 +14,11 @@
 !/index.html
 !/js/app.js
 !/js/batch.js
+!/js/cloud-archive.js
 !/js/cloud-repair.js
 !/js/cloud.js
 !/js/dashboard.js
+!/js/folder-cleanup.js
 !/js/importer.js
 !/js/navigation.js
 !/js/rates.js

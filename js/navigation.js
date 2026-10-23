@@ -44,6 +44,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const offline = !navigator.onLine;
     const state = typeof Cloud !== "undefined" && Cloud.getSyncState ? Cloud.getSyncState() : null;
     const connected = state ? state.connected : !document.querySelector("#cloud-connected").classList.contains("hidden");
+    const accountTitle = document.querySelector("#cloud-account-title");
+    if (accountTitle) accountTitle.textContent = connected ? "Sua conta está conectada" : "Entre na sua conta";
     const pending = state?.pendingCount || 0;
     const invalidRemote = state?.invalidRemoteCount || 0;
     const repeatedInvalidNotice = invalidRemote && state?.error === `${invalidRemote} pasta(s) da nuvem têm dados inválidos e foram preservadas sem alterações. Confira essas pastas antes de sincronizá-las.`;
@@ -142,6 +144,15 @@ document.addEventListener("DOMContentLoaded", () => {
       link.textContent = options.busyAction === "link" ? "Enviando link…" : cooldown ? "Link solicitado · aguarde para reenviar" : "Receber link para entrar";
     }
     ["#btn-cloud-signin", "#btn-cloud-signup"].forEach(id => { const button = document.querySelector(id); if (button) button.disabled = options.busy; });
+    const signIn = document.querySelector("#btn-cloud-signin");
+    if (signIn) signIn.textContent = options.busyAction === "password-login" ? "Entrando…" : "Entrar com senha";
+    const signup = document.querySelector("#btn-cloud-signup");
+    signup?.classList.toggle("hidden", options.signupsAllowed !== true);
+    const forgot = document.querySelector("#btn-cloud-forgot");
+    if (forgot) { forgot.disabled = options.busy || Number(options.linkCooldownUntil) > Date.now(); forgot.textContent = options.busyAction === "recovery-email" ? "Enviando recuperação…" : "Esqueci minha senha"; }
+    const savePassword = document.querySelector("#btn-cloud-newpass-save");
+    if (savePassword) { savePassword.disabled = options.busy || !options.recoveryActive; savePassword.textContent = options.busyAction === "new-password" ? "Salvando…" : "Salvar nova senha"; }
+    ["#cloud-email", "#cloud-pass", "#cloud-newpass"].forEach(id => { const field = document.querySelector(id); if (field) field.disabled = options.busy; });
     if (hint) hint.textContent = options.loading
       ? "Conferindo a disponibilidade de chaves de acesso…"
       : options.passkeysEnabled === false
@@ -155,6 +166,25 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("fyg:authoptions", refreshAuthOptions);
   document.addEventListener("fyg:cloudstate", refreshAuthOptions);
   refreshAuthOptions();
+  const passwordField = document.querySelector("#cloud-pass");
+  wire("#btn-cloud-show-pass", () => {
+    const visible = passwordField.type === "password";
+    passwordField.type = visible ? "text" : "password";
+    const toggle = document.querySelector("#btn-cloud-show-pass");
+    toggle.textContent = visible ? "Ocultar" : "Mostrar";
+    toggle.setAttribute("aria-pressed", String(visible));
+  });
+  const capsNotice = document.querySelector("#cloud-caps-hint");
+  ["keydown", "keyup"].forEach(event => passwordField?.addEventListener(event, ev => capsNotice?.classList.toggle("hidden", !ev.getModifierState?.("CapsLock"))));
+  passwordField?.addEventListener("blur", () => capsNotice?.classList.add("hidden"));
+  document.addEventListener("fyg:cloudstate", () => {
+    if (document.querySelector("#cloud-login")?.classList.contains("hidden")) {
+      passwordField.type = "password";
+      document.querySelector("#btn-cloud-show-pass")?.setAttribute("aria-pressed", "false");
+      document.querySelector("#btn-cloud-show-pass").textContent = "Mostrar";
+      capsNotice?.classList.add("hidden");
+    }
+  });
   const hideKey = "fyg:hide-money";
   function refreshPrivacy() {
     const on = document.body.classList.contains("hide-money");

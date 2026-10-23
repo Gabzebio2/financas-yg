@@ -12,9 +12,9 @@
 <meta name="theme-color" content="#17161e">
 <meta name="description" content="Organize receitas, despesas, parcelas e metas em um só lugar com o Finanças YG.">
 <title>Finanças YG</title>
-<script src="js/theme.js?v=20261023-access"></script>
-<link rel="stylesheet" href="css/style.css?v=20261023-access">
-<link rel="stylesheet" href="css/design.css?v=20261023-access">
+<script src="js/theme.js?v=20261023-login-repair"></script>
+<link rel="stylesheet" href="css/style.css?v=20261023-login-repair">
+<link rel="stylesheet" href="css/design.css?v=20261023-login-repair">
 </head>
 <body>
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -62,58 +62,29 @@
   <!-- ===================== HOME ===================== -->
   <section id="screen-home" class="screen">
     <div class="home-page-header"><span class="eyebrow">Finanças YG</span><h1>Suas finanças, por inteiro.</h1><p>Um lugar para organizar o presente e cuidar do que vem depois.</p></div>
-    <div class="hero">
-      <div class="welcome-heading"><span class="welcome-kicker"><i></i>Organize o presente</span><h2>Seu dinheiro.<br>Seus próximos planos.</h2><p>Separe suas contas, acompanhe seus gastos<br class="desktop-break"> e aproxime cada objetivo.</p><div class="welcome-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-leaf"></div></div></div>
-      <div class="hero-actions">
-        <button class="action-card" id="card-upload">
-          <div class="action-icon icon-upload"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></div>
-          <div class="action-text">
-            <strong>Importar uma planilha</strong>
-            <span>Excel (.xlsx ou .xls), do seu jeito.</span>
-          </div>
-        </button>
-        <button class="action-card" id="card-new">
-          <div class="action-icon icon-new"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></div>
-          <div class="action-text">
-            <strong>Criar minha pasta</strong>
-            <span>Um começo simples para suas finanças.</span>
-          </div>
-        </button>
-      </div>
-    </div>
-    <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
-    <input type="file" id="backup-input" accept=".json" hidden>
-
-    <div class="folders-head">
-      <div><h2>Minhas pastas</h2><p class="section-caption">Cada parte da sua vida, bem organizada.</p></div>
-      <div class="backup-btns">
-        <button class="btn btn-ghost btn-sm" id="btn-export-backup" title="Salva todas as pastas em um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Exportar backup</button>
-        <button class="btn btn-ghost btn-sm" id="btn-import-backup" title="Restaura pastas de um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg> Importar backup</button>
-      </div>
-    </div>
-    <div id="folders-grid" class="folders-grid"></div>
-    <p class="hint" id="storage-hint">Seus dados ficam salvos neste navegador, neste computador. Exporte um backup de vez em quando por segurança.</p>
-
-    <!-- ===== Sincronização na nuvem (Supabase) ===== -->
     <div class="card drive-card" id="cloud-card">
       <div class="drive-head">
         <div>
-          <div class="cloud-symbol" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6"/></svg></div><span class="eyebrow">Em todos os seus dispositivos</span><h3>Suas finanças acompanham você.</h3>
+          <div class="cloud-symbol" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6"/></svg></div><span class="eyebrow">Em todos os seus dispositivos</span><h3 id="cloud-account-title">Entre na sua conta</h3>
           <span class="hint">Use a mesma conta no computador e no celular. Suas pastas sincronizadas acompanham você pelo Supabase.</span>
+      <p class="drive-status" id="cloud-access-status" role="status" aria-live="polite"></p>
         </div>
         <div class="cloud-login" id="cloud-login">
           <label class="cloud-field-label" for="cloud-email">E-mail da sua conta</label>
           <input type="email" id="cloud-email" aria-label="E-mail" placeholder="seu e-mail" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false">
-          <button type="button" class="btn btn-primary btn-sm" id="btn-cloud-magic-link">Receber link para entrar</button>
-          <button type="button" class="btn btn-ghost btn-sm" id="btn-cloud-passkey-login" disabled aria-describedby="cloud-passkey-hint">Entrar com chave de acesso</button>
-          <p class="hint cloud-access-help">O link chega ao seu e-mail e permite entrar sem digitar a senha. Abra-o no aparelho em que deseja usar o app.</p>
-          <span class="cloud-field-label">Ou use sua senha</span>
-          <input type="password" id="cloud-pass" aria-label="Senha" placeholder="senha (mín. 8)" autocomplete="current-password">
-          <div class="drive-connected-btns">
-            <button class="btn btn-ghost btn-sm" id="btn-cloud-signin">Entrar com senha</button>
-            <button class="btn btn-ghost btn-sm" id="btn-cloud-signup">Criar conta</button>
+          <label class="cloud-field-label" for="cloud-pass">Sua senha</label>
+          <div class="auth-password-row">
+            <input type="password" id="cloud-pass" name="password" aria-label="Senha" placeholder="Digite sua senha atual" autocomplete="current-password" aria-describedby="cloud-caps-hint">
+            <button type="button" class="btn-link" id="btn-cloud-show-pass" aria-controls="cloud-pass" aria-pressed="false">Mostrar</button>
           </div>
-          <button type="button" class="btn-link" id="btn-cloud-forgot" title="Digite seu e-mail acima e clique aqui: você recebe um link para criar uma nova senha">esqueci minha senha</button>
+          <p class="hint hidden" id="cloud-caps-hint" role="status">Caps Lock está ativado.</p>
+          <button type="button" class="btn btn-primary" id="btn-cloud-signin">Entrar com senha</button>
+          <button type="button" class="btn-link" id="btn-cloud-forgot" title="Envia um novo link ao e-mail da sua conta">Esqueci minha senha</button>
+          <div class="auth-divider"><span>ou entre sem digitar a senha</span></div>
+          <button type="button" class="btn btn-ghost" id="btn-cloud-magic-link">Receber link para entrar</button>
+          <p class="hint cloud-access-help">Use o e-mail da sua conta e abra a mensagem mais recente no aparelho em que deseja entrar. Cada link funciona uma única vez.</p>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-cloud-passkey-login" disabled aria-describedby="cloud-passkey-hint">Entrar com chave de acesso</button>
+          <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-cloud-signup">Criar conta</button>
         </div>
         <div class="drive-connected hidden" id="cloud-connected">
           <span class="hint" id="cloud-user"></span>
@@ -128,7 +99,7 @@
         </div>
       </div>
       <p class="hint cloud-access-help" id="cloud-passkey-hint">Conferindo a disponibilidade de chaves de acesso…</p>
-      <p class="drive-status" id="cloud-access-status" role="status" aria-live="polite"></p>
+
       <div class="drive-cid-box hidden" id="cloud-newpass-wrap">
         <p class="hint"><b>Redefinição de senha:</b> digite a nova senha para concluir (mín. 8 caracteres).</p>
         <div class="apikey-row">
@@ -162,6 +133,40 @@
         <button type="button" class="btn-link" id="btn-cloud-cfg-clear">remover configuração salva</button>
       </div>
     </div>
+
+    <div class="hero">
+      <div class="welcome-heading"><span class="welcome-kicker"><i></i>Organize o presente</span><h2>Seu dinheiro.<br>Seus próximos planos.</h2><p>Separe suas contas, acompanhe seus gastos<br class="desktop-break"> e aproxime cada objetivo.</p><div class="welcome-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-leaf"></div></div></div>
+      <div class="hero-actions">
+        <button class="action-card" id="card-upload">
+          <div class="action-icon icon-upload"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></div>
+          <div class="action-text">
+            <strong>Importar uma planilha</strong>
+            <span>Excel (.xlsx ou .xls), do seu jeito.</span>
+          </div>
+        </button>
+        <button class="action-card" id="card-new">
+          <div class="action-icon icon-new"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></div>
+          <div class="action-text">
+            <strong>Criar minha pasta</strong>
+            <span>Um começo simples para suas finanças.</span>
+          </div>
+        </button>
+      </div>
+    </div>
+    <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
+    <input type="file" id="backup-input" accept=".json" hidden>
+
+    <div class="folders-head">
+      <div><h2>Minhas pastas</h2><p class="section-caption">Cada parte da sua vida, bem organizada.</p></div>
+      <div class="backup-btns">
+        <button class="btn btn-ghost btn-sm" id="btn-export-backup" title="Salva todas as pastas em um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Exportar backup</button>
+        <button class="btn btn-ghost btn-sm" id="btn-import-backup" title="Restaura pastas de um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg> Importar backup</button>
+      </div>
+    </div>
+    <div id="folders-grid" class="folders-grid"></div>
+    <p class="hint" id="storage-hint">Seus dados ficam salvos neste navegador, neste computador. Exporte um backup de vez em quando por segurança.</p>
+
+    <!-- ===== Sincronização na nuvem (Supabase) ===== -->
   </section>
 
   <!-- ===================== IMPORTAÇÃO ===================== -->
@@ -710,14 +715,16 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20261023-access"></script>
-<script src="js/rates.js?v=20261023-access"></script>
-<script src="js/importer.js?v=20261023-access"></script>
-<script src="js/dashboard.js?v=20261023-access"></script>
-<script src="js/receipt.js?v=20261023-access"></script>
-<script src="js/batch.js?v=20261023-access"></script>
-<script src="js/cloud-repair.js?v=20261023-access"></script>
-<script src="js/cloud.js?v=20261023-access"></script>
-<script src="js/navigation.js?v=20261023-access"></script>
+<script src="js/app.js?v=20261023-login-repair"></script>
+<script src="js/rates.js?v=20261023-login-repair"></script>
+<script src="js/importer.js?v=20261023-login-repair"></script>
+<script src="js/dashboard.js?v=20261023-login-repair"></script>
+<script src="js/receipt.js?v=20261023-login-repair"></script>
+<script src="js/batch.js?v=20261023-login-repair"></script>
+<script src="js/cloud-repair.js?v=20261023-login-repair"></script>
+<script src="js/folder-cleanup.js?v=20261023-login-repair"></script>
+<script src="js/cloud-archive.js?v=20261023-login-repair"></script>
+<script src="js/cloud.js?v=20261023-login-repair"></script>
+<script src="js/navigation.js?v=20261023-login-repair"></script>
 </body>
 </html>
