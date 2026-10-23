@@ -12,9 +12,9 @@
 <meta name="theme-color" content="#17161e">
 <meta name="description" content="Organize receitas, despesas, parcelas e metas em um só lugar com o Finanças YG.">
 <title>Finanças YG</title>
-<script src="js/theme.js?v=20261012-cloud-pending-repair"></script>
-<link rel="stylesheet" href="css/style.css?v=20261012-cloud-pending-repair">
-<link rel="stylesheet" href="css/design.css?v=20261012-cloud-pending-repair">
+<script src="js/theme.js?v=20261023-access"></script>
+<link rel="stylesheet" href="css/style.css?v=20261023-access">
+<link rel="stylesheet" href="css/design.css?v=20261023-access">
 </head>
 <body>
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -99,13 +99,18 @@
       <div class="drive-head">
         <div>
           <div class="cloud-symbol" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6"/></svg></div><span class="eyebrow">Em todos os seus dispositivos</span><h3>Suas finanças acompanham você.</h3>
-          <span class="hint">Entre na sua conta para sincronizar suas pastas entre computador e celular. Você também pode usar o app só neste navegador.</span>
+          <span class="hint">Use a mesma conta no computador e no celular. Suas pastas sincronizadas acompanham você pelo Supabase.</span>
         </div>
         <div class="cloud-login" id="cloud-login">
-          <input type="email" id="cloud-email" aria-label="E-mail" placeholder="seu e-mail" autocomplete="username">
+          <label class="cloud-field-label" for="cloud-email">E-mail da sua conta</label>
+          <input type="email" id="cloud-email" aria-label="E-mail" placeholder="seu e-mail" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false">
+          <button type="button" class="btn btn-primary btn-sm" id="btn-cloud-magic-link">Receber link para entrar</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-cloud-passkey-login" disabled aria-describedby="cloud-passkey-hint">Entrar com chave de acesso</button>
+          <p class="hint cloud-access-help">O link chega ao seu e-mail e permite entrar sem digitar a senha. Abra-o no aparelho em que deseja usar o app.</p>
+          <span class="cloud-field-label">Ou use sua senha</span>
           <input type="password" id="cloud-pass" aria-label="Senha" placeholder="senha (mín. 8)" autocomplete="current-password">
           <div class="drive-connected-btns">
-            <button class="btn btn-primary btn-sm" id="btn-cloud-signin">Entrar</button>
+            <button class="btn btn-ghost btn-sm" id="btn-cloud-signin">Entrar com senha</button>
             <button class="btn btn-ghost btn-sm" id="btn-cloud-signup">Criar conta</button>
           </div>
           <button type="button" class="btn-link" id="btn-cloud-forgot" title="Digite seu e-mail acima e clique aqui: você recebe um link para criar uma nova senha">esqueci minha senha</button>
@@ -113,6 +118,7 @@
         <div class="drive-connected hidden" id="cloud-connected">
           <span class="hint" id="cloud-user"></span>
           <label class="checkline"><input type="checkbox" id="cloud-autosync"> Salvar na nuvem automaticamente</label>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-cloud-passkey-register" disabled aria-describedby="cloud-passkey-hint">Cadastrar chave de acesso</button>
           <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-cloud-link-local">Vincular pastas locais a esta conta</button>
           <p class="hint hidden" id="cloud-link-hint"></p>
           <div class="drive-connected-btns">
@@ -121,6 +127,8 @@
           </div>
         </div>
       </div>
+      <p class="hint cloud-access-help" id="cloud-passkey-hint">Conferindo a disponibilidade de chaves de acesso…</p>
+      <p class="drive-status" id="cloud-access-status" role="status" aria-live="polite"></p>
       <div class="drive-cid-box hidden" id="cloud-newpass-wrap">
         <p class="hint"><b>Redefinição de senha:</b> digite a nova senha para concluir (mín. 8 caracteres).</p>
         <div class="apikey-row">
@@ -702,14 +710,14 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20261012-cloud-pending-repair"></script>
-<script src="js/rates.js?v=20261012-cloud-pending-repair"></script>
-<script src="js/importer.js?v=20261012-cloud-pending-repair"></script>
-<script src="js/dashboard.js?v=20261012-cloud-pending-repair"></script>
-<script src="js/receipt.js?v=20261012-cloud-pending-repair"></script>
-<script src="js/batch.js?v=20261012-cloud-pending-repair"></script>
-<script src="js/cloud-repair.js?v=20261012-cloud-pending-repair"></script>
-<script src="js/cloud.js?v=20261012-cloud-pending-repair"></script>
-<script src="js/navigation.js?v=20261012-cloud-pending-repair"></script>
+<script src="js/app.js?v=20261023-access"></script>
+<script src="js/rates.js?v=20261023-access"></script>
+<script src="js/importer.js?v=20261023-access"></script>
+<script src="js/dashboard.js?v=20261023-access"></script>
+<script src="js/receipt.js?v=20261023-access"></script>
+<script src="js/batch.js?v=20261023-access"></script>
+<script src="js/cloud-repair.js?v=20261023-access"></script>
+<script src="js/cloud.js?v=20261023-access"></script>
+<script src="js/navigation.js?v=20261023-access"></script>
 </body>
 </html>

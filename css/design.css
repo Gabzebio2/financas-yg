@@ -155,6 +155,12 @@ main:focus { outline: none; }
 .cloud-login input { border-radius: 8px; padding: 10px 13px; background: var(--card); font-size: 11px; }
 .cloud-login .drive-connected-btns { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
 .cloud-login .btn-link { align-self: flex-end; font-size: 10px; margin-top: 1px; }
+.cloud-login { width: 310px; }
+.cloud-field-label { color: var(--muted); font-size: 12px; font-weight: 600; }
+.cloud-access-help { max-width: 75ch; line-height: 1.65; }
+.cloud-login .cloud-access-help { margin: 0 0 6px; font-size: 11px; }
+#btn-cloud-passkey-register { align-self: flex-start; }
+#cloud-access-status:empty { display: none; }
 
 /* Painel: período, saldo principal e três cartões de movimento */
 .section-intro .eyebrow { margin: 0 0 9px; }

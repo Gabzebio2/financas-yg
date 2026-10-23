@@ -36,6 +36,11 @@ const Cloud = (() => {
   let invalidRemoteIds = new Set();
   let repairableRemoteCount = 0, repairableDateCount = 0, repairDatePreview = [];
   let repairing = false, lastRepairCount = 0, repairRequest = null;
+  let passkeysEnabled = null, authOptionsLoading = false, authOptionsError = "";
+  let authOperation = null, authSettingsRequest = null, authCooldownTimer = null, linkCooldownUntil = 0;
+  // O SDK pode emitir INITIAL_SESSION antes de SIGNED_IN ao abrir um link novo.
+  // Esse retorno nunca autoriza vincular automaticamente pastas locais antigas.
+  const openedAuthLink = /(?:^|[?#&])(?:access_token|refresh_token|code|token_hash|error_description)=/.test(String(location.hash || "") + String(location.search || ""));
   const queues = new Map();
   const queueReads = new Map();
   const requests = new Set();
@@ -364,7 +369,175 @@ const Cloud = (() => {
       $("#cloud-user").textContent = session.user?.email || "";
       $("#cloud-autosync").checked = isAuto();
     }
+    publishAuthOptions();
   }
+
+  function getAuthOptions() {
+    const supported = typeof window !== "undefined" && window.isSecureContext === true &&
+      typeof window.PublicKeyCredential === "function" && typeof navigator?.credentials?.get === "function" && typeof navigator?.credentials?.create === "function";
+    return { passkeysEnabled, passkeysSupported: supported, busy: !!authOperation,
+      busyAction: authOperation?.action || null, linkCooldownUntil, loading: authOptionsLoading,
+      error: authOptionsError || null };
+  }
+
+  function publishAuthOptions() {
+    if (typeof CustomEvent !== "undefined" && document.dispatchEvent) document.dispatchEvent(new CustomEvent("fyg:authoptions", { detail: getAuthOptions() }));
+  }
+
+  function setAccessStatus(message, error = false) {
+    const el = $("#cloud-access-status");
+    if (el) { el.textContent = message; el.classList.toggle("err", error); }
+  }
+
+  function authCurrent(ticket) {
+    return authOperation === ticket && ticket.c === client && ticket.version === connectionVersion &&
+      ticket.owner === activeOwner && matchesClientCfg();
+  }
+
+  function authAbort() { return Object.assign(new Error("Operação de acesso cancelada."), { name: "AbortError" }); }
+
+  function cancelAuthOperation() {
+    const ticket = authOperation;
+    if (!ticket) return;
+    authOperation = null;
+    clearTimeout(ticket.timer); ticket.controller.abort(); ticket.reject(authAbort());
+    publishAuthOptions();
+  }
+
+  function beginAuthOperation(action, c) {
+    if (authOperation) return null;
+    const ticket = { action, c, version: connectionVersion, owner: activeOwner, controller: new AbortController(), expectedUserId: null };
+    ticket.interrupted = new Promise((_, reject) => { ticket.reject = reject; });
+    // Uma cerimônia biométrica pode levar mais tempo que a requisição de e-mail.
+    ticket.timer = setTimeout(() => {
+      ticket.controller.abort();
+      ticket.reject(Object.assign(new Error("A confirmação demorou demais. Tente novamente."), { name: "TimeoutError" }));
+    }, action === "link" ? REQUEST_MS : 90000);
+    authOperation = ticket;
+    publishAuthOptions();
+    return ticket;
+  }
+
+  function finishAuthOperation(ticket) {
+    clearTimeout(ticket.timer);
+    if (authOperation === ticket) { authOperation = null; publishAuthOptions(); }
+  }
+
+  // O signal do SDK cancela a janela WebAuthn, mas não seu POST de verificação.
+  // Proteja também a resposta antes de o SDK persistir uma sessão já cancelada.
+  async function guardedAuthFetch(input, options) {
+    const url = typeof input === "string" ? input : input?.url || "";
+    if (!/\/auth\/v1\/passkeys\//.test(url)) return fetch(input, options);
+    const ticket = authOperation;
+    if (!ticket || !ticket.action.startsWith("passkey-") || !authCurrent(ticket)) throw authAbort();
+    const response = await fetch(input, { ...options, signal: ticket.controller.signal });
+    if (!authCurrent(ticket) || ticket.controller.signal.aborted) throw authAbort();
+    const readJson = response.json.bind(response);
+    response.json = async () => {
+      const body = await readJson();
+      if (!authCurrent(ticket) || ticket.controller.signal.aborted) throw authAbort();
+      if (ticket.action === "passkey-login" && /\/passkeys\/authentication\/verify(?:\?|$)/.test(url) && body?.access_token && validId(body?.user?.id)) ticket.expectedUserId = body.user.id;
+      return body;
+    };
+    return response;
+  }
+
+  async function loadAuthOptions(c, cfg) {
+    authSettingsRequest?.abort();
+    const controller = new AbortController(); authSettingsRequest = controller;
+    passkeysEnabled = null; authOptionsLoading = true; authOptionsError = ""; publishAuthOptions();
+    let timer;
+    try {
+      if (typeof fetch !== "function") throw new Error("Consulta indisponível.");
+      timer = setTimeout(() => controller.abort(), 10000);
+      const response = await fetch(cfg.url + "/auth/v1/settings", { headers: { apikey: cfg.anonKey }, signal: controller.signal });
+      if (!response.ok) throw new Error("Consulta indisponível.");
+      const settings = await response.json();
+      if (c !== client || authSettingsRequest !== controller || !matchesClientCfg()) return;
+      passkeysEnabled = settings?.passkeys_enabled === true;
+    } catch {
+      if (c === client && authSettingsRequest === controller && matchesClientCfg()) authOptionsError = "Não foi possível verificar a disponibilidade das chaves de acesso. O login por senha e e-mail continua disponível.";
+    } finally {
+      clearTimeout(timer);
+      if (c === client && authSettingsRequest === controller) { authSettingsRequest = null; authOptionsLoading = false; publishAuthOptions(); }
+    }
+  }
+
+  function authErrorMessage(error) {
+    const code = error?.code || "", name = error?.name || "";
+    if (code === "passkey_disabled") { passkeysEnabled = false; return "As chaves de acesso ainda não foram habilitadas neste projeto. Use e-mail e senha ou o link de acesso."; }
+    if (name === "NotAllowedError" || name === "AbortError" || code === "ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY" && /cancel|notallowed/i.test(error?.message || "")) return "Confirmação cancelada. Você pode tentar novamente ou usar outra forma de entrada.";
+    if (name === "TimeoutError") return "A confirmação demorou demais. Tente novamente.";
+    if (code === "webauthn_credential_exists") return "Este dispositivo já tem uma chave de acesso cadastrada para a conta.";
+    if (code === "webauthn_credential_not_found") return "Nenhuma chave de acesso foi reconhecida. Entre com e-mail e senha e cadastre uma chave.";
+    if (code === "email_not_confirmed" || code === "phone_not_confirmed") return "Confirme seu e-mail antes de cadastrar ou usar uma chave de acesso.";
+    if (code === "over_email_send_rate_limit" || code === "over_request_rate_limit" || error?.status === 429) return "Muitas tentativas. Aguarde um minuto antes de pedir outro link.";
+    if (code === "otp_disabled" || code === "signup_disabled") return "Use o e-mail de uma conta já cadastrada. Este app não cria uma conta ao enviar o link.";
+    return "Não foi possível concluir o acesso. Confira a conexão e tente novamente, ou entre com e-mail e senha.";
+  }
+
+  async function sendSignInLink() {
+    if (authOperation) return false;
+    if (session) { setAccessStatus("Você já está conectado à sua conta."); return false; }
+    const email = $("#cloud-email")?.value.trim() || "";
+    if (!/^\S+@\S+\.\S+$/.test(email)) { setAccessStatus("Digite o e-mail da sua conta para receber o link.", true); return false; }
+    if (Date.now() < linkCooldownUntil) { setAccessStatus("Aguarde um minuto antes de pedir outro link."); return false; }
+    let ticket;
+    try {
+      const c = ensureClient();
+      if (!c) { setAccessStatus("A conexão está indisponível. Tente novamente com internet.", true); return false; }
+      ticket = beginAuthOperation("link", c);
+      if (!ticket) return false;
+      linkCooldownUntil = Date.now() + 60000;
+      clearTimeout(authCooldownTimer);
+      authCooldownTimer = setTimeout(() => { authCooldownTimer = null; publishAuthOptions(); }, 60000);
+      publishAuthOptions(); setAccessStatus("Enviando o link de acesso…");
+      const result = await Promise.race([c.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: location.origin + location.pathname } }), ticket.interrupted]);
+      if (!authCurrent(ticket)) return false;
+      if (result?.error) throw result.error;
+      setAccessStatus("Se este e-mail pertence a uma conta cadastrada, você receberá um link para entrar. Confira também o spam.");
+      return true;
+    } catch (error) {
+      if (!ticket || authCurrent(ticket)) setAccessStatus(authErrorMessage(error), true);
+      return false;
+    } finally { if (ticket) finishAuthOperation(ticket); }
+  }
+
+  async function usePasskey(register) {
+    if (authOperation) return false;
+    let ticket;
+    try {
+      const c = ensureClient(), options = getAuthOptions();
+      if (!c || options.passkeysEnabled !== true) { setAccessStatus("As chaves de acesso ainda não estão disponíveis neste projeto. Use e-mail e senha ou o link de acesso.", true); return false; }
+      if (!options.passkeysSupported) { setAccessStatus("Este navegador não oferece chaves de acesso. Abra o app em um navegador atualizado com HTTPS.", true); return false; }
+      if (register && !session) { setAccessStatus("Entre na sua conta antes de cadastrar uma chave de acesso.", true); return false; }
+      if (!register && session) { setAccessStatus("Você já está conectado à sua conta."); return false; }
+      ticket = beginAuthOperation(register ? "passkey-register" : "passkey-login", c);
+      if (!ticket) return false;
+      setAccessStatus(register ? "Confirme no dispositivo para cadastrar sua chave de acesso…" : "Confirme a chave de acesso no dispositivo para entrar…");
+      const method = register ? "registerPasskey" : "signInWithPasskey";
+      const result = await Promise.race([c.auth[method]({ options: { signal: ticket.controller.signal } }), ticket.interrupted]);
+      if (!authCurrent(ticket)) return false;
+      if (result?.error) throw result.error;
+      if (register) {
+        if (!result?.data?.id) throw new Error("Cadastro não confirmado.");
+        setAccessStatus("Chave de acesso cadastrada. Na próxima entrada, confirme com a biometria ou o PIN do dispositivo.");
+      } else {
+        if (!result?.data?.session?.user?.id) throw new Error("Sessão não confirmada.");
+        if (!session) activateSession(result.data.session, "SIGNED_IN", ticket);
+        if (!authCurrent(ticket) || session?.user?.id !== result.data.session.user.id) return false;
+        setAccessStatus("Entrada confirmada com sua chave de acesso.");
+        await syncNow();
+      }
+      return true;
+    } catch (error) {
+      if (!ticket || authCurrent(ticket)) { setAccessStatus(authErrorMessage(error), true); publishAuthOptions(); }
+      return false;
+    } finally { if (ticket) finishAuthOperation(ticket); }
+  }
+
+  function signInWithPasskey() { return usePasskey(false); }
+  function registerPasskey() { return usePasskey(true); }
 
   function ensureClient() {
     if (client && !matchesClientCfg()) resetConnection();
@@ -376,20 +549,27 @@ const Cloud = (() => {
       return null;
     }
     clientCfg = { url: cfg.url, anonKey: cfg.anonKey };
-    client = supabase.createClient(clientCfg.url, clientCfg.anonKey);
+    client = supabase.createClient(clientCfg.url, clientCfg.anonKey, { auth: { experimental: { passkey: true } },
+      ...(typeof fetch === "function" ? { global: { fetch: guardedAuthFetch } } : {}) });
     const currentClient = client;
     const { data } = client.auth.onAuthStateChange((ev, s) => {
       if (currentClient !== client) return;
-      activateSession(s, ev);
+      const ticket = authOperation;
+      const accepted = ev === "SIGNED_IN" && ticket?.action === "passkey-login" && authCurrent(ticket) && ticket.expectedUserId === s?.user?.id ? ticket : null;
+      activateSession(s, ev, accepted);
       // Usuário abriu o link "esqueci minha senha" do e-mail: o app carrega já
       // autenticado em modo recuperação — só falta digitar a senha nova.
       if (ev === "PASSWORD_RECOVERY") showNewPassUI();
     });
     authSubscription = data?.subscription;
+    void loadAuthOptions(currentClient, { ...clientCfg });
     return client;
   }
 
   function resetConnection() {
+    cancelAuthOperation(); authSettingsRequest?.abort(); authSettingsRequest = null;
+    clearTimeout(authCooldownTimer); authCooldownTimer = null; linkCooldownUntil = 0;
+    passkeysEnabled = null; authOptionsLoading = false; authOptionsError = "";
     cancelSchedule();
     cancelRequests();
     connectionVersion++;
@@ -404,15 +584,17 @@ const Cloud = (() => {
     lastError = "";
     authRequired = false;
     publishState();
+    publishAuthOptions();
   }
 
-  function activateSession(nextSession, event) {
+  function activateSession(nextSession, event, acceptedAuth = null) {
     // Um evento de autenticação pode chegar antes do evento storage de outra aba.
     // Nunca atribua a sessão do cliente antigo ao novo projeto configurado.
     if (!matchesClientCfg()) { resetConnection(); refreshUI(); return; }
     const nextOwner = ownerFor(nextSession);
     const changed = nextOwner !== activeOwner;
     if (changed) {
+      if (authOperation && authOperation !== acceptedAuth) cancelAuthOperation();
       cancelSchedule(); cancelRequests(); connectionVersion++;
       retryAttempt = 0; lastError = ""; accountConflictCount = 0;
       invalidRemoteIds.clear();
@@ -420,13 +602,14 @@ const Cloud = (() => {
     }
     session = nextSession;
     activeOwner = nextOwner;
+    if (acceptedAuth && authOperation === acceptedAuth) { acceptedAuth.version = connectionVersion; acceptedAuth.owner = activeOwner; }
     authRequired = false;
     if (activeOwner) {
       loadQueue(activeOwner);
       const project = clientCfg.url;
       // Somente uma sessão já existente pode migrar automaticamente a instalação
       // antiga. Um login novo exige vínculo explícito para pastas sem proprietário.
-      if (event === "INITIAL_SESSION" && !own(ledger.projects, project)) linkUnowned(localDatasets().map((ds) => ds.id));
+      if (event === "INITIAL_SESSION" && !openedAuthLink && !own(ledger.projects, project)) linkUnowned(localDatasets().map((ds) => ds.id));
       ledger.projects[project] = true;
       persistMetadata();
     }
@@ -868,6 +1051,7 @@ const Cloud = (() => {
   }
 
   async function logout() {
+    cancelAuthOperation(); setAccessStatus("");
     const previousSession = session;
     const previousInvalidRemoteIds = new Set(invalidRemoteIds);
     const previousRepairState = { repairableRemoteCount, repairableDateCount, repairDatePreview, lastRepairCount };
@@ -1005,11 +1189,12 @@ const Cloud = (() => {
   /* ---------- Inicialização e eventos ---------- */
   async function init() {
     const c = ensureClient();
+    const initialVersion = connectionVersion;
     refreshUI();
     if (!c) return;
     try {
       const { data } = await c.auth.getSession();
-      if (c !== client) return;
+      if (c !== client || initialVersion !== connectionVersion) return;
       activateSession(data.session, "INITIAL_SESSION");
       refreshUI();
       if (session && isAuto()) {
@@ -1019,6 +1204,9 @@ const Cloud = (() => {
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    $("#btn-cloud-magic-link")?.addEventListener("click", sendSignInLink);
+    $("#btn-cloud-passkey-login")?.addEventListener("click", signInWithPasskey);
+    $("#btn-cloud-passkey-register")?.addEventListener("click", registerPasskey);
     $("#btn-cloud-signin").addEventListener("click", () => signInOrUp(false));
     $("#btn-cloud-signup").addEventListener("click", () => signInOrUp(true));
     $("#cloud-pass").addEventListener("keydown", (ev) => { if (ev.key === "Enter") signInOrUp(false); });
@@ -1094,5 +1282,5 @@ const Cloud = (() => {
     return session?.access_token || null;
   }
 
-  return { onLocalChange, onLocalDelete, getToken, getSyncState, linkLocalDatasets, prepareLocalDelete, repairLegacyDates, exportRepairBackup };
+  return { onLocalChange, onLocalDelete, getToken, getSyncState, getAuthOptions, sendSignInLink, signInWithPasskey, registerPasskey, linkLocalDatasets, prepareLocalDelete, repairLegacyDates, exportRepairBackup };
 })();

@@ -126,6 +126,35 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("fyg:cloudstate", refreshConnection);
   new MutationObserver(refreshConnection).observe(document.querySelector("#cloud-connected"), { attributes: true, attributeFilter: ["class"] });
   refreshConnection();
+  function refreshAuthOptions() {
+    const options = typeof Cloud !== "undefined" ? Cloud.getAuthOptions?.() : null;
+    if (!options) return;
+    const login = document.querySelector("#btn-cloud-passkey-login");
+    const register = document.querySelector("#btn-cloud-passkey-register");
+    const link = document.querySelector("#btn-cloud-magic-link");
+    const hint = document.querySelector("#cloud-passkey-hint");
+    const enabled = options.passkeysEnabled === true && options.passkeysSupported;
+    if (login) { login.disabled = !enabled || options.busy; login.textContent = options.busyAction === "passkey-login" ? "Aguardando seu aparelho…" : "Entrar com chave de acesso"; }
+    if (register) { register.disabled = !enabled || options.busy; register.textContent = options.busyAction === "passkey-register" ? "Confirme no seu aparelho…" : "Cadastrar chave de acesso"; }
+    if (link) {
+      const cooldown = Number(options.linkCooldownUntil) > Date.now();
+      link.disabled = options.busy || cooldown;
+      link.textContent = options.busyAction === "link" ? "Enviando link…" : cooldown ? "Link solicitado · aguarde para reenviar" : "Receber link para entrar";
+    }
+    ["#btn-cloud-signin", "#btn-cloud-signup"].forEach(id => { const button = document.querySelector(id); if (button) button.disabled = options.busy; });
+    if (hint) hint.textContent = options.loading
+      ? "Conferindo a disponibilidade de chaves de acesso…"
+      : options.passkeysEnabled === false
+        ? "Chaves de acesso ainda não foram ativadas neste projeto Supabase. Por enquanto, entre pelo link de e-mail ou pela senha."
+        : !options.passkeysSupported
+          ? "Este navegador não oferece chaves de acesso neste contexto. Use o link de e-mail ou a senha."
+          : options.passkeysEnabled !== true
+            ? "Não foi possível conferir as chaves de acesso. Use o link de e-mail ou a senha e confira sua conexão."
+            : "A chave de acesso usa a biometria, o PIN ou uma chave de segurança do seu aparelho. Cadastre-a depois de entrar na sua conta. Recurso experimental do Supabase.";
+  }
+  document.addEventListener("fyg:authoptions", refreshAuthOptions);
+  document.addEventListener("fyg:cloudstate", refreshAuthOptions);
+  refreshAuthOptions();
   const hideKey = "fyg:hide-money";
   function refreshPrivacy() {
     const on = document.body.classList.contains("hide-money");
