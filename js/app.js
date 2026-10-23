@@ -20,9 +20,16 @@ const CURRENCIES = {
   CLP: { code: "CLP", name: "Peso chileno", short: "Peso CL", locale: "es-CL", symbol: "$", frac: 0 },
   PYG: { code: "PYG", name: "Guarani", short: "Guarani", locale: "es-PY", symbol: "₲", frac: 0 },
   USD: { code: "USD", name: "Dólar", short: "Dólar", locale: "en-US", symbol: "US$", frac: 2 },
+  EUR: { code: "EUR", name: "Euro", short: "Euro", locale: "de-DE", symbol: "€", frac: 2 },
+  GBP: { code: "GBP", name: "Libra esterlina", short: "Libra", locale: "en-GB", symbol: "£", frac: 2 },
+  USDT: { code: "USDT", name: "Tether (USDT)", short: "USDT", locale: "en-US", symbol: "USDT", frac: 6, token: true },
+  USDC: { code: "USDC", name: "USD Coin (USDC)", short: "USDC", locale: "en-US", symbol: "USDC", frac: 6, token: true },
 };
-const CURRENCY_CODES = ["BRL", "CLP", "PYG", "USD"];
+const CURRENCY_CODES = Object.keys(CURRENCIES);
 function normCur(code) { return CURRENCY_CODES.includes(code) ? code : "BRL"; }
+// DEFAULT é uma preferência de exibição, nunca a moeda de uma transação.
+// Pastas legadas sem preferência continuam em BRL; novas pastas optam por DEFAULT.
+function normDisplayCur(code) { return code === "DEFAULT" ? "DEFAULT" : normCur(code); }
 function curFrac(code) { return (CURRENCIES[normCur(code)]).frac; }
 
 // Formata um valor numérico na moeda indicada (padrão Real)
@@ -30,7 +37,9 @@ function fmtMoney(v, code) {
   code = normCur(code);
   const c = CURRENCIES[code];
   try {
-    return (Number(v) || 0).toLocaleString(c.locale, { style: "currency", currency: code });
+    const options = { minimumFractionDigits: c.frac, maximumFractionDigits: c.frac };
+    if (c.token) return `${c.symbol} ${(Number(v) || 0).toLocaleString(c.locale, options)}`;
+    return (Number(v) || 0).toLocaleString(c.locale, { ...options, style: "currency", currency: code });
   } catch {
     return `${c.symbol} ${(Number(v) || 0).toFixed(c.frac)}`;
   }
@@ -64,7 +73,7 @@ function stripAccents(s) {
 // tipo. Usada na importação em lote para avisar sobre possíveis duplicados
 // (fatura enviada duas vezes, prints com sobreposição etc.).
 function dupTxKey(date, desc, amount, type) {
-  return `${date}|${stripAccents(desc)}|${(Number(amount) || 0).toFixed(2)}|${type}`;
+  return `${date}|${stripAccents(desc)}|${(Number(amount) || 0).toFixed(6)}|${type}`;
 }
 
 // 'YYYY-MM-DD' -> 'dd/mm/aaaa'
@@ -138,11 +147,13 @@ function daysInMonth(y, m) { // m: 1-12
 }
 
 // "1.234,56" / "R$ 65,00" / 65 -> número
-function parseMoney(v) {
+function parseMoney(v, code) {
   if (v == null || v === "") return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
   if (typeof v !== "string") return null;
-  let s = v.trim().replace(/(?:US\$|R\$|CL\$|BRL|CLP|PYG|USD|\$|₲)/gi, "").replace(/\s/g, "");
+  const explicitCode = v.match(/\b(?:USDT|USDC|BRL|CLP|PYG|USD|EUR|GBP)\b/i)?.[0].toUpperCase();
+  const fractionalToken = curFrac(code || explicitCode) === 6;
+  let s = v.trim().replace(/(?:US\$|R\$|CL\$|\b(?:USDT|USDC|BRL|CLP|PYG|USD|EUR|GBP)\b|\$|₲|€|£)/gi, "").replace(/\s/g, "");
   const accountingNegative = /^\(.*\)$/.test(s);
   if (accountingNegative) s = s.slice(1, -1);
   if (!/^[+-]?\d[\d.,]*$/.test(s)) return null;
@@ -172,7 +183,7 @@ function parseMoney(v) {
     if (parts.length > 2) {
       if (!grouped) return null;
       s = parts.join("");
-    } else s = grouped && sep === "." ? parts.join("") : parts.join(".");
+    } else s = grouped && sep === "." && !fractionalToken ? parts.join("") : parts.join(".");
   }
   const n = Number(s) * sign;
   return Number.isFinite(n) ? n : null;
@@ -352,7 +363,7 @@ const Store = {
   },
   createDataset(name) {
     const now = new Date().toISOString();
-    const ds = { id: uid(), name: String(name || "").trim().slice(0, 80) || "Sem nome", createdAt: now, updatedAt: now, displayCurrency: "BRL", profile: "pf", categories: [], transactions: [], limits: [], metas: [] };
+    const ds = { id: uid(), name: String(name || "").trim().slice(0, 80) || "Sem nome", createdAt: now, updatedAt: now, displayCurrency: "DEFAULT", profile: "pf", categories: [], transactions: [], limits: [], metas: [] };
     DEFAULT_CATS.forEach((c) => ensureCat(ds, c));
     return ds;
   },
@@ -529,7 +540,7 @@ function normalizeStoredDataset(raw) {
     name: typeof raw.name === "string" ? raw.name : "Sem nome",
     createdAt: cleanISO(raw.createdAt, now),
     updatedAt: cleanISO(raw.updatedAt, now),
-    displayCurrency: normCur(raw.displayCurrency),
+    displayCurrency: normDisplayCur(raw.displayCurrency),
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: raw.transactions.map((t) => ({
@@ -573,7 +584,7 @@ function sanitizeDataset(raw, opts) {
     name: text(raw.name, 80).trim() || "Backup importado",
     createdAt: cleanISO(raw.createdAt, now),
     updatedAt: cleanISO(raw.updatedAt, now),
-    displayCurrency: normCur(raw.displayCurrency),
+    displayCurrency: normDisplayCur(raw.displayCurrency),
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: [],

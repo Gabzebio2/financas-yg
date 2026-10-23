@@ -36,17 +36,31 @@ const Dashboard = (() => {
      Cada transação guarda a moeda em que foi lançada (t.currency). O painel
      exibe tudo em ds.displayCurrency, convertendo pela cotação atual só quando
      as moedas diferem (dispAmount). */
-  function dispCur() { return normCur(ds && ds.displayCurrency); }
+  function isDefaultMode() { return normDisplayCur(ds && ds.displayCurrency) === "DEFAULT"; }
+  function dispCur() { return isDefaultMode() ? "USD" : normCur(ds && ds.displayCurrency); }
+  function entryCur() {
+    if (!isDefaultMode()) return dispCur();
+    try {
+      const remembered = localStorage.getItem("fyg:entry-currency:" + ds.id);
+      if (CURRENCY_CODES.includes(remembered)) return remembered;
+    } catch { /* preferência opcional */ }
+    return "BRL";
+  }
   function convertAmount(amount, from, to) {
     if (!Number.isFinite(Number(amount)) || !Rates.ready(normCur(from), normCur(to))) return NaN;
     const value = Rates.convert(amount, normCur(from), normCur(to));
     return Number.isFinite(value) ? value : NaN;
   }
   function dispAmount(t) { return convertAmount(t.amount, t.currency, dispCur()); }
+  function txDisplayCurrency(t) { return isDefaultMode() ? normCur(t.currency) : dispCur(); }
+  function txDisplayAmount(t) { return isDefaultMode() ? Number(t.amount) : dispAmount(t); }
   function fmtD(v) { return Number.isFinite(v) ? fmtMoney(v, dispCur()) : "—"; }
   function fmtTxAmount(t) {
-    const value = dispAmount(t);
-    return Number.isFinite(value) ? fmtD(value) : `${fmtMoney(t.amount, normCur(t.currency))} (${normCur(t.currency)} original)`;
+    const value = txDisplayAmount(t);
+    const currency = txDisplayCurrency(t);
+    if (!Number.isFinite(value)) return `${fmtMoney(t.amount, normCur(t.currency))} (${normCur(t.currency)} original)`;
+    const formatted = fmtMoney(value, currency);
+    return isDefaultMode() && !formatted.includes(currency) ? `${formatted} · ${currency}` : formatted;
   }
 
   function renderCurrencyWarning() {
@@ -57,7 +71,7 @@ const Dashboard = (() => {
       const warning = $(id);
       if (!warning) return;
       warning.classList.toggle("hidden", !pending);
-      warning.textContent = pending ? "Cotação indisponível para converter algumas moedas. Os totais afetados aparecem como —; a lista mantém os valores na moeda original. Atualize a cotação no seletor de moeda ou conecte-se à internet." : "";
+      warning.textContent = pending ? "Aguardando cotação para algumas moedas. Totais incompletos aparecem como —; os valores originais continuam disponíveis. O app tenta novamente automaticamente com internet." : "";
     });
   }
 
@@ -71,7 +85,7 @@ const Dashboard = (() => {
       try { localStorage.setItem("fyg:pf-last", ds.id); } catch { /* sem storage */ }
     }
     // Migração para multi-moeda: pastas antigas eram 100% em Real
-    ds.displayCurrency = normCur(ds.displayCurrency);
+    ds.displayCurrency = normDisplayCur(ds.displayCurrency);
     ds.transactions.forEach((t) => { if (!t.currency) t.currency = "BRL"; });
     if (!Array.isArray(ds.limits)) ds.limits = [];
     if (!Array.isArray(ds.metas)) ds.metas = [];
@@ -248,7 +262,7 @@ const Dashboard = (() => {
     };
     const number = (v, currency) => Number(v).toFixed(curFrac(currency)).replace(".", ",");
     const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição"]];
-    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(dispAmount(t)) ? number(dispAmount(t), dispCur()) : "", dispCur()]));
+    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t)]));
     const csv = "\uFEFF" + rows.map((row) => row.map(cell).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
@@ -269,6 +283,7 @@ const Dashboard = (() => {
     renderCurrencyWarning();
     renderCatFilter();
     renderSummary();
+    renderCurrencyBreakdown();
     renderLimits();
     renderMetas();
     renderCharts();
@@ -277,32 +292,76 @@ const Dashboard = (() => {
 
   // Botão "BRL ▾" do cabeçalho + menu de moedas + linha de status da cotação
   function renderCurrencyControl() {
+    $("#dash-hero")?.classList.toggle("precise-currency", curFrac(dispCur()) > 2);
     const code = $("#hero-cur-code");
-    if (code) code.textContent = dispCur();
+    if (code) code.textContent = isDefaultMode() ? "Padrão" : dispCur();
+    const caption = isDefaultMode() ? "Totais em USD · lançamentos na moeda original" : `Painel e lançamentos convertidos em ${dispCur()}`;
+    for (const id of ["#currency-mode-caption", "#tx-currency-mode-caption"]) {
+      const node = $(id); if (node) node.textContent = caption;
+    }
+    $("#hero-cur")?.setAttribute("aria-label", "Moeda do painel: " + (isDefaultMode() ? "Padrão, totais em dólar" : dispCur()));
     const menu = $("#cur-menu");
     if (menu) {
-      menu.innerHTML = CURRENCY_CODES.map((c) => `
-        <button type="button" class="pop-item ${c === dispCur() ? "active" : ""}" data-cur="${c}">
+      menu.innerHTML = `<button type="button" class="pop-item pop-default ${isDefaultMode() ? "active" : ""}" data-cur="DEFAULT" aria-pressed="${isDefaultMode()}"><span>Padrão<small>Totais em USD. Cada lançamento na sua moeda.</small></span>${isDefaultMode() ? '<span class="pop-check">✓</span>' : ""}</button><div class="pop-sep"></div>` + CURRENCY_CODES.map((c) => `
+        <button type="button" class="pop-item ${!isDefaultMode() && c === dispCur() ? "active" : ""}" data-cur="${c}" aria-pressed="${!isDefaultMode() && c === dispCur()}">
           ${escapeHtml(CURRENCIES[c].symbol)} — ${escapeHtml(CURRENCIES[c].name)}
-          ${c === dispCur() ? '<span class="pop-check">✓</span>' : ""}
+          ${!isDefaultMode() && c === dispCur() ? '<span class="pop-check">✓</span>' : ""}
         </button>`).join("") +
-        `<div class="pop-sep"></div><div class="pop-hint" id="rates-hint" title="Cotação usada para converter as moedas"></div>`;
+        `<div class="pop-sep"></div><div class="pop-hint" id="rates-hint"></div><div class="pop-hint fx-sources">Cotações de referência: <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer">ExchangeRate-API</a> e <a href="https://github.com/fawazahmed0/exchange-api" target="_blank" rel="noopener noreferrer">Currency API</a>. Sem taxas de câmbio ou de rede.</div>`;
     }
     renderRatesHint();
   }
 
   function renderRatesHint() {
-    const el = $("#rates-hint");
-    if (!el) return;
-    const at = Rates.updatedAt();
-    if (!at) {
-      el.innerHTML = `Cotação ainda indisponível · <button type="button" class="btn-link" id="btn-rates-refresh">tentar de novo</button>`;
-      return;
-    }
-    const d = new Date(at);
-    const p2 = (n) => String(n).padStart(2, "0");
-    const when = `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
-    el.innerHTML = `cotação de ${when} · <button type="button" class="btn-link" id="btn-rates-refresh">atualizar</button>`;
+    const state = Rates.getState?.();
+    const used = new Set([dispCur(), ...ds.transactions.map(t => normCur(t.currency)), ...ds.limits.map(l => normCur(l.currency)), ...ds.metas.filter(m => !m.category).map(m => normCur(m.currency))]);
+    const relevant = [...used].filter(c => c !== "USD");
+    const dates = relevant.map(c => state?.quotes?.[c]?.publishedAt).filter(Boolean).map(Date.parse).filter(Number.isFinite);
+    const at = dates.length ? Math.min(...dates) : Date.parse(Rates.updatedAt() || "");
+    const when = Number.isFinite(at) ? new Date(at).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }) : "";
+    const missing = relevant.some(c => !Rates.ready(c, "USD"));
+    const stale = state?.staleCodes?.some(c => used.has(c));
+    const status = state?.refreshing ? "Atualizando cotações…" : missing ? "Buscando cotações automaticamente" : stale || state?.error ? "Usando a última cotação salva · nova tentativa automática" : "Cotações automáticas";
+    const details = status + (when ? ` · referência de ${when}` : "") + ". Conversão estimada; não altera os lançamentos.";
+    const el = $("#rates-hint"); if (el) el.textContent = details;
+    const visible = $("#currency-auto-status");
+    if (visible) { visible.textContent = status + (when ? ` · ${when}` : ""); visible.title = details; }
+  }
+
+  function currencyBreakdown() {
+    const grouped = new Map();
+    filteredTxs().forEach(t => {
+      const currency = normCur(t.currency);
+      if (!grouped.has(currency)) grouped.set(currency, {currency, income: 0, expense: 0, count: 0});
+      const group = grouped.get(currency);
+      group[t.type === "receita" ? "income" : "expense"] += Number(t.amount);
+      group.count++;
+    });
+    return [...grouped.values()].map(group => ({ ...group,
+      incomeConverted: group.income === 0 ? 0 : convertAmount(group.income, group.currency, dispCur()),
+      expenseConverted: group.expense === 0 ? 0 : convertAmount(group.expense, group.currency, dispCur()),
+    })).sort((a, b) => a.currency.localeCompare(b.currency));
+  }
+
+  function renderCurrencyBreakdown() {
+    const block = $("#currency-breakdown"); if (!block) return;
+    const groups = currencyBreakdown();
+    block.classList.toggle("hidden", groups.length < 2);
+    if (groups.length < 2) return;
+    const hint = $("#currency-breakdown-hint");
+    if (hint) hint.textContent = isDefaultMode() ? "Valores originais. Barras comparadas pelo equivalente em USD." : `Agrupado pela moeda de origem. Valores e barras em ${dispCur()}.`;
+    const max = Math.max(0, ...groups.flatMap(g => [g.incomeConverted, g.expenseConverted]).filter(Number.isFinite));
+    const rows = $("#currency-breakdown-rows"); if (!rows) return;
+    rows.innerHTML = groups.map(g => {
+      const metric = (kind, label, converted) => {
+        const native = g[kind], valid = Number.isFinite(converted);
+        const width = valid && max > 0 ? Math.max(0, Math.min(100, converted / max * 100)) : 0;
+        const value = isDefaultMode() ? fmtMoney(native, g.currency) : fmtD(converted);
+        const equivalent = isDefaultMode() && g.currency !== dispCur() ? valid ? `≈ ${fmtD(converted)}` : "Cotação pendente" : !valid ? "Cotação pendente" : "";
+        return `<div class="fx-metric fx-${kind}"><div class="fx-metric-value"><span>${label}</span><strong>${escapeHtml(value)}</strong></div><div class="fx-track" aria-hidden="true"><span style="width:${width.toFixed(4)}%"></span></div>${equivalent ? `<small>${escapeHtml(equivalent)}</small>` : ""}</div>`;
+      };
+      return `<div class="fx-row"><div class="fx-code"><strong>${g.currency}</strong><span>${g.count} ${g.count === 1 ? "lançamento" : "lançamentos"}</span></div>${metric("income", "Entradas", g.incomeConverted)}${metric("expense", "Saídas", g.expenseConverted)}</div>`;
+    }).join("");
   }
 
   function renderPeriodControls() {
@@ -556,7 +615,7 @@ const Dashboard = (() => {
   };
   // Ticks compactos (sem casas decimais) na moeda de exibição
   const moneyTicks = {
-    callback: (v) => (Number(v) || 0).toLocaleString(CURRENCIES[dispCur()].locale, { style: "currency", currency: dispCur(), maximumFractionDigits: 0 }),
+    callback: (v) => fmtMoney(Number(v) || 0, dispCur()),
   };
 
   // Meses exibidos nos gráficos de evolução
@@ -972,7 +1031,7 @@ const Dashboard = (() => {
     if (linked && ds.categories.some((c) => stripAccents(c.name) === stripAccents(m.category))) $("#meta-cat").value = m.category;
     // Editar apenas o nome não pode converter o patrimônio nem perder
     // centavos por arredondamento em moedas sem casas decimais.
-    const dc = metaEditCurrency = m && !linked ? normCur(m.currency) : dispCur();
+    const dc = metaEditCurrency = m && !linked ? normCur(m.currency) : entryCur();
     const sym = CURRENCIES[dc].symbol;
     $("#meta-f-target").childNodes[0].nodeValue = `Valor da meta (${sym}) `;
     $("#meta-f-saved").childNodes[0].nodeValue = `Já guardado (${sym}) `;
@@ -1049,7 +1108,7 @@ const Dashboard = (() => {
   // Meta de poupança: aporte manual (só atualiza o guardado, sem virar transação)
   function addToMeta(m) {
     if (m.category) { addPaymentToMeta(m); return; }
-    const dc = dispCur();
+    const dc = isDefaultMode() ? normCur(m.currency) : dispCur();
     askName(`Quanto adicionar em "${m.name}"?`, "", (v) => {
       const n = moneyStrValue(v, dc); // valor digitado na moeda do painel
       if (!Number.isFinite(n) || n <= 0) { toast("Valor inválido 💰"); return; }
@@ -1058,7 +1117,7 @@ const Dashboard = (() => {
       if (!current || current.category) { toast("Esta meta mudou. Abra a meta novamente para adicionar o valor."); return; }
       // Converte para a moeda em que a meta está guardada antes de somar
       const add = convertAmount(n, dc, current.currency);
-      if (!Number.isFinite(add)) { toast("Cotação indisponível. Atualize a cotação ou selecione a moeda original da meta antes de adicionar."); return; }
+      if (!Number.isFinite(add)) { toast("Aguardando cotação automática. Você também pode adicionar na moeda original da meta."); return; }
       const scale = 10 ** curFrac(current.currency);
       current.saved = Math.round((Number(current.saved || 0) + add) * scale) / scale;
       saveCur();
@@ -1076,7 +1135,7 @@ const Dashboard = (() => {
     $("#modal-limit-title").textContent = L ? "Editar limite" : "Novo limite";
     $("#limit-name").value = L ? L.name : "";
     // Mantém a moeda original para preservar inclusive o histórico de limites.
-    const dc = limitEditCurrency = L ? normCur(L.currency) : dispCur();
+    const dc = limitEditCurrency = L ? normCur(L.currency) : entryCur();
     $("#limit-amount").parentElement.childNodes[0].nodeValue = `Valor do limite (${CURRENCIES[dc].symbol}) `;
     setMoneyMaskCurrency($("#limit-amount"), dc);
     $("#limit-amount").value = v ? fmtMoneyInput(v.amount, dc) : "";
@@ -1312,7 +1371,7 @@ const Dashboard = (() => {
     // Moeda: destino único aplicado a todas as selecionadas (corrige detecção errada)
     $("#bulk-cur").innerHTML = CURRENCY_CODES.map((c) =>
       `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
-    $("#bulk-cur").value = dispCur();
+    $("#bulk-cur").value = entryCur();
 
     const accounts = Array.from(new Set([...CARDS, ...ds.transactions.map((t) => t.account).filter(Boolean)]));
     $("#bulk-acc").innerHTML = accounts.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("")
@@ -1465,7 +1524,7 @@ const Dashboard = (() => {
     const curSel = $("#tx-currency");
     curSel.innerHTML = CURRENCY_CODES.map((c) =>
       `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
-    const txCurCode = isEdit ? normCur(tx.currency) : dispCur();
+    const txCurCode = isEdit ? normCur(tx.currency) : entryCur();
     curSel.value = txCurCode;
     applyTxCurrency(txCurCode);
 
@@ -1618,6 +1677,7 @@ const Dashboard = (() => {
     }
     saveCur();
     $("#modal-tx").classList.add("hidden");
+    if (!editingId) { try { localStorage.setItem("fyg:entry-currency:" + ds.id, currency); } catch { /* preferência opcional */ } }
     editingId = null;
     renderAll();
     toast(message);
@@ -1735,14 +1795,13 @@ const Dashboard = (() => {
       const item = ev.target.closest("[data-cur]");
       if (!item) return;
       const previousCurrency = ds.displayCurrency;
-      ds.displayCurrency = normCur(item.dataset.cur);
+      ds.displayCurrency = normDisplayCur(item.dataset.cur);
       try { Store.saveDataset(ds); } // preferência: não empilha no "Desfazer"
       catch (error) { ds.displayCurrency = previousCurrency; throw error; }
       $("#cur-menu").classList.add("hidden");
       renderAll();
-      // Sempre busca a cotação mais recente ao trocar a moeda; quando
-      // chegar, o painel re-renderiza sozinho (Rates.onUpdate)
-      Rates.refresh();
+      // Revalida automaticamente quando necessário, sem uma consulta por clique.
+      Rates.load();
     });
 
     // Menu de pastas: ícone de conta no topo esquerdo (pessoa física / empresa…)
@@ -2083,7 +2142,7 @@ const Dashboard = (() => {
   function existingSeriesKeys() {
     const set = new Set();
     if (ds) ds.transactions.forEach((t) => {
-      const valueKey = `${normCur(t.currency)}|${Number(t.amount).toFixed(2)}`;
+      const valueKey = `${normCur(t.currency)}|${Number(t.amount).toFixed(curFrac(t.currency))}`;
       if (t.installment) set.add(`p|${stripAccents(t.desc)}|${t.type}|${t.installment}|${valueKey}`);
       if (t.fixed) set.add(`f|${stripAccents(t.desc)}|${t.type}|${(t.date || "").slice(0, 7)}|${valueKey}`);
     });

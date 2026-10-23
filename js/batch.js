@@ -322,7 +322,7 @@ const Batch = (() => {
     // parcelada vista na fatura do mês seguinte ("X 4/12") bate com a parcela
     // 4/12 já criada antes — mesmo que os dias não coincidam.
     const serieKeyOf = (r) => {
-      const suffix = `|${normCur(r.currency)}|${Number(r.amount).toFixed(2)}`;
+      const suffix = `|${normCur(r.currency)}|${Number(r.amount).toFixed(curFrac(r.currency))}`;
       return r.installment ? `p|${stripAccents(r.desc)}|${r.type}|${r.installment}${suffix}`
         : (r.fixed || r.fixa) ? `f|${stripAccents(r.desc)}|${r.type}|${(r.date || "").slice(0, 7)}${suffix}`
           : null;

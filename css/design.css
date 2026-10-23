@@ -949,3 +949,58 @@ tbody tr:hover { background: var(--card-2); }
   .bn-fab { width: 49px; height: 49px; }
 }
 
+/* Multimoeda: totais comparáveis, origem dos lançamentos sempre preservada. */
+.currency-mode-caption { display: block; margin-top: 10px; color: var(--text-soft); font-size: 12px; line-height: 1.65; letter-spacing: 0; }
+.currency-auto-status { color: var(--text-soft); font-size: 11px; margin: 10px 0 22px; text-align: right; line-height: 1.6; }
+.tx-currency-mode-caption { color: var(--text-soft); font-size: 12px; margin: 0 0 14px; line-height: 1.6; }
+#cur-menu { width: min(330px, calc(100vw - 42px)); max-height: min(560px, 75vh); overflow-y: auto; z-index: 20; }
+.pop-default { align-items: center; }
+.pop-default small { display: block; font-size: 11px; line-height: 1.5; color: var(--text-soft); white-space: normal; margin-top: 4px; }
+.fx-sources { border-top: 1px solid var(--border); margin-top: 9px; padding-top: 10px; font-size: 10px; line-height: 1.7; }
+.fx-sources a { color: var(--primary-text); text-underline-offset: 2px; }
+.fx-breakdown { padding: 24px 28px; margin: 0 0 26px; }
+.fx-breakdown summary { display: flex; justify-content: space-between; align-items: center; gap: 18px; cursor: pointer; list-style: none; }
+.fx-breakdown summary::-webkit-details-marker { display: none; }
+.fx-breakdown summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 7px; border-radius: 4px; }
+.fx-breakdown h3 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -.4px; }
+.fx-breakdown summary p { font-size: 12px; color: var(--text-soft); margin: 7px 0 0; line-height: 1.6; }
+.fx-chevron { color: var(--text-soft); font-size: 22px; flex-shrink: 0; transform: rotate(-90deg); }
+.fx-breakdown[open] .fx-chevron { transform: none; }
+.fx-rows { margin-top: 22px; }
+.fx-row { display: grid; grid-template-columns: minmax(90px,.65fr) minmax(0,1.3fr) minmax(0,1.3fr); align-items: start; gap: 24px; padding: 17px 0; border-top: 1px solid var(--border); }
+.fx-code strong { font-size: 14px; font-weight: 700; }
+.fx-code span { display: block; color: var(--text-soft); font-size: 10px; margin-top: 5px; }
+.fx-metric-value { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px 12px; align-items: baseline; margin-bottom: 9px; }
+.fx-metric-value span { color: var(--text-soft); font-size: 11px; }
+.fx-metric-value strong { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.fx-income strong { color: var(--green); }
+.fx-expense strong { color: var(--red); }
+.fx-track { height: 6px; border-radius: 3px; background: var(--overlay); overflow: hidden; }
+.fx-track span { display: block; height: 100%; border-radius: 3px; }
+.fx-income .fx-track span { background: var(--green); }
+.fx-expense .fx-track span { background: var(--red); }
+.fx-metric small { display: block; color: var(--text-soft); margin-top: 7px; font-size: 10px; font-variant-numeric: tabular-nums; }
+.fx-footnote { color: var(--text-soft); font-size: 10px; line-height: 1.7; margin: 13px 0 0; }
+body.hide-money .fx-rows { filter: blur(7px); user-select: none; }
+@media (max-width:980px) {
+  #screen-dash > .currency-auto-status { order: 0; }
+  #screen-dash > .fx-breakdown { order: 2; }
+}
+@media (max-width:640px) {
+  .hero-cur { font-size: 11px; padding: 7px 5px; }
+  .precise-currency #hero-flow-rec, .precise-currency #hero-flow-desp { flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 8px; }
+  .precise-currency .hero-flow-txt { width: 100%; }
+  .precise-currency .hero-flow-value { font-size: 14px; white-space: normal; overflow-wrap: anywhere; }
+  .currency-mode-caption { max-width: 290px; font-size: 10px; margin: 8px auto 0; }
+  .currency-auto-status { text-align: center; font-size: 10px; margin: 11px 0 3px; }
+  .fx-breakdown { padding: 20px 17px; margin-bottom: 24px; }
+  .fx-breakdown h3 { font-size: 18px; }
+  .fx-breakdown summary p { font-size: 11px; }
+  .fx-row { grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 13px 18px; padding: 18px 0; }
+  .fx-code { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; }
+  .fx-code span { margin-top: 0; }
+  .fx-metric-value { display: block; }
+  .fx-metric-value span { display: block; margin-bottom: 5px; }
+  .fx-metric-value strong { font-size: 12px; }
+}
+

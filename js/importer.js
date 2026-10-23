@@ -32,7 +32,8 @@ const Importer = (() => {
     installment: ["parcelas", "parcela", "cuotas", "cuota", "parc", "parcelamento"],
     category: ["categoria", "category", "rubro", "classe", "grupo", "tipo de gasto", "tag"],
     date: ["data", "fecha", "date", "dia", "data compra", "data da compra", "vencimento"],
-    amount: ["valor", "montante", "monto", "amount", "quantia", "preco", "importe", "valor (r$)"],
+    amount: ["valor", "valor original", "montante", "monto", "amount", "quantia", "preco", "importe", "valor (r$)"],
+    currency: ["moeda", "moeda original", "currency", "divisa", "moneda"],
     type: ["tipo", "type", "movimento", "operacao", "natureza", "movimentacao"],
     income: ["receita", "receitas", "entrada", "entradas", "ingreso", "ingresos", "credito"],
     expense: ["despesa", "despesas", "saida", "saidas", "gasto", "gastos", "salida", "debito", "egreso"],
@@ -44,7 +45,7 @@ const Importer = (() => {
   function matchRole(cell) {
     const n = stripAccents(cell);
     if (!n) return null;
-    for (const role of ["totalValue", "installment", "category", "date", "account", "desc", "income", "expense", "type", "amount"]) {
+    for (const role of ["totalValue", "installment", "category", "date", "account", "desc", "income", "expense", "type", "amount", "currency"]) {
       if (SYN[role].includes(n)) return role;
     }
     // Reconhecimento flexível para cabeçalhos compostos que fogem da lista
@@ -150,7 +151,13 @@ const Importer = (() => {
     }
   }
 
-  function parseMatrix(rows, layout) {
+  function rowCurrency(row, cols, fallback) {
+    if (cols.currency == null) return fallback;
+    const code = String(row[cols.currency] ?? "").trim().toUpperCase();
+    return CURRENCY_CODES.includes(code) ? code : null;
+  }
+
+  function parseMatrix(rows, layout, currencyHint = importCurrency) {
     const { cols, monthCols } = layout;
     assignYears(monthCols, rows, layout);
     const txs = [];
@@ -160,6 +167,8 @@ const Importer = (() => {
       const row = rows[i] || [];
       const hasContent = row.some((v) => v != null && v !== "");
       if (!hasContent) continue;
+      const currency = rowCurrency(row, cols, currencyHint);
+      if (!currency) { skipped++; continue; }
 
       const rawDesc = cols.desc != null && row[cols.desc] != null ? String(row[cols.desc]).trim() : "";
       const account = cols.account != null && row[cols.account] != null ? String(row[cols.account]).trim() : "";
@@ -169,8 +178,8 @@ const Importer = (() => {
 
       const valued = [];
       monthCols.forEach((mc) => {
-        const v = parseMoney(row[mc.c]);
-        if (v != null && Math.abs(v) > 0.004) valued.push({ mc, value: v });
+        const v = parseMoney(row[mc.c], currency);
+        if (v != null && Math.abs(v) > 0) valued.push({ mc, value: v });
       });
       if (!valued.length) continue;
 
@@ -181,7 +190,7 @@ const Importer = (() => {
 
       const purchaseDay = date ? Number(date.slice(8, 10)) : 1;
       const category = rawCat || "Outros";
-      const totalValue = cols.totalValue != null ? parseMoney(row[cols.totalValue]) : null;
+      const totalValue = cols.totalValue != null ? parseMoney(row[cols.totalValue], currency) : null;
 
       // "Recorrente"/"Fixa"/"Mensal" na coluna de parcelas = despesa fixa
       let parcStart = null, parcTotal = null, isFixed = false;
@@ -212,6 +221,7 @@ const Importer = (() => {
           category, account,
           type: v.value < 0 ? "receita" : "despesa",
           amount: Math.abs(v.value),
+          ...(cols.currency != null ? { currency } : {}),
           installment,
           totalValue: totalValue != null ? Math.abs(totalValue) : null,
         });
@@ -236,7 +246,7 @@ const Importer = (() => {
     return null;
   }
 
-  function parseSimple(rows, layout) {
+  function parseSimple(rows, layout, currencyHint = importCurrency) {
     const { cols } = layout;
     const txs = [];
     let skipped = 0;
@@ -245,7 +255,7 @@ const Importer = (() => {
     let hasNegative = false;
     if (cols.amount != null) {
       for (let i = layout.headerRow + 1; i < rows.length; i++) {
-        const v = parseMoney((rows[i] || [])[cols.amount]);
+        const v = parseMoney((rows[i] || [])[cols.amount], rowCurrency(rows[i] || [], cols, currencyHint));
         if (v != null && v < 0) { hasNegative = true; break; }
       }
     }
@@ -254,6 +264,8 @@ const Importer = (() => {
       const row = rows[i] || [];
       const hasContent = row.some((v) => v != null && v !== "");
       if (!hasContent) continue;
+      const currency = rowCurrency(row, cols, currencyHint);
+      if (!currency) { skipped++; continue; }
 
       const date = parseDateCell(row[cols.date]);
       const rawDesc = cols.desc != null && row[cols.desc] != null ? String(row[cols.desc]).trim() : "";
@@ -270,6 +282,7 @@ const Importer = (() => {
         account: cols.account != null && row[cols.account] != null ? String(row[cols.account]).trim() : "",
         installment: null,
         totalValue: null,
+        ...(cols.currency != null ? { currency } : {}),
       };
       if (cols.installment != null && row[cols.installment] != null) {
         const rawParc = stripAccents(row[cols.installment]);
@@ -280,22 +293,22 @@ const Importer = (() => {
         }
       }
       if (cols.totalValue != null) {
-        const tv = parseMoney(row[cols.totalValue]);
+        const tv = parseMoney(row[cols.totalValue], currency);
         if (tv != null) base.totalValue = Math.abs(tv);
       }
 
       // Colunas separadas de receita/despesa
       if (cols.income != null || cols.expense != null) {
-        const inc = cols.income != null ? parseMoney(row[cols.income]) : null;
-        const exp = cols.expense != null ? parseMoney(row[cols.expense]) : null;
-        if (inc != null && Math.abs(inc) > 0.004) txs.push({ ...base, id: uid(), type: "receita", amount: Math.abs(inc) });
-        if (exp != null && Math.abs(exp) > 0.004) txs.push({ ...base, id: uid(), type: "despesa", amount: Math.abs(exp) });
-        if ((inc == null || Math.abs(inc) <= 0.004) && (exp == null || Math.abs(exp) <= 0.004)) skipped++;
+        const inc = cols.income != null ? parseMoney(row[cols.income], currency) : null;
+        const exp = cols.expense != null ? parseMoney(row[cols.expense], currency) : null;
+        if (inc != null && Math.abs(inc) > 0) txs.push({ ...base, id: uid(), type: "receita", amount: Math.abs(inc) });
+        if (exp != null && Math.abs(exp) > 0) txs.push({ ...base, id: uid(), type: "despesa", amount: Math.abs(exp) });
+        if ((inc == null || Math.abs(inc) === 0) && (exp == null || Math.abs(exp) === 0)) skipped++;
         continue;
       }
 
-      const amount = parseMoney(row[cols.amount]);
-      if (amount == null || Math.abs(amount) <= 0.004) { skipped++; continue; }
+      const amount = parseMoney(row[cols.amount], currency);
+      if (amount == null || Math.abs(amount) === 0) { skipped++; continue; }
 
       let type = null;
       if (cols.type != null && row[cols.type] != null) {
@@ -333,6 +346,7 @@ const Importer = (() => {
     fileName = file.name.replace(/\.(xlsx?|xlsm|csv)$/i, "");
 
     const results = [];
+    importCurrency = guessCurrency();
     for (const name of workbook.SheetNames) {
       const rows = sheetRows(name);
       if (!rows.length) continue;
@@ -393,7 +407,7 @@ const Importer = (() => {
       `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
     csel.value = importCurrency;
     $("#import-currency-hint").textContent =
-      `Detectei ${CURRENCIES[importCurrency].name}. Se não for essa, escolha a moeda certa — os valores serão lançados nela.`;
+      `Detectei ${CURRENCIES[importCurrency].name}. A seleção vale para linhas sem coluna de moeda; moedas explícitas em cada linha são preservadas.`;
 
     renderImportStats();
   }
@@ -408,6 +422,10 @@ const Importer = (() => {
       if (txt.length > 20000) break;
     }
     const t = stripAccents(txt);
+    if (/\busdt\b|\btether\b/.test(t)) return "USDT";
+    if (/\busdc\b|\busd coin\b/.test(t)) return "USDC";
+    if (/€|\beur\b|\beuros?\b/.test(t)) return "EUR";
+    if (/£|\bgbp\b|libra esterlina|pound sterling/.test(t)) return "GBP";
     if (/₲|guaran|\bpyg\b/.test(t)) return "PYG";
     if (/\bclp\b|peso chilen/.test(t)) return "CLP";
     if (/us\$|\busd\b|dolar|dollar/.test(t)) return "USD";
@@ -419,10 +437,14 @@ const Importer = (() => {
   function renderImportStats() {
     if (!pending) return;
     const txs = pending.txs;
-    const f = (v) => fmtMoney(v, importCurrency);
+    const currencyOf = (t) => t.currency || importCurrency;
+    const f = (totals) => Object.entries(totals).map(([cur, amount]) => fmtMoney(amount, cur)).join(" · ") || "—";
+    const sum = (type) => txs.filter((t) => t.type === type).reduce((totals, t) => {
+      const currency = currencyOf(t); totals[currency] = (totals[currency] || 0) + t.amount; return totals;
+    }, {});
 
-    const receitas = txs.filter((t) => t.type === "receita").reduce((s, t) => s + t.amount, 0);
-    const despesas = txs.filter((t) => t.type === "despesa").reduce((s, t) => s + t.amount, 0);
+    const receitas = sum("receita");
+    const despesas = sum("despesa");
     const periodo = txs.length ? `${fmtDate(txs[0].date)} a ${fmtDate(txs[txs.length - 1].date)}` : "—";
     $("#import-stats").innerHTML = `
       <div class="sum-card"><span class="sum-label">Transações</span><span class="sum-value">${txs.length}</span></div>
@@ -433,8 +455,9 @@ const Importer = (() => {
     const byMonth = {};
     txs.forEach((t) => {
       const ym = t.date.slice(0, 7);
-      byMonth[ym] = byMonth[ym] || { receita: 0, despesa: 0 };
-      byMonth[ym][t.type] += t.amount;
+      byMonth[ym] = byMonth[ym] || { receita: {}, despesa: {} };
+      const currency = currencyOf(t), totals = byMonth[ym][t.type];
+      totals[currency] = (totals[currency] || 0) + t.amount;
     });
     const months = Object.keys(byMonth).sort();
     $("#import-months").innerHTML =
@@ -450,7 +473,7 @@ const Importer = (() => {
       sample.map((t) => `<tr>
         <td>${fmtDate(t.date)}</td><td>${escapeHtml(t.desc)}</td><td>${escapeHtml(t.category)}</td>
         <td>${escapeHtml(t.account)}</td><td>${t.installment || "—"}</td>
-        <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${f(t.amount)}</td></tr>`).join("") +
+        <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtMoney(t.amount, currencyOf(t))}</td></tr>`).join("") +
       `</tbody>`;
 
     $("#import-note").textContent = pending.notes.join(" ");
@@ -459,8 +482,8 @@ const Importer = (() => {
   function savePending() {
     if (!pending || !pending.txs.length) return;
 
-    // Carimba a moeda escolhida em cada transação lida
-    pending.txs.forEach((t) => { t.currency = importCurrency; });
+    // Uma coluna de moeda explícita tem prioridade; a seleção preenche ausências.
+    pending.txs.forEach((t) => { t.currency = t.currency || importCurrency; });
 
     // Modo "adicionar à pasta atual": não cria pasta, injeta no dataset aberto
     if (addToCurrent) {
@@ -474,7 +497,7 @@ const Importer = (() => {
 
     const name = $("#import-name").value.trim() || fileName || "Minhas finanças";
     const now = new Date().toISOString();
-    const ds = { id: uid(), name, createdAt: now, updatedAt: now, displayCurrency: importCurrency, categories: [], transactions: pending.txs };
+    const ds = { id: uid(), name, createdAt: now, updatedAt: now, displayCurrency: "DEFAULT", categories: [], transactions: pending.txs };
     ds.transactions.forEach((t) => ensureCat(ds, t.category));
     ensureCat(ds, "Outros");
     Store.saveDataset(ds);
@@ -488,7 +511,7 @@ const Importer = (() => {
     ["", "Ignorar"], ["date", "Data"], ["desc", "Descrição"], ["amount", "Valor"],
     ["category", "Categoria"], ["type", "Tipo (receita/despesa)"], ["account", "Cartão/Conta"],
     ["installment", "Parcelas"], ["totalValue", "Valor total"], ["income", "Receita (coluna própria)"],
-    ["expense", "Despesa (coluna própria)"],
+    ["expense", "Despesa (coluna própria)"], ["currency", "Moeda"],
   ];
 
   function guessHeaderRow(rows) {
@@ -564,39 +587,41 @@ const Importer = (() => {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: "array", cellDates: false });
     const txs = [];
+    const currency = guessCurrency(wb);
     for (const name of wb.SheetNames) {
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
       if (!rows.length) continue;
 
       // 1) Formato matriz (meses em colunas) — o formato da planilha principal.
       const ml = detectMatrix(rows);
-      if (ml) { const r = parseMatrix(rows, ml); if (r.txs.length) { txs.push(...r.txs); continue; } }
+      if (ml) { const r = parseMatrix(rows, ml, currency); if (r.txs.length) { txs.push(...r.txs); continue; } }
 
       // 2) Tabela simples (Data, Descrição/Local, Valor). Convenção de LOTE
       //    (fatura/cobrança): positivo = gasto (despesa); negativo = pagamento
       //    ou estorno (receita) — oposto da convenção bancária do importador.
       const sl = detectSimple(rows);
       if (sl && (sl.cols.type != null || sl.cols.income != null || sl.cols.expense != null)) {
-        txs.push(...parseSimple(rows, sl).txs);
+        txs.push(...parseSimple(rows, sl, currency).txs);
         continue;
       }
       if (sl && sl.cols.date != null && sl.cols.amount != null) {
         for (let i = sl.headerRow + 1; i < rows.length; i++) {
           const row = rows[i] || [];
           const date = parseDateCell(row[sl.cols.date]);
-          const amt = parseMoney(row[sl.cols.amount]);
-          if (!date || amt == null || Math.abs(amt) < 0.004) continue;
+          const itemCurrency = rowCurrency(row, sl.cols, currency);
+          const amt = parseMoney(row[sl.cols.amount], itemCurrency);
+          if (!date || !itemCurrency || amt == null || Math.abs(amt) === 0) continue;
           const desc = sl.cols.desc != null && row[sl.cols.desc] != null ? String(row[sl.cols.desc]).trim() : "";
           txs.push({
             date, desc: desc || "(sem descrição)",
             amount: Math.abs(amt), type: amt < 0 ? "receita" : "despesa",
+            currency: itemCurrency,
             installment: null, totalValue: null,
           });
         }
       }
     }
-    const currency = guessCurrency(wb);
-    return txs.map((t) => ({ ...t, currency }));
+    return txs.map((t) => ({ ...t, currency: t.currency || currency }));
   }
 
   /* ---------- Eventos ---------- */

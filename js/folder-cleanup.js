@@ -4,7 +4,7 @@
 const FolderCleanup = (() => {
   const MAX_FOLDERS = 1000;
   const MAX_TRANSACTIONS = 100000;
-  const CURRENCIES = new Set(["BRL", "CLP", "PYG", "USD"]);
+  const CURRENCIES = new Set(["BRL", "CLP", "PYG", "USD", "EUR", "GBP", "USDT", "USDC"]);
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
   const record = (value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -110,7 +110,7 @@ const FolderCleanup = (() => {
     if (!record(data) || !idValid(data.id) || !Array.isArray(data.transactions) || data.transactions.length > MAX_TRANSACTIONS) return { error: "invalid_dataset" };
     if (![data.categories, data.metas, data.limits].every(Array.isArray)) return { error: "invalid_collections" };
     if (![data.createdAt, data.updatedAt].every((date) => typeof date === "string" && Number.isFinite(Date.parse(date)))) return { error: "invalid_metadata" };
-    if (!CURRENCIES.has(data.displayCurrency) || data.profile != null && !["pf", "pj"].includes(data.profile)) return { error: "invalid_settings" };
+    if (data.displayCurrency !== "DEFAULT" && !CURRENCIES.has(data.displayCurrency) || data.profile != null && !["pf", "pj"].includes(data.profile)) return { error: "invalid_settings" };
     const rawFingerprint = fingerprint(data);
     if (!rawFingerprint) return { error: "unsupported_data" };
 

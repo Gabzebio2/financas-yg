@@ -76,7 +76,7 @@ const CloudRepair = (() => {
 
       // Campos de contexto devem existir e coincidir exatamente. Não se compara
       // amount: dividir uma compra pode produzir parcelas diferentes em centavos.
-      if (!["receita", "despesa"].includes(tx.type) || !["BRL", "CLP", "PYG", "USD"].includes(tx.currency) ||
+      if (!["receita", "despesa"].includes(tx.type) || !["BRL", "CLP", "PYG", "USD", "EUR", "GBP", "USDT", "USDC"].includes(tx.currency) ||
           typeof tx.account !== "string" || typeof tx.desc !== "string" || !tx.desc.trim()) return reject("invalid_group_context");
       const seenParts = new Set();
       let candidateMonth = null, badDates = 0;
