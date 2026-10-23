@@ -34,10 +34,10 @@ const Dashboard = (() => {
 
   /* ---------- Moeda de exibição ----------
      Cada transação guarda a moeda em que foi lançada (t.currency). O painel
-     exibe tudo em ds.displayCurrency, convertendo pela cotação atual só quando
-     as moedas diferem (dispAmount). */
+     converte os totais para ds.displayCurrency (PYG no modo Padrão).
+     A lista de lançamentos sempre preserva a moeda e o valor originais. */
   function isDefaultMode() { return normDisplayCur(ds && ds.displayCurrency) === "DEFAULT"; }
-  function dispCur() { return isDefaultMode() ? "USD" : normCur(ds && ds.displayCurrency); }
+  function dispCur() { return isDefaultMode() ? "PYG" : normCur(ds && ds.displayCurrency); }
   function entryCur() {
     if (!isDefaultMode()) return dispCur();
     try {
@@ -52,15 +52,15 @@ const Dashboard = (() => {
     return Number.isFinite(value) ? value : NaN;
   }
   function dispAmount(t) { return convertAmount(t.amount, t.currency, dispCur()); }
-  function txDisplayCurrency(t) { return isDefaultMode() ? normCur(t.currency) : dispCur(); }
-  function txDisplayAmount(t) { return isDefaultMode() ? Number(t.amount) : dispAmount(t); }
+  function txDisplayCurrency(t) { return normCur(t.currency); }
+  function txDisplayAmount(t) { return Number(t.amount); }
   function fmtD(v) { return Number.isFinite(v) ? fmtMoney(v, dispCur()) : "—"; }
   function fmtTxAmount(t) {
     const value = txDisplayAmount(t);
     const currency = txDisplayCurrency(t);
-    if (!Number.isFinite(value)) return `${fmtMoney(t.amount, normCur(t.currency))} (${normCur(t.currency)} original)`;
+    if (!Number.isFinite(value)) return "—";
     const formatted = fmtMoney(value, currency);
-    return isDefaultMode() && !formatted.includes(currency) ? `${formatted} · ${currency}` : formatted;
+    return !formatted.includes(currency) ? `${formatted} · ${currency}` : formatted;
   }
 
   function renderCurrencyWarning() {
@@ -295,14 +295,14 @@ const Dashboard = (() => {
     $("#dash-hero")?.classList.toggle("precise-currency", curFrac(dispCur()) > 2);
     const code = $("#hero-cur-code");
     if (code) code.textContent = isDefaultMode() ? "Padrão" : dispCur();
-    const caption = isDefaultMode() ? "Totais em USD · lançamentos na moeda original" : `Painel e lançamentos convertidos em ${dispCur()}`;
+    const caption = `Totais em ${isDefaultMode() ? "guaranis (PYG)" : dispCur()} · lançamentos na moeda original`;
     for (const id of ["#currency-mode-caption", "#tx-currency-mode-caption"]) {
       const node = $(id); if (node) node.textContent = caption;
     }
-    $("#hero-cur")?.setAttribute("aria-label", "Moeda do painel: " + (isDefaultMode() ? "Padrão, totais em dólar" : dispCur()));
+    $("#hero-cur")?.setAttribute("aria-label", "Moeda do painel: " + (isDefaultMode() ? "Padrão, totais em guaranis" : dispCur()));
     const menu = $("#cur-menu");
     if (menu) {
-      menu.innerHTML = `<button type="button" class="pop-item pop-default ${isDefaultMode() ? "active" : ""}" data-cur="DEFAULT" aria-pressed="${isDefaultMode()}"><span>Padrão<small>Totais em USD. Cada lançamento na sua moeda.</small></span>${isDefaultMode() ? '<span class="pop-check">✓</span>' : ""}</button><div class="pop-sep"></div>` + CURRENCY_CODES.map((c) => `
+      menu.innerHTML = `<button type="button" class="pop-item pop-default ${isDefaultMode() ? "active" : ""}" data-cur="DEFAULT" aria-pressed="${isDefaultMode()}"><span>Padrão<small>Totais em guaranis (PYG). Cada lançamento na sua moeda.</small></span>${isDefaultMode() ? '<span class="pop-check">✓</span>' : ""}</button><div class="pop-sep"></div>` + CURRENCY_CODES.map((c) => `
         <button type="button" class="pop-item ${!isDefaultMode() && c === dispCur() ? "active" : ""}" data-cur="${c}" aria-pressed="${!isDefaultMode() && c === dispCur()}">
           ${escapeHtml(CURRENCIES[c].symbol)} — ${escapeHtml(CURRENCIES[c].name)}
           ${!isDefaultMode() && c === dispCur() ? '<span class="pop-check">✓</span>' : ""}
@@ -349,7 +349,7 @@ const Dashboard = (() => {
     block.classList.toggle("hidden", groups.length < 2);
     if (groups.length < 2) return;
     const hint = $("#currency-breakdown-hint");
-    if (hint) hint.textContent = isDefaultMode() ? "Valores originais. Barras comparadas pelo equivalente em USD." : `Agrupado pela moeda de origem. Valores e barras em ${dispCur()}.`;
+    if (hint) hint.textContent = isDefaultMode() ? "Valores originais. Barras comparadas pelo equivalente em PYG." : `Agrupado pela moeda de origem. Valores e barras em ${dispCur()}.`;
     const max = Math.max(0, ...groups.flatMap(g => [g.incomeConverted, g.expenseConverted]).filter(Number.isFinite));
     const rows = $("#currency-breakdown-rows"); if (!rows) return;
     rows.innerHTML = groups.map(g => {

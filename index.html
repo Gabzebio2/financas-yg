@@ -12,9 +12,9 @@
 <meta name="theme-color" content="#17161e">
 <meta name="description" content="Organize receitas, despesas, parcelas e metas em um só lugar com o Finanças YG.">
 <title>Finanças YG</title>
-<script src="js/theme.js?v=20261023-multicurrency"></script>
-<link rel="stylesheet" href="css/style.css?v=20261023-multicurrency">
-<link rel="stylesheet" href="css/design.css?v=20261023-multicurrency">
+<script src="js/theme.js?v=20261023-guarani"></script>
+<link rel="stylesheet" href="css/style.css?v=20261023-guarani">
+<link rel="stylesheet" href="css/design.css?v=20261023-guarani">
 </head>
 <body>
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -283,7 +283,7 @@
       </div>
       <div class="hero-balance">
         <span class="hero-balance-label" id="hero-saldo-label">Saldo do mês</span>
-        <div class="hero-balance-value" id="hero-saldo">—</div><span class="balance-caption">Receitas menos despesas no período</span><span id="currency-mode-caption" class="currency-mode-caption">Totais em USD · lançamentos na moeda original</span><span class="balance-decoration" aria-hidden="true"></span>
+        <div class="hero-balance-value" id="hero-saldo">—</div><span class="balance-caption">Receitas menos despesas no período</span><span id="currency-mode-caption" class="currency-mode-caption">Totais em guaranis (PYG) · lançamentos na moeda original</span><span class="balance-decoration" aria-hidden="true"></span>
         <button class="btn-icon hero-eye" id="hero-eye" title="Ocultar/mostrar valores">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.7"/></svg>
         </button>
@@ -316,7 +316,7 @@
     <p class="currency-auto-status" id="currency-auto-status" role="status">Cotações automáticas</p>
 
     <details class="card fx-breakdown hidden" id="currency-breakdown" open>
-      <summary><div><h3>Por moeda</h3><p id="currency-breakdown-hint">Valores originais. Barras comparadas pelo equivalente em USD.</p></div><span class="fx-chevron" aria-hidden="true">⌄</span></summary>
+      <summary><div><h3>Por moeda</h3><p id="currency-breakdown-hint">Valores originais. Barras comparadas pelo equivalente em PYG.</p></div><span class="fx-chevron" aria-hidden="true">⌄</span></summary>
       <div id="currency-breakdown-rows" class="fx-rows"></div>
       <p class="fx-footnote">Entradas e saídas do período e das categorias selecionadas. Conversões de referência, sem taxas.</p>
     </details>
@@ -724,16 +724,16 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20261023-multicurrency"></script>
-<script src="js/rates.js?v=20261023-multicurrency"></script>
-<script src="js/importer.js?v=20261023-multicurrency"></script>
-<script src="js/dashboard.js?v=20261023-multicurrency"></script>
-<script src="js/receipt.js?v=20261023-multicurrency"></script>
-<script src="js/batch.js?v=20261023-multicurrency"></script>
-<script src="js/cloud-repair.js?v=20261023-multicurrency"></script>
-<script src="js/folder-cleanup.js?v=20261023-multicurrency"></script>
-<script src="js/cloud-archive.js?v=20261023-multicurrency"></script>
-<script src="js/cloud.js?v=20261023-multicurrency"></script>
-<script src="js/navigation.js?v=20261023-multicurrency"></script>
+<script src="js/app.js?v=20261023-guarani"></script>
+<script src="js/rates.js?v=20261023-guarani"></script>
+<script src="js/importer.js?v=20261023-guarani"></script>
+<script src="js/dashboard.js?v=20261023-guarani"></script>
+<script src="js/receipt.js?v=20261023-guarani"></script>
+<script src="js/batch.js?v=20261023-guarani"></script>
+<script src="js/cloud-repair.js?v=20261023-guarani"></script>
+<script src="js/folder-cleanup.js?v=20261023-guarani"></script>
+<script src="js/cloud-archive.js?v=20261023-guarani"></script>
+<script src="js/cloud.js?v=20261023-guarani"></script>
+<script src="js/navigation.js?v=20261023-guarani"></script>
 </body>
 </html>
