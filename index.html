@@ -15,6 +15,7 @@
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261023-guarani">
 <link rel="stylesheet" href="css/design.css?v=20261023-guarani">
+<link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 </head>
 <body>
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -133,6 +134,37 @@
         <button type="button" class="btn-link" id="btn-cloud-cfg-clear">remover configuração salva</button>
       </div>
     </div>
+
+    <details class="wa-panel" id="whatsapp-panel">
+      <summary class="wa-panel-summary">
+        <span class="wa-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2v-10A8.5 8.5 0 0 1 10.5 3h2A8.5 8.5 0 0 1 21 11.5Z"/><path d="M7 9h9M7 13h6"/></svg></span>
+        <span class="wa-summary-copy"><strong>WhatsApp</strong><span>Mensagens que viram lançamentos, depois da sua revisão.</span></span>
+        <span class="wa-status-badge" id="wa-status-badge">Entre na sua conta</span>
+        <span class="wa-chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div class="wa-panel-body">
+        <div class="wa-status-row"><p id="wa-status" role="status" aria-live="polite">Entre na conta do app para consultar o piloto.</p><button type="button" class="btn btn-ghost btn-sm" id="wa-refresh">Atualizar</button></div>
+        <div id="wa-channel" class="wa-channel hidden"></div>
+        <details class="wa-guide" id="wa-guide" open>
+          <summary>Preparar o piloto com a Meta</summary>
+          <ol>
+            <li><strong>Separe o número de teste.</strong> No painel da Meta, abra o aplicativo e a configuração do WhatsApp.</li>
+            <li><strong>Autorize os dois remetentes.</strong> Cadastre os números do piloto na Meta e vincule-os à pasta CASINHA nesta integração.</li>
+            <li><strong>Aguarde a ativação.</strong> Quando o status indicar recebimento ativo, envie uma mensagem de teste de um remetente autorizado.</li>
+            <li><strong>Confira antes de incluir.</strong> As mensagens recebidas aparecem para revisão. Data, valor, moeda e categoria precisam estar corretos antes da confirmação.</li>
+          </ol>
+          <p id="wa-guide-note">O piloto começa com confirmação para cada lançamento. A conexão ainda precisa ser concluída antes de receber mensagens.</p>
+          <a class="wa-meta-link" href="https://developers.facebook.com/apps/" target="_blank" rel="noopener noreferrer">Abrir painel da Meta <span aria-hidden="true">↗</span><span class="sr-only"> (abre outra aba)</span></a>
+          <div class="wa-webhook hidden" id="wa-webhook-wrap"><label for="wa-webhook">Endereço de recebimento para a configuração da Meta</label><input id="wa-webhook" type="text" readonly spellcheck="false" autocomplete="off"><p>As credenciais ficam no servidor. Não cole tokens ou chaves aqui.</p></div>
+        </details>
+        <section class="wa-review" aria-labelledby="wa-review-heading">
+          <div class="wa-review-heading"><h3 id="wa-review-heading">Para revisar</h3><span id="wa-pending-count"></span></div>
+          <p class="wa-feedback hidden" id="wa-feedback" role="status" aria-live="polite"></p>
+          <p class="wa-empty" id="wa-empty">Conecte sua conta para consultar as mensagens pendentes.</p>
+          <div class="wa-drafts" id="wa-drafts"></div>
+        </section>
+      </div>
+    </details>
 
     <div class="hero">
       <div class="welcome-heading"><span class="welcome-kicker"><i></i>Organize o presente</span><h2>Seu dinheiro.<br>Seus próximos planos.</h2><p>Separe suas contas, acompanhe seus gastos<br class="desktop-break"> e aproxime cada objetivo.</p><div class="welcome-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-leaf"></div></div></div>
@@ -733,7 +765,9 @@
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
 <script src="js/cloud-archive.js?v=20261023-guarani"></script>
+<script src="js/cloud-merge.js?v=20261023-pilot"></script>
 <script src="js/cloud.js?v=20261023-guarani"></script>
 <script src="js/navigation.js?v=20261023-guarani"></script>
+<script src="js/whatsapp.js?v=20261023-pilot"></script>
 </body>
 </html>

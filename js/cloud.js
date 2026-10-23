@@ -25,9 +25,11 @@ const Cloud = (() => {
   const REPAIR_BACKUP_PREFIX = "fyg:cloud-repair-backup:v1:";
   const RETRY_MS = [5000, 15000, 30000, 60000, 120000, 300000];
   const REQUEST_MS = 20000;
+  const PULL_MS = 30000;
   let client = null, clientCfg = null, session = null, activeOwner = "";
   let syncing = false, applyingRemote = false;
   let pushTimer = null, nextRetryAt = null, retryAttempt = 0;
+  let pullTimer = null;
   let authSubscription = null, connectionVersion = 0;
   let syncPromise = null, syncVersion = -1;
   let queueDurable = true, lastError = "", authRequired = false;
@@ -35,6 +37,7 @@ const Cloud = (() => {
   // Diagnóstico da conexão atual, reavaliado a cada leitura completa da nuvem.
   // Os registros inválidos continuam no servidor e nunca viram uma inserção nova.
   let invalidRemoteIds = new Set();
+  let mergeConflictIds = new Set();
   let repairableRemoteCount = 0, repairableDateCount = 0, repairDatePreview = [];
   let repairing = false, lastRepairCount = 0, repairRequest = null;
   let passkeysEnabled = null, signupsAllowed = null, authOptionsLoading = false, authOptionsError = "";
@@ -264,7 +267,7 @@ const Cloud = (() => {
     const q = activeOwner ? loadQueue(activeOwner) : null;
     const pendingCount = pendingUploads + pendingDeletes;
     const invalidRemoteCount = activeOwner ? invalidRemoteIds.size : 0;
-    const blockedPendingCount = q ? [...invalidRemoteIds].filter((id) => own(q.dirty, id) || own(q.deletes, id)).length : 0;
+    const blockedPendingCount = q ? [...new Set([...invalidRemoteIds, ...mergeConflictIds])].filter((id) => own(q.dirty, id) || own(q.deletes, id)).length : 0;
     const error = lastError || (invalidRemoteCount
       ? `${invalidRemoteCount} pasta(s) da nuvem têm dados inválidos e foram preservadas sem alterações. Confira essas pastas antes de sincronizá-las.` : null);
     const unlinkedCount = localDatasets().filter((ds) => !own(ledger.owners, ds.id)).length;
@@ -280,7 +283,7 @@ const Cloud = (() => {
     else if (connected && q?.lastSyncedAt) status = "synced";
     return { status, connected, autoSync, pendingUploads, pendingDeletes, pendingCount, otherAccountPending, unlinkedCount,
       lastSyncedAt: q?.lastSyncedAt || null, nextRetryAt, error, conflictCount: q?.conflicts.length || 0,
-      accountConflictCount, invalidRemoteCount, blockedPendingCount, queueDurable,
+      accountConflictCount, invalidRemoteCount, blockedPendingCount, mergeConflictCount: mergeConflictIds.size, queueDurable,
       repairableRemoteCount, repairableDateCount, repairDatePreview: repairDatePreview.map((pair) => ({ ...pair })),
       repairing, hasRepairBackup: hasRepairBackup(), lastRepairCount };
   }
@@ -310,8 +313,21 @@ const Cloud = (() => {
     if (typeof CustomEvent !== "undefined" && document.dispatchEvent) document.dispatchEvent(new CustomEvent("fyg:cloudstate", { detail: state }));
   }
 
-  function cancelSchedule() { clearTimeout(pushTimer); pushTimer = null; nextRetryAt = null; }
+  function cancelPull() { clearTimeout(pullTimer); pullTimer = null; }
+  function cancelSchedule() { clearTimeout(pushTimer); pushTimer = null; nextRetryAt = null; cancelPull(); }
   function cancelRequests() { for (const request of requests) request.cancel(); }
+
+  // A leitura periódica só existe enquanto a página está visível. Não é um
+  // serviço em segundo plano: fechar o app ou desligar autosync interrompe-a.
+  function schedulePull(delay = PULL_MS) {
+    cancelPull();
+    if (!session || !isAuto() || isOffline() || authRequired || pushTimer || document.visibilityState === "hidden") return;
+    const version = connectionVersion, owner = activeOwner, c = client;
+    pullTimer = setTimeout(() => {
+      pullTimer = null;
+      if (current(c, version, owner) && isAuto() && !isOffline() && document.visibilityState !== "hidden") syncNow({ automatic: true });
+    }, delay);
+  }
 
   function scheduleSync(delay = 1500) {
     if (!session || !isAuto() || isOffline()) { publishState(); return; }
@@ -649,6 +665,7 @@ const Cloud = (() => {
     session = null;
     activeOwner = "";
     invalidRemoteIds.clear();
+    mergeConflictIds.clear();
     resetRepairState();
     lastError = "";
     authRequired = false;
@@ -667,6 +684,7 @@ const Cloud = (() => {
       cancelSchedule(); cancelRequests(); connectionVersion++;
       retryAttempt = 0; lastError = ""; accountConflictCount = 0;
       invalidRemoteIds.clear();
+      mergeConflictIds.clear();
       resetRepairState();
       pendingCodeEmail = "";
       if (recoveryOwner !== nextOwner) { recoveryOwner = ""; if ($("#cloud-newpass")) $("#cloud-newpass").value = ""; }
@@ -809,6 +827,7 @@ const Cloud = (() => {
   }
 
   async function repairRemoteRows(rowsById, owner, c, version) {
+    const repairedIds = new Set();
     for (const row of repairRows(rowsById, owner).values()) {
       assertCurrent(c, version, owner);
       const hasRemote = rowsById.has(row.id), plan = repairPlan(row, owner, hasRemote);
@@ -847,8 +866,10 @@ const Cloud = (() => {
         if (!Array.isArray(result.data) || result.data.length !== 1) throw new Error("A pasta mudou na nuvem durante a correção. Esta versão não foi sobrescrita; os backups e as alterações locais foram mantidos. Sincronize e revise antes de tentar novamente.");
       }
       lastRepairCount++;
+      repairedIds.add(row.id);
       publishState();
     }
+    return repairedIds;
   }
 
   function repairLegacyDates() {
@@ -900,7 +921,28 @@ const Cloud = (() => {
     return entry.copyId;
   }
 
-  async function reconcileRow(row, owner, c, version, attempt = 0) {
+  function confirmedBase(row, digest) {
+    // Uma única versão por pasta e proprietário, sempre confirmada pelo servidor.
+    return { digest, version: row.updated_at, snapshot: clone(row.data) };
+  }
+
+  async function findMergeBase(base, local, remote) {
+    if (!base?.digest || typeof CloudMerge === "undefined") return null;
+    if (base.snapshot && validRemote({ id: remote.id, data: base.snapshot }) && await fingerprint(canonical(base.snapshot)) === base.digest) return clone(base.snapshot);
+    // Instalações anteriores guardavam apenas o digest. Nunca inferimos uma
+    // exclusão; só retiramos inclusões WA identificadas e exigimos prova exata.
+    for (const candidate of CloudMerge.legacyCandidates(local, remote)) {
+      if (await fingerprint(canonical(candidate)) === base.digest) return candidate;
+    }
+    return null;
+  }
+
+  function deferChangedMerge(row, owner, c, version, attempt, repairedIds) {
+    if (attempt >= 3) throw new Error("Há novas alterações locais. A sincronização continuará na próxima tentativa.");
+    return reconcileRow(row, owner, c, version, attempt + 1, repairedIds);
+  }
+
+  async function reconcileRow(row, owner, c, version, attempt = 0, repairedIds = null) {
     assertCurrent(c, version, owner);
     refreshLedger();
     mergeQueueFromDisk(owner, loadQueue(owner));
@@ -917,33 +959,57 @@ const Cloud = (() => {
     const remoteDigest = await fingerprint(remoteText);
     const localDigest = local ? await fingerprint(localText) : null;
     assertCurrent(c, version, owner);
+    refreshLedger();
     mergeQueueFromDisk(owner, loadQueue(owner));
     // Uma edição durante o hash/pull deve ser avaliada antes de gravar qualquer retorno.
-    if (canonical(localDataset(id)) !== localText) {
-      if (attempt >= 3) throw new Error("Há novas alterações locais. A sincronização continuará na próxima tentativa.");
-      return reconcileRow(row, owner, c, version, attempt + 1);
-    }
+    if (ledger.owners[id] !== owner || canonical(localDataset(id)) !== localText) return deferChangedMerge(row, owner, c, version, attempt, repairedIds);
     const latest = loadQueue(owner);
     if (own(latest.deletes, id)) {
       if (latest.base[id]?.digest !== remoteDigest) preserveConflict(owner, id, row.data, remoteDigest);
-      latest.base[id] = { digest: remoteDigest, version: row.updated_at };
+      latest.base[id] = confirmedBase(row, remoteDigest);
       requireDurableQueue();
       return;
     }
     if (local && latest.base[id]?.digest !== localDigest && !own(latest.dirty, id)) markDirty(owner, id);
     if (local && own(latest.dirty, id)) {
       if (localDigest === remoteDigest) {
-        latest.base[id] = { digest: remoteDigest, version: row.updated_at };
+        latest.base[id] = confirmedBase(row, remoteDigest);
         delete latest.dirty[id];
+        mergeConflictIds.delete(id);
       } else if (latest.base[id]?.digest !== remoteDigest) {
-        preserveConflict(owner, id, row.data, remoteDigest);
-        latest.base[id] = { digest: remoteDigest, version: row.updated_at };
+        // Dados inválidos ficam para o reparo explícito, nunca para a mesclagem.
+        if (!validRemote({ id, data: local })) return;
+        const baseText = canonical(latest.base[id], false), dirtyRevision = latest.dirty[id].rev;
+        const base = await findMergeBase(latest.base[id], local, row.data);
+        let merged = base ? CloudMerge.merge(base, local, row.data) : null;
+        if (!merged?.ok && repairedIds?.has(id) && typeof CloudMerge !== "undefined" && CloudMerge.onlyLocalAdditions(local, row.data)) merged = { ok: true, dataset: clone(local) };
+        const mergedDigest = merged?.ok && validRemote({ id, data: merged.dataset }) ? await fingerprint(canonical(merged.dataset)) : null;
+        assertCurrent(c, version, owner);
+        refreshLedger(); mergeQueueFromDisk(owner, latest);
+        if (ledger.owners[id] !== owner || own(latest.deletes, id) || latest.dirty[id]?.rev !== dirtyRevision || canonical(localDataset(id)) !== localText || canonical(latest.base[id], false) !== baseText) return deferChangedMerge(row, owner, c, version, attempt, repairedIds);
+        if (mergedDigest) {
+          requireDurableQueue();
+          if (canonical(merged.dataset, false) !== canonical(local, false)) writeLocal([merged.dataset]);
+          latest.base[id] = confirmedBase(row, remoteDigest);
+          if (mergedDigest === remoteDigest) delete latest.dirty[id];
+          else markDirty(owner, id);
+          mergeConflictIds.delete(id);
+        } else {
+          // Guardamos ambas as versões, mas não transformamos conflito em
+          // autorização para sobrescrever o remoto ou avançar sua revisão WA.
+          preserveConflict(owner, id, row.data, remoteDigest);
+          mergeConflictIds.add(id);
+        }
+      } else {
+        latest.base[id] = confirmedBase(row, remoteDigest);
+        mergeConflictIds.delete(id);
       }
       requireDurableQueue();
       return;
     }
     if (!local || localDigest !== remoteDigest) writeLocal([clone(row.data)]);
-    latest.base[id] = { digest: remoteDigest, version: row.updated_at };
+    latest.base[id] = confirmedBase(row, remoteDigest);
+    mergeConflictIds.delete(id);
     requireDurableQueue();
   }
 
@@ -959,10 +1025,11 @@ const Cloud = (() => {
     // Inclui as cópias de conflito criadas durante o pull, antes de qualquer exclusão.
     for (const id of Object.keys(loadQueue(owner).dirty)) {
       assertCurrent(c, version, owner);
-      if (archivedIds.has(id) || invalidRemoteIds.has(id) || ledger.owners[id] !== owner || own(loadQueue(owner).deletes, id)) continue;
+      if (archivedIds.has(id) || invalidRemoteIds.has(id) || mergeConflictIds.has(id) || ledger.owners[id] !== owner || own(loadQueue(owner).deletes, id)) continue;
       const observed = rowsById.get(id);
       if (observed) await reconcileRow(observed, owner, c, version);
       assertCurrent(c, version, owner);
+      if (mergeConflictIds.has(id)) continue;
       const entry = loadQueue(owner).dirty[id];
       if (!entry) continue;
       const saved = localDataset(id);
@@ -972,6 +1039,10 @@ const Cloud = (() => {
         // ação disponível para corrigir a origem local sem reenviar a data ruim.
         classifyRemote(rowsById, owner);
         invalidLocalCount++;
+        continue;
+      }
+      if (observed && (saved.whatsappRevision ?? 0) !== (observed.data.whatsappRevision ?? 0)) {
+        mergeConflictIds.add(id);
         continue;
       }
       const snapshot = clone(saved), text = canonical(snapshot), digest = await fingerprint(text);
@@ -990,7 +1061,7 @@ const Cloud = (() => {
       assertCurrent(c, version, owner);
       if (!Array.isArray(result.data) || result.data.length !== 1) throw new Error("A versão da nuvem mudou durante o envio. Suas alterações continuam na fila.");
       const latest = loadQueue(owner);
-      latest.base[id] = { digest, version: snapshot.updatedAt };
+      latest.base[id] = confirmedBase(row, digest);
       if (latest.dirty[id]?.rev === entry.rev && canonical(localDataset(id)) === text) delete latest.dirty[id];
       requireDurableQueue();
     }
@@ -1020,35 +1091,39 @@ const Cloud = (() => {
 
   async function syncNow(options = {}) {
     const repairContext = options.repairContext;
+    const freshContext = options.fresh ? options.freshContext || { c: client, version: connectionVersion, owner: activeOwner } : null;
+    if (freshContext && !current(freshContext.c, freshContext.version, freshContext.owner)) return false;
     if (options.repairLegacy && (!repairContext || !current(repairContext.c, repairContext.version, repairContext.owner))) return false;
     if (!session || !client) { setStatus("Entre na sua conta para sincronizar.", "err"); return false; }
     if (options.automatic && !isAuto()) return false;
     if (isOffline()) { publishState(); return false; }
     if (syncPromise) {
-      if (!options.repairLegacy && syncVersion === connectionVersion) return syncPromise;
+      if (!options.repairLegacy && !options.fresh && syncVersion === connectionVersion) return syncPromise;
       await syncPromise;
-      return syncNow(options);
+      return syncNow(freshContext ? { ...options, freshContext } : options);
     }
     cancelSchedule();
     const c = client, version = connectionVersion, owner = activeOwner;
     syncVersion = version;
     syncing = true;
     accountConflictCount = 0;
+    mergeConflictIds.clear();
     publishState();
     syncPromise = (async () => {
       try {
         await rescan(owner, c, version);
         let rowsById = await readRemoteRows(c, version, owner);
+        let repairedIds = null;
         // Classifique antes de aplicar qualquer retorno: uma pasta antiga inválida
         // não bloqueia as demais, mas seu ID permanece protegido contra escrita.
         classifyRemote(rowsById, owner);
         if (options.repairLegacy) {
           if (typeof CloudRepair === "undefined") throw new Error("O recurso de correção não foi carregado. Atualize o app antes de tentar novamente.");
-          await repairRemoteRows(rowsById, owner, c, version);
+          repairedIds = await repairRemoteRows(rowsById, owner, c, version);
           rowsById = await readRemoteRows(c, version, owner);
           classifyRemote(rowsById, owner);
         }
-        for (const row of rowsById.values()) await reconcileRow(row, owner, c, version);
+        for (const row of rowsById.values()) await reconcileRow(row, owner, c, version, 0, repairedIds);
         let archiveResult = { removedCount: 0, archivedIds: [], blockedIds: [] };
         if (typeof CloudArchive !== "undefined") {
           archiveResult = await CloudArchive.reconcile({
@@ -1075,6 +1150,7 @@ const Cloud = (() => {
         assertCurrent(c, version, owner);
         if (archiveResult.blockedIds.length) throw new Error("Há cópias antigas com alterações ou vínculo que precisam de conferência. Elas foram preservadas neste aparelho; a CASINHA unificada e as demais pastas continuam sincronizando.");
         if (invalidLocalCount) throw new Error("Uma pasta local contém dados inválidos e não foi enviada. As alterações continuam salvas e pendentes. Use a correção de datas, quando disponível, ou revise a pasta antes de sincronizar.");
+        if (mergeConflictIds.size) throw new Error("Há alterações simultâneas que precisam de conferência. As versões foram preservadas; a pasta original continua pendente para evitar sobrescrever dados da nuvem.");
         if (!invalidRemoteIds.size) retryAttempt = 0;
         lastError = ""; authRequired = false;
         const q = loadQueue(owner);
@@ -1094,6 +1170,7 @@ const Cloud = (() => {
         if (current(c, version, owner)) {
           if (lastError || invalidRemoteIds.size) retryPending();
           else if (Object.keys(loadQueue(owner).dirty).length || Object.keys(loadQueue(owner).deletes).length) scheduleSync(1500);
+          if (!pushTimer) schedulePull(lastError ? Math.max(PULL_MS, RETRY_MS[Math.min(retryAttempt++, RETRY_MS.length - 1)]) : PULL_MS);
         }
       }
     })();
@@ -1136,6 +1213,7 @@ const Cloud = (() => {
     $("#cloud-newpass-wrap")?.classList.add("hidden");
     const previousSession = session;
     const previousInvalidRemoteIds = new Set(invalidRemoteIds);
+    const previousMergeConflictIds = new Set(mergeConflictIds);
     const previousRepairState = { repairableRemoteCount, repairableDateCount, repairDatePreview, lastRepairCount };
     const c = client;
     cancelSchedule();
@@ -1144,13 +1222,14 @@ const Cloud = (() => {
     session = null;
     activeOwner = "";
     invalidRemoteIds.clear();
+    mergeConflictIds.clear();
     resetRepairState();
     try {
       const result = await c?.auth.signOut({ scope: "local" });
       if (result?.error) throw result.error;
     } catch {
       if (client === c) {
-        session = previousSession; activeOwner = ownerFor(previousSession); invalidRemoteIds = previousInvalidRemoteIds;
+        session = previousSession; activeOwner = ownerFor(previousSession); invalidRemoteIds = previousInvalidRemoteIds; mergeConflictIds = previousMergeConflictIds;
         ({ repairableRemoteCount, repairableDateCount, repairDatePreview, lastRepairCount } = previousRepairState);
       }
       refreshUI();
@@ -1340,15 +1419,19 @@ const Cloud = (() => {
   function resumePending() {
     if (activeOwner && isAuto() && (getSyncState().pendingCount || lastError)) scheduleSync(0);
   }
+  function refreshVisible() {
+    if (activeOwner && isAuto() && !isOffline() && document.visibilityState !== "hidden" && !syncing) scheduleSync(0);
+  }
   if (typeof window !== "undefined" && window.addEventListener) {
-    window.addEventListener("online", resumePending);
+    window.addEventListener("online", refreshVisible);
+    window.addEventListener("focus", refreshVisible);
     window.addEventListener("offline", () => { cancelSchedule(); publishState(); });
     window.addEventListener("storage", (event) => {
       if (event.key === CFG_STORAGE) {
         resetConnection(); refreshUI();
       } else if (event.key === AUTOSYNC_STORAGE) {
         if (!isAuto()) { cancelSchedule(); cancelRequests(); connectionVersion++; }
-        else resumePending();
+        else refreshVisible();
         publishState();
       } else if (activeOwner && event.key === queueKey(activeOwner)) {
         loadQueue(activeOwner, true); publishState(); resumePending();
@@ -1362,7 +1445,8 @@ const Cloud = (() => {
     });
   }
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "hidden") resumePending();
+    if (document.visibilityState !== "hidden") refreshVisible();
+    else cancelPull();
   });
 
   // Token da sessão atual (usado pela leitura de comprovante via servidor seguro)
@@ -1370,5 +1454,5 @@ const Cloud = (() => {
     return session?.access_token || null;
   }
 
-  return { onLocalChange, onLocalDelete, getToken, getSyncState, getAuthOptions, sendSignInLink, sendSignInCode, verifySignInCode, signInWithPasskey, registerPasskey, linkLocalDatasets, prepareLocalDelete, repairLegacyDates, exportRepairBackup };
+  return { onLocalChange, onLocalDelete, getToken, getSyncState, getAuthOptions, sendSignInLink, sendSignInCode, verifySignInCode, signInWithPasskey, registerPasskey, linkLocalDatasets, prepareLocalDelete, syncNow, repairLegacyDates, exportRepairBackup };
 })();

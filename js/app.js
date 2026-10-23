@@ -530,6 +530,7 @@ function cleanISO(v, fallback) {
 // Só preenche campos adicionados em versões novas e protege a renderização.
 function normalizeStoredDataset(raw) {
   if (!raw || !Array.isArray(raw.transactions)) return null;
+  if (raw.whatsappRevision != null && (!Number.isSafeInteger(raw.whatsappRevision) || raw.whatsappRevision < 0)) return null;
   if ([raw.categories, raw.metas, raw.limits].some((value) => value != null && !Array.isArray(value))) return null;
   const validRecord = (value) => value && typeof value === "object" && !Array.isArray(value);
   const finiteValue = (value) => (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) && Number.isFinite(Number(value));
@@ -574,6 +575,7 @@ function normalizeStoredDataset(raw) {
 
 function sanitizeDataset(raw, opts) {
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.transactions) || raw.transactions.length > 100000) return null;
+  if (raw.whatsappRevision != null && (!Number.isSafeInteger(raw.whatsappRevision) || raw.whatsappRevision < 0)) return null;
   if (opts?.rejectInvalidTransactions && [raw.categories, raw.metas, raw.limits].some((value) => value != null && !Array.isArray(value))) return null;
   const preserve = !!(opts && opts.preserveIds);
   const preserveContent = !!opts?.preserveContent;
@@ -584,6 +586,8 @@ function sanitizeDataset(raw, opts) {
     name: text(raw.name, 80).trim() || "Backup importado",
     createdAt: cleanISO(raw.createdAt, now),
     updatedAt: cleanISO(raw.updatedAt, now),
+    ...(Number.isSafeInteger(raw.whatsappRevision) && raw.whatsappRevision >= 0
+      ? { whatsappRevision: raw.whatsappRevision } : {}),
     displayCurrency: normDisplayCur(raw.displayCurrency),
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],

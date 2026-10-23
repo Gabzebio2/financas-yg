@@ -1,5 +1,5 @@
-# Publish only the reviewed application files listed below.
-# Personal documents, images, backups, credentials and development files stay excluded.
+# Publish only the exact reviewed runtime files below.
+# Tests, SQL, screenshots, backups, private data and credentials stay excluded.
 *
 !/.vercelignore
 !/api
@@ -7,14 +7,19 @@
 !/fonts
 !/js
 !/lib
+!/server
 !/api/receipt.js
+!/api/whatsapp-config.js
+!/api/whatsapp.js
 !/css/design.css
 !/css/style.css
+!/css/whatsapp.css
 !/fonts/OpenSans-Var.woff2
 !/index.html
 !/js/app.js
 !/js/batch.js
 !/js/cloud-archive.js
+!/js/cloud-merge.js
 !/js/cloud-repair.js
 !/js/cloud.js
 !/js/dashboard.js
@@ -24,7 +29,9 @@
 !/js/rates.js
 !/js/receipt.js
 !/js/theme.js
+!/js/whatsapp.js
 !/lib/chart.min.js
 !/lib/supabase.min.js
 !/lib/xlsx.min.js
+!/server/whatsapp-core.cjs
 !/vercel.json
