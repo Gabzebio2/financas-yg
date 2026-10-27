@@ -8,6 +8,8 @@ const Dashboard = (() => {
   let rowLimit = 100;
   const charts = {};
   let editingId = null;
+  let receiptRead = null;
+  let txModalRevision = 0;
   let editingLimitId = null;
   let pendingParcTx = null; // transação parcelada aguardando escolha de exclusão
   const selectedTx = new Set(); // ids das transações marcadas (seleção em lote)
@@ -349,15 +351,15 @@ const Dashboard = (() => {
     block.classList.toggle("hidden", groups.length < 2);
     if (groups.length < 2) return;
     const hint = $("#currency-breakdown-hint");
-    if (hint) hint.textContent = isDefaultMode() ? "Valores originais. Barras comparadas pelo equivalente em PYG." : `Agrupado pela moeda de origem. Valores e barras em ${dispCur()}.`;
+    if (hint) hint.textContent = `Valores originais. Barras comparadas pelo equivalente em ${dispCur()}.`;
     const max = Math.max(0, ...groups.flatMap(g => [g.incomeConverted, g.expenseConverted]).filter(Number.isFinite));
     const rows = $("#currency-breakdown-rows"); if (!rows) return;
     rows.innerHTML = groups.map(g => {
       const metric = (kind, label, converted) => {
         const native = g[kind], valid = Number.isFinite(converted);
         const width = valid && max > 0 ? Math.max(0, Math.min(100, converted / max * 100)) : 0;
-        const value = isDefaultMode() ? fmtMoney(native, g.currency) : fmtD(converted);
-        const equivalent = isDefaultMode() && g.currency !== dispCur() ? valid ? `≈ ${fmtD(converted)}` : "Cotação pendente" : !valid ? "Cotação pendente" : "";
+        const value = fmtMoney(native, g.currency);
+        const equivalent = g.currency !== dispCur() ? valid ? `≈ ${fmtD(converted)}` : "Cotação pendente" : !valid ? "Cotação pendente" : "";
         return `<div class="fx-metric fx-${kind}"><div class="fx-metric-value"><span>${label}</span><strong>${escapeHtml(value)}</strong></div><div class="fx-track" aria-hidden="true"><span style="width:${width.toFixed(4)}%"></span></div>${equivalent ? `<small>${escapeHtml(equivalent)}</small>` : ""}</div>`;
       };
       return `<div class="fx-row"><div class="fx-code"><strong>${g.currency}</strong><span>${g.count} ${g.count === 1 ? "lançamento" : "lançamentos"}</span></div>${metric("income", "Entradas", g.incomeConverted)}${metric("expense", "Saídas", g.expenseConverted)}</div>`;
@@ -1509,6 +1511,8 @@ const Dashboard = (() => {
     const isEdit = !!txId;
     const tx = isEdit ? ds.transactions.find((t) => t.id === txId) : null;
     if (isEdit && !tx) return;
+    receiptRead = null;
+    txModalRevision++;
 
     $("#modal-tx-title").textContent = isEdit ? "Editar transação" : (opts.title || "Nova transação");
     txType = isEdit ? tx.type : (opts.type === "receita" ? "receita" : "despesa");
@@ -1600,7 +1604,7 @@ const Dashboard = (() => {
     return Array.from({ length: count }, (_, i) => (base + (i >= count - extra ? 1 : 0)) / scale);
   }
 
-  function saveTxModal() {
+  function saveTxModal(approvedReceipt) {
     const currency = normCur($("#tx-currency").value);
     const amount = moneyInputValue($("#tx-amount"), currency);
     if (!Number.isFinite(amount) || amount <= 0) { toast("Informe um valor válido 💰"); $("#tx-amount").focus(); return; }
@@ -1624,6 +1628,29 @@ const Dashboard = (() => {
       account = $("#tx-account-other").value.trim();
       if (!account) { toast("Dê um nome para o cartão/conta 💳"); $("#tx-account-other").focus(); return; }
     }
+    const evidence = receiptRead ? importEvidence(receiptRead) : {};
+    if (!editingId && receiptRead) {
+      const owner = typeof Cloud !== "undefined" && Cloud.getSyncState ? Cloud.getSyncState().owner : null;
+      if (receiptRead.folderId !== ds?.id || receiptRead.modalRevision !== txModalRevision || receiptRead.owner !== owner) {
+        toast("A pasta, a conta ou o formulário mudou. Abra o comprovante novamente antes de salvar."); return;
+      }
+      if (!refreshImportTarget()) return;
+      const candidate = { date, desc, amount: Math.abs(amount), currency, type: txType, category, account, ...evidence };
+      if (typeof ImportMatch !== "undefined") {
+        const matches = ImportMatch.find(candidate, existingTransactions());
+        const reviewKey = JSON.stringify([ImportMatch.reviewKey(candidate, matches), candidate, parts, $("#tx-fixa").checked]);
+        if (matches.length && approvedReceipt?.reviewKey !== reviewKey) {
+          const folderId = ds.id, modalRevision = txModalRevision;
+          const describe = t => `${fmtDate(t.date)} · ${t.desc || "Sem descrição"} · ${fmtTxAmount(t)} · ${t.account || "Sem conta/cartão"}`;
+          const comparisons = matches.slice(0, 6).map((match, index) => `${index + 1}. Já lançado: ${describe(match.transaction)}\n${match.reason}`).join("\n\n");
+          askConfirm("Este comprovante pode já ter sido lançado", `Novo lançamento: ${describe(candidate)}\n\n${comparisons}${matches.length > 6 ? `\n\nE mais ${matches.length - 6} coincidência(s).` : ""}\n\nConfira as operações. Adicione novamente somente se forem lançamentos distintos.`, () => {
+            if (ds?.id !== folderId || txModalRevision !== modalRevision || $("#modal-tx").classList.contains("hidden")) return;
+            saveTxModal({ reviewKey });
+          }, { confirmLabel: "Adicionar mesmo assim" });
+          return;
+        }
+      }
+    }
     ensureCat(ds, category);
 
     const monthlyDate = (i) => {
@@ -1638,7 +1665,7 @@ const Dashboard = (() => {
     if (editingId) {
       const tx = ds.transactions.find((t) => t.id === editingId);
       if (!tx) { toast("Esta transação não está mais disponível. Abra a lista novamente."); return; }
-      Object.assign(tx, { amount: Math.abs(amount), date, desc, category, account, type: txType, currency });
+      Object.assign(tx, { amount: Math.abs(amount), date, desc, category, account, type: txType, currency }, evidence);
       message = "Transação atualizada ✔";
     } else if (parts) {
       const n = parts.length;
@@ -1652,6 +1679,7 @@ const Dashboard = (() => {
           currency,
           installment: `${i + 1}/${n}`,
           totalValue: amount,
+          ...(i === 0 ? evidence : {}),
         });
       }
       message = `Parcelamento criado: ${n} lançamentos ✔`;
@@ -1665,6 +1693,7 @@ const Dashboard = (() => {
           amount: Math.abs(amount),
           currency,
           installment: null, totalValue: null,
+          ...(i === 0 ? evidence : {}),
         });
       }
       message = `${txType === "receita" ? "Receita" : "Despesa"} fixa criada para os próximos ${FIXA_MESES} meses ✔`;
@@ -1672,6 +1701,7 @@ const Dashboard = (() => {
       ds.transactions.push({
         id: uid(), date, desc, category, account, type: txType,
         amount: Math.abs(amount), currency, installment: null, totalValue: null,
+        ...evidence,
       });
       message = "Transação adicionada ✔";
     }
@@ -1679,6 +1709,8 @@ const Dashboard = (() => {
     $("#modal-tx").classList.add("hidden");
     if (!editingId) { try { localStorage.setItem("fyg:entry-currency:" + ds.id, currency); } catch { /* preferência opcional */ } }
     editingId = null;
+    receiptRead = null;
+    txModalRevision++;
     renderAll();
     toast(message);
   }
@@ -1707,6 +1739,8 @@ const Dashboard = (() => {
       toast("O comprovante não identificou valor, moeda ou direção com segurança. Confira e preencha manualmente.");
       return;
     }
+    receiptRead = { ...importEvidence(d), folderId: ds?.id, modalRevision: ++txModalRevision,
+      owner: typeof Cloud !== "undefined" && Cloud.getSyncState ? Cloud.getSyncState().owner : null };
     // Pix/transferência enviada = despesa (débito); comprovante de recebimento = receita
     txType = d.direcao === "recebido" ? "receita" : "despesa";
     updateTypeToggle();
@@ -2103,6 +2137,7 @@ const Dashboard = (() => {
   // items: [{ date, desc, amount, type, category, account? }]
   function addBulk(items) {
     if (!ds || !Array.isArray(items)) return 0;
+    if (!refreshImportTarget()) return 0;
     let n = 0;
     items.forEach((it) => {
       if (!it) return;
@@ -2118,6 +2153,7 @@ const Dashboard = (() => {
         account: String(it.account || "").trim(),
         type: it.type === "receita" ? "receita" : "despesa",
         amount, currency: normCur(it.currency), installment: null, totalValue: null,
+        ...importEvidence(it),
       });
       n++;
     });
@@ -2126,6 +2162,36 @@ const Dashboard = (() => {
   }
 
   function currentDatasetName() { return ds ? ds.name : ""; }
+
+  function importEvidence(value) {
+    const out = {};
+    for (const [key, max] of [["referenceId", 160], ["sourceEvidence", 300]]) {
+      if (typeof value?.[key] === "string" && value[key].trim()) out[key] = value[key].trim().slice(0, max);
+    }
+    if (Number.isSafeInteger(value?.sourcePage) && value.sourcePage > 0) out.sourcePage = value.sourcePage;
+    return out;
+  }
+
+  function getImportTargetId() { return ds?.id || null; }
+  function existingTransactions() {
+    if (!ds) return [];
+    const current = Store.loadDataset(ds.id) || ds;
+    return JSON.parse(JSON.stringify(current.transactions || []));
+  }
+
+  function refreshImportTarget() {
+    if (!ds) return false;
+    const current = Store.loadDataset(ds.id);
+    if (!current) { toast("A pasta não está disponível. Abra uma pasta válida antes de importar."); return false; }
+    if (JSON.stringify(current) !== JSON.stringify(ds)) {
+      ds = current;
+      selectedTx.clear();
+      undoStack.length = 0;
+      updateUndoBtn();
+      renderAll();
+    }
+    return true;
+  }
 
   // Chaves (data+descrição+valor+tipo+moeda) da pasta aberta —
   // usadas pelo lote para avisar quando uma fatura é importada de novo.
@@ -2154,10 +2220,19 @@ const Dashboard = (() => {
   // valor total e o vínculo entre parcelas). IDs são regerados.
   function appendImported(txs) {
     if (!ds || !Array.isArray(txs)) return 0;
+    // Valide o lote inteiro antes de alterar categorias, dados ou histórico.
+    // Uma prévia rejeitada precisa poder ser corrigida e reenviada sem duplicar
+    // os itens válidos de uma tentativa parcialmente gravada.
+    if (txs.some((t) => !t || !isValidISODate(t.date) || !Number.isFinite(t.amount) ||
+        !(Math.abs(t.amount) > 0) || Math.abs(t.amount) > Number.MAX_SAFE_INTEGER ||
+        !["receita", "despesa"].includes(t.type) || !CURRENCY_CODES.includes(t.currency))) {
+      toast("Confira a data, o valor, o tipo e a moeda de todos os itens. Nenhum lançamento foi adicionado.");
+      return 0;
+    }
+    if (!refreshImportTarget()) return 0;
     const groupMap = new Map();
     let n = 0;
     txs.forEach((t) => {
-      if (!t || !isValidISODate(t.date) || !Number.isFinite(Number(t.amount)) || !(Math.abs(t.amount) > 0)) return;
       const category = String(t.category || "Outros").trim() || "Outros";
       ensureCat(ds, category);
       let groupId = null;
@@ -2176,6 +2251,7 @@ const Dashboard = (() => {
         currency: normCur(t.currency),
         installment: t.installment || null,
         totalValue: t.totalValue != null && Number.isFinite(Number(t.totalValue)) ? Math.abs(t.totalValue) : null,
+        ...importEvidence(t),
       });
       n++;
     });
@@ -2183,5 +2259,5 @@ const Dashboard = (() => {
     return n;
   }
 
-  return { open, openTxModal, refreshFromStore, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, resolveImportDate, existingTxKeys, existingSeriesKeys, refitHero: fitHeroFlow };
+  return { open, openTxModal, refreshFromStore, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, refitHero: fitHeroFlow };
 })();

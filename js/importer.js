@@ -7,6 +7,23 @@ const Importer = (() => {
   let pending = null; // { txs, notes }
   let importCurrency = "BRL"; // moeda escolhida para as transações importadas
   let readVersion = 0;
+  let importTargetId = null, importOwner = null;
+  function importContextValid() {
+    return (!addToCurrent || !Dashboard.getImportTargetId || Dashboard.getImportTargetId() === importTargetId) &&
+      (typeof Cloud === "undefined" || !Cloud.getSyncState || Cloud.getSyncState().owner === importOwner);
+  }
+  async function readWorkbook(file) {
+    const bytes = await file.arrayBuffer();
+    if (/\.csv$/i.test(file.name || "") || file.type === "text/csv") {
+      // CSV é texto, não bytes ANSI. raw preserva decimais, IDs com zero à
+      // esquerda e datas para os parsers explícitos, sem inferência do SheetJS.
+      let text;
+      try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+      catch { text = new TextDecoder("windows-1252").decode(bytes); }
+      return XLSX.read(text.replace(/^\uFEFF/, ""), { type: "string", raw: true, cellDates: false });
+    }
+    return XLSX.read(bytes, { type: "array", cellDates: false });
+  }
 
   /* Meses em PT/ES (sem acento — comparação via stripAccents) */
   const MONTH_MAP = {
@@ -37,6 +54,7 @@ const Importer = (() => {
     type: ["tipo", "type", "movimento", "operacao", "natureza", "movimentacao"],
     income: ["receita", "receitas", "entrada", "entradas", "ingreso", "ingresos", "credito"],
     expense: ["despesa", "despesas", "saida", "saidas", "gasto", "gastos", "salida", "debito", "egreso"],
+    referenceId: ["referencia", "reference", "reference id", "id transacao", "id da transacao", "id operacao", "identificador", "e2e", "endtoendid", "txid"],
   };
 
   const INCOME_WORDS = ["receita", "entrada", "ingreso", "income", "credito", "deposito", "salario", "ganho"];
@@ -45,7 +63,7 @@ const Importer = (() => {
   function matchRole(cell) {
     const n = stripAccents(cell);
     if (!n) return null;
-    for (const role of ["totalValue", "installment", "category", "date", "account", "desc", "income", "expense", "type", "amount", "currency"]) {
+    for (const role of ["totalValue", "installment", "category", "date", "account", "desc", "income", "expense", "type", "amount", "currency", "referenceId"]) {
       if (SYN[role].includes(n)) return role;
     }
     // Reconhecimento flexível para cabeçalhos compostos que fogem da lista
@@ -64,7 +82,7 @@ const Importer = (() => {
     if (cell == null) return null;
     const n = stripAccents(cell);
     const m = n.match(/^([a-z]+)[\s\/\-.]*'?(\d{2,4})?$/);
-    if (!m || !(m[1] in MONTH_MAP)) return null;
+    if (!m || !Object.prototype.hasOwnProperty.call(MONTH_MAP, m[1])) return null;
     let y = m[2] ? Number(m[2]) : null;
     if (y != null && y < 100) y += 2000;
     if (y != null && (y < 2000 || y > 2100)) y = null;
@@ -159,6 +177,8 @@ const Importer = (() => {
 
   function parseMatrix(rows, layout, currencyHint = importCurrency) {
     const { cols, monthCols } = layout;
+    const warnings = new Set();
+    if (monthCols.some((mc) => mc.y == null)) warnings.add("Há anos inferidos para as colunas de meses. Confira o período antes de importar.");
     assignYears(monthCols, rows, layout);
     const txs = [];
     let skipped = 0;
@@ -177,10 +197,13 @@ const Importer = (() => {
       if ([rawDesc, account, rawCat].some((v) => FOOTER_WORDS.includes(stripAccents(v)))) continue;
 
       const valued = [];
+      let invalidValue = false;
       monthCols.forEach((mc) => {
         const v = parseMoney(row[mc.c], currency);
+        if (v == null && row[mc.c] != null && String(row[mc.c]).trim() !== "") invalidValue = true;
         if (v != null && Math.abs(v) > 0) valued.push({ mc, value: v });
       });
+      if (invalidValue) skipped++;
       if (!valued.length) continue;
 
       const date = parseDateCell(row[cols.date]);
@@ -189,6 +212,7 @@ const Importer = (() => {
       if (!date && !rawDesc && !account) { skipped++; continue; }
 
       const purchaseDay = date ? Number(date.slice(8, 10)) : 1;
+      if (!date) warnings.add("Sem data de compra em algumas linhas: foi sugerido o dia 01 do mês. Confira as datas.");
       const category = rawCat || "Outros";
       const totalValue = cols.totalValue != null ? parseMoney(row[cols.totalValue], currency) : null;
 
@@ -204,6 +228,7 @@ const Importer = (() => {
       }
 
       const groupId = valued.length > 1 ? uid() : null; // liga as parcelas da mesma compra
+      if (!isFixed && !parcTotal && valued.length > 1) warnings.add("Parcelas foram sugeridas pela sequência de colunas mensais, sem número explícito na planilha. Confira se os lançamentos pertencem à mesma compra.");
       valued.forEach((v, idx) => {
         const y = v.mc.y, m = v.mc.m + 1;
         const day = Math.min(purchaseDay, daysInMonth(y, m));
@@ -227,7 +252,7 @@ const Importer = (() => {
         });
       });
     }
-    return { txs, skipped };
+    return { txs, skipped, warnings: [...warnings] };
   }
 
   /* ---------- Formato SIMPLES (uma transação por linha) ---------- */
@@ -280,6 +305,7 @@ const Importer = (() => {
         category: cols.category != null && row[cols.category] != null && String(row[cols.category]).trim() !== ""
           ? String(row[cols.category]).trim() : "Outros",
         account: cols.account != null && row[cols.account] != null ? String(row[cols.account]).trim() : "",
+        ...(cols.referenceId != null && row[cols.referenceId] != null ? { referenceId: String(row[cols.referenceId]).trim().slice(0, 160) } : {}),
         installment: null,
         totalValue: null,
         ...(cols.currency != null ? { currency } : {}),
@@ -301,9 +327,11 @@ const Importer = (() => {
       if (cols.income != null || cols.expense != null) {
         const inc = cols.income != null ? parseMoney(row[cols.income], currency) : null;
         const exp = cols.expense != null ? parseMoney(row[cols.expense], currency) : null;
+        const invalidValue = [[cols.income, inc], [cols.expense, exp]].some(([col, value]) => col != null && value == null && row[col] != null && String(row[col]).trim() !== "");
+        if (invalidValue) skipped++;
         if (inc != null && Math.abs(inc) > 0) txs.push({ ...base, id: uid(), type: "receita", amount: Math.abs(inc) });
         if (exp != null && Math.abs(exp) > 0) txs.push({ ...base, id: uid(), type: "despesa", amount: Math.abs(exp) });
-        if ((inc == null || Math.abs(inc) === 0) && (exp == null || Math.abs(exp) === 0)) skipped++;
+        if (!invalidValue && (inc == null || Math.abs(inc) === 0) && (exp == null || Math.abs(exp) === 0)) skipped++;
         continue;
       }
 
@@ -331,14 +359,16 @@ const Importer = (() => {
     const version = ++readVersion;
     pending = null;
     addToCurrent = !!(opts && opts.addToCurrent);
+    importTargetId = addToCurrent ? Dashboard.getImportTargetId?.() ?? null : null;
+    importOwner = typeof Cloud !== "undefined" && Cloud.getSyncState ? Cloud.getSyncState().owner : null;
     if (!file) return;
     if (file.size > 30 * 1024 * 1024) { toast("Arquivo grande demais (máx. 30 MB)."); return; }
     try {
-      const buf = await file.arrayBuffer();
-      if (version !== readVersion) return;
-      workbook = XLSX.read(buf, { type: "array", cellDates: false });
+      const read = await readWorkbook(file);
+      if (version !== readVersion || !importContextValid()) return;
+      workbook = read;
     } catch (e) {
-      if (version !== readVersion) return;
+      if (version !== readVersion || !importContextValid()) return;
       console.error(e);
       toast("Não consegui abrir esse arquivo 😕 Confira se é um .xlsx válido.");
       return;
@@ -387,8 +417,9 @@ const Importer = (() => {
     results.forEach((r) => {
       if (r.format) notes.push(`Aba "${r.sheet}": ${r.txs.length} transações lidas (formato: ${r.format})${r.skipped ? `, ${r.skipped} linha(s) ignorada(s)` : ""}.`);
       else notes.push(`Aba "${r.sheet}": formato não reconhecido — ignorada.`);
+      if (r.warnings?.length) notes.push(...r.warnings);
     });
-    pending = { txs, notes };
+    pending = { txs, notes, decisions: txs.map(() => ({ on: true, confirmed: "" })), partial: results.some((r) => !r.format || r.skipped > 0 || r.warnings?.length), partialReviewed: false };
 
     $("#map-box").classList.add("hidden");
     $("#preview-box").classList.remove("hidden");
@@ -477,17 +508,55 @@ const Importer = (() => {
       `</tbody>`;
 
     $("#import-note").textContent = pending.notes.join(" ");
+    renderImportReview();
+  }
+
+  function importReviews() {
+    if (!pending || typeof ImportMatch === "undefined") return [];
+    const existing = ImportMatch.createIndex(addToCurrent ? Dashboard.existingTransactions?.() || [] : []);
+    const seen = ImportMatch.createIndex();
+    return pending.txs.map((t, index) => {
+      const candidate = { ...t, currency: t.currency || importCurrency };
+      const matches = [...ImportMatch.find(candidate, existing).map((m) => ({ ...m, origin: "Já na pasta" })),
+        ...ImportMatch.find(candidate, seen).map((m) => ({ ...m, origin: "Neste arquivo" }))];
+      if (pending.decisions[index].on) ImportMatch.addToIndex(seen, candidate);
+      return { candidate, matches, key: ImportMatch.reviewKey(candidate, matches), index };
+    });
+  }
+  function renderImportReview() {
+    const el = $("#import-duplicate-review");
+    if (!el || !pending) return;
+    const reviews = importReviews().filter((r) => r.matches.length);
+    el.classList.toggle("hidden", !reviews.length && !pending.partial);
+    el.innerHTML = (pending.partial ? '<label class="checkline"><input type="checkbox" data-import-partial ' + (pending.partialReviewed ? 'checked' : '') + '> Conferi as abas/linhas não reconhecidas e os dados estimados. Quero importar somente os dados revisados.</label>' : '') +
+      (reviews.length ? '<p><strong>Coincidências para conferir</strong> — selecione apenas os lançamentos que deseja importar. Mesmo valor e data não provam duplicação.</p>' : '') + reviews.map(({ candidate: t, matches, key, index }) => {
+        const decision = pending.decisions[index];
+        decision.displayed = key;
+        const comparison = matches.slice(0, 3).map((m) => '<p>' + escapeHtml(m.origin + ': ' + m.reason + '. ' + m.transaction.date + ' · ' + m.transaction.desc + ' · ' + fmtMoney(m.transaction.amount, m.transaction.currency) + ' · ' + (m.transaction.account || 'sem conta') + (m.transaction.referenceId ? ' · ref. ' + m.transaction.referenceId : '')) + '</p>').join('');
+        return '<article><label><input type="checkbox" data-import-select="' + index + '" ' + (decision.on ? 'checked' : '') + '> ' + escapeHtml(t.date + ' · ' + t.desc + ' · ' + fmtMoney(t.amount, t.currency) + ' · ' + (t.account || 'sem conta') + (t.referenceId ? ' · ref. ' + t.referenceId : '')) + '</label>' + comparison +
+          (decision.confirmed === key ? '<strong>Confirmado como lançamento diferente</strong>' : '<button type="button" class="btn btn-ghost btn-sm" data-import-distinct="' + index + '">É um lançamento diferente</button>') + '</article>';
+      }).join('');
   }
 
   function savePending() {
     if (!pending || !pending.txs.length) return;
+    if (!importContextValid()) {
+      toast("A pasta ou conta mudou. Reabra a importação na pasta desejada."); return;
+    }
+    if (pending.partial && !pending.partialReviewed) { toast("Confira as linhas/abas não reconhecidas e confirme a revisão antes de salvar."); return; }
+    if (importReviews().some((r) => pending.decisions[r.index].on && r.matches.length && pending.decisions[r.index].confirmed !== r.key)) {
+      renderImportReview(); toast("Revise as coincidências antes de salvar. Nenhum lançamento foi adicionado."); return;
+    }
+    const selected = pending.txs.filter((_, i) => pending.decisions[i].on);
+    if (!selected.length) { toast("Selecione pelo menos um lançamento."); return; }
 
     // Uma coluna de moeda explícita tem prioridade; a seleção preenche ausências.
     pending.txs.forEach((t) => { t.currency = t.currency || importCurrency; });
 
     // Modo "adicionar à pasta atual": não cria pasta, injeta no dataset aberto
     if (addToCurrent) {
-      const n = Dashboard.appendImported(pending.txs);
+      const n = Dashboard.appendImported(selected);
+      if (n !== selected.length) { toast("Não foi possível adicionar todos os itens. A prévia foi mantida; confira se a pasta ainda está disponível."); return; }
       pending = null;
       addToCurrent = false;
       showScreen("screen-dash");
@@ -497,7 +566,7 @@ const Importer = (() => {
 
     const name = $("#import-name").value.trim() || fileName || "Minhas finanças";
     const now = new Date().toISOString();
-    const ds = { id: uid(), name, createdAt: now, updatedAt: now, displayCurrency: "DEFAULT", categories: [], transactions: pending.txs };
+    const ds = { id: uid(), name, createdAt: now, updatedAt: now, displayCurrency: "DEFAULT", categories: [], transactions: selected };
     ds.transactions.forEach((t) => ensureCat(ds, t.category));
     ensureCat(ds, "Outros");
     Store.saveDataset(ds);
@@ -512,6 +581,7 @@ const Importer = (() => {
     ["category", "Categoria"], ["type", "Tipo (receita/despesa)"], ["account", "Cartão/Conta"],
     ["installment", "Parcelas"], ["totalValue", "Valor total"], ["income", "Receita (coluna própria)"],
     ["expense", "Despesa (coluna própria)"], ["currency", "Moeda"],
+    ["referenceId", "Referência/ID da operação"],
   ];
 
   function guessHeaderRow(rows) {
@@ -584,9 +654,9 @@ const Importer = (() => {
      importação. Usado pela importação em lote (Batch). */
   async function readForBatch(file) {
     if (!file || file.size > 30 * 1024 * 1024) throw new Error("Arquivo grande demais (máx. 30 MB).");
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: "array", cellDates: false });
+    const wb = await readWorkbook(file);
     const txs = [];
+    const report = { skipped: 0, unknownSheets: [], warnings: [] };
     const currency = guessCurrency(wb);
     for (const name of wb.SheetNames) {
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
@@ -594,38 +664,62 @@ const Importer = (() => {
 
       // 1) Formato matriz (meses em colunas) — o formato da planilha principal.
       const ml = detectMatrix(rows);
-      if (ml) { const r = parseMatrix(rows, ml, currency); if (r.txs.length) { txs.push(...r.txs); continue; } }
+      if (ml) { const r = parseMatrix(rows, ml, currency); if (r.txs.length) { txs.push(...r.txs); report.skipped += r.skipped; report.warnings.push(...r.warnings); continue; } }
 
       // 2) Tabela simples (Data, Descrição/Local, Valor). Convenção de LOTE
       //    (fatura/cobrança): positivo = gasto (despesa); negativo = pagamento
       //    ou estorno (receita) — oposto da convenção bancária do importador.
       const sl = detectSimple(rows);
       if (sl && (sl.cols.type != null || sl.cols.income != null || sl.cols.expense != null)) {
-        txs.push(...parseSimple(rows, sl, currency).txs);
+        const result = parseSimple(rows, sl, currency); txs.push(...result.txs); report.skipped += result.skipped;
         continue;
       }
       if (sl && sl.cols.date != null && sl.cols.amount != null) {
+        report.warnings.push("Planilha sem coluna de tipo: positivo foi interpretado como despesa e negativo como receita/estorno. Confira se isso corresponde ao extrato.");
         for (let i = sl.headerRow + 1; i < rows.length; i++) {
           const row = rows[i] || [];
           const date = parseDateCell(row[sl.cols.date]);
           const itemCurrency = rowCurrency(row, sl.cols, currency);
           const amt = parseMoney(row[sl.cols.amount], itemCurrency);
-          if (!date || !itemCurrency || amt == null || Math.abs(amt) === 0) continue;
+          if (!date || !itemCurrency || amt == null || Math.abs(amt) === 0) { if (row.some((v) => v != null && v !== "")) report.skipped++; continue; }
           const desc = sl.cols.desc != null && row[sl.cols.desc] != null ? String(row[sl.cols.desc]).trim() : "";
           txs.push({
             date, desc: desc || "(sem descrição)",
             amount: Math.abs(amt), type: amt < 0 ? "receita" : "despesa",
             currency: itemCurrency,
+            account: sl.cols.account != null ? String(row[sl.cols.account] || "").trim() : "",
+            category: sl.cols.category != null ? String(row[sl.cols.category] || "").trim() : "Outros",
+            ...(sl.cols.referenceId != null ? { referenceId: String(row[sl.cols.referenceId] || "").trim().slice(0, 160) } : {}),
             installment: null, totalValue: null,
           });
         }
-      }
+      } else report.unknownSheets.push(name);
     }
-    return txs.map((t) => ({ ...t, currency: t.currency || currency }));
+    const result = txs.map((t) => ({ ...t, currency: t.currency || currency }));
+    result.readReport = report;
+    return result;
   }
 
   /* ---------- Eventos ---------- */
   document.addEventListener("DOMContentLoaded", () => {
+    $("#import-duplicate-review")?.addEventListener("click", (ev) => {
+      const button = ev.target.closest?.("[data-import-distinct]");
+      if (!button || !pending) return;
+      const review = importReviews().find((r) => r.index === Number(button.dataset.importDistinct));
+      if (!review) return;
+      if (pending.decisions[review.index].displayed !== review.key) { renderImportReview(); toast("A comparação mudou. Confira os dados atualizados antes de confirmar."); return; }
+      pending.decisions[review.index] = { on: true, confirmed: review.key };
+      renderImportReview();
+    });
+    $("#import-duplicate-review")?.addEventListener("change", (ev) => {
+      if (!pending) return;
+      if (ev.target.hasAttribute?.("data-import-partial")) pending.partialReviewed = ev.target.checked;
+      else {
+        const index = Number(ev.target.dataset.importSelect);
+        if (Number.isInteger(index) && pending.decisions[index]) pending.decisions[index].on = ev.target.checked;
+      }
+      renderImportReview();
+    });
     $("#btn-import-save").addEventListener("click", savePending);
     $("#btn-import-cancel").addEventListener("click", () => {
       readVersion++;

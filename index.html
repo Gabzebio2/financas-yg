@@ -13,8 +13,8 @@
 <meta name="description" content="Organize receitas, despesas, parcelas e metas em um só lugar com o Finanças YG.">
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
-<link rel="stylesheet" href="css/style.css?v=20261023-guarani">
-<link rel="stylesheet" href="css/design.css?v=20261023-guarani">
+<link rel="stylesheet" href="css/style.css?v=20261027-import">
+<link rel="stylesheet" href="css/design.css?v=20261027-import">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 </head>
 <body>
@@ -173,7 +173,7 @@
           <div class="action-icon icon-upload"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg></div>
           <div class="action-text">
             <strong>Importar uma planilha</strong>
-            <span>Excel (.xlsx ou .xls), do seu jeito.</span>
+            <span>Excel (.xlsx ou .xls) e CSV, do seu jeito.</span>
           </div>
         </button>
         <button class="action-card" id="card-new">
@@ -185,7 +185,7 @@
         </button>
       </div>
     </div>
-    <input type="file" id="file-input" accept=".xlsx,.xls" hidden>
+    <input type="file" id="file-input" accept=".xlsx,.xls,.xlsm,.csv" hidden>
     <input type="file" id="backup-input" accept=".json" hidden>
 
     <div class="folders-head">
@@ -243,6 +243,7 @@
         <h3>Amostra das transações lidas</h3>
         <div class="table-wrap"><table id="import-sample"></table></div>
         <p class="hint" id="import-note"></p>
+        <div id="import-duplicate-review" class="import-review hidden"></div>
       </div>
       <div class="modal-actions sticky-actions">
         <button class="btn btn-ghost" id="btn-import-cancel">Cancelar</button>
@@ -473,7 +474,7 @@
           title="Apaga a chave de IA salva neste navegador">Remover chave</button>
       </div>
       <input type="file" id="receipt-input-camera" accept="image/*" capture="environment" hidden>
-      <input type="file" id="receipt-input-upload" accept="image/*,.pdf,application/pdf,.xlsx,.xls" multiple hidden>
+      <input type="file" id="receipt-input-upload" accept="image/*,.pdf,application/pdf,.xlsx,.xls,.xlsm,.csv" multiple hidden>
       <div id="apikey-wrap" class="hidden">
         <p class="hint">Para a IA ler comprovantes, cole sua chave da API Anthropic
           (crie em <b>console.anthropic.com</b> → API Keys). Ela fica salva só neste navegador.</p>
@@ -581,11 +582,12 @@
 
     <div class="batch-sources">
       <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7h5l2-3h4l2 3h5v13H3z" stroke-linejoin="round"/><circle cx="12" cy="13" r="4"/></svg> Foto ou PDF</button>
-      <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M3 15h18"/></svg> Arquivo Excel</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M3 15h18"/></svg> Excel ou CSV</button>
       <span class="receipt-status hidden" id="batch-status"></span>
     </div>
     <input type="file" id="batch-input-photo" accept="image/*,.pdf,application/pdf" multiple hidden>
-    <input type="file" id="batch-input-file" accept=".xlsx,.xls" multiple hidden>
+    <input type="file" id="batch-input-file" accept=".xlsx,.xls,.xlsm,.csv" multiple hidden>
+    <p class="hint">Selecione até 15 arquivos por vez. PDFs: até 50 MB e 120 páginas por arquivo. Fotos: até 20 MB. Documentos longos são lidos em partes para você conferir antes de salvar.</p>
 
     <div id="batch-preview" class="hidden">
       <div class="batch-controls">
@@ -603,6 +605,8 @@
       <p class="hint">A IA pode errar. Confira valores, datas, categorias, estornos e possíveis duplicados. Campos não identificados precisam ser preenchidos.</p>
       <label class="checkline hidden" id="batch-generated-wrap"><input type="checkbox" id="batch-include-generated"> Incluir também parcelas e meses estimados que não aparecem no documento</label>
       <p class="hint hidden" id="batch-review-summary" role="status"></p>
+      <div id="batch-coverage" class="import-review hidden" role="status"></div>
+      <label id="batch-partial-wrap" class="checkline hidden"><input type="checkbox" id="batch-partial-ack"> Conferi as partes incompletas e quero importar somente os lançamentos revisados abaixo. Isso não significa que o documento foi importado por inteiro.</label>
       <div class="table-wrap batch-table-wrap">
         <table id="batch-table">
           <thead>
@@ -756,12 +760,13 @@
 <script src="lib/xlsx.min.js"></script>
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
-<script src="js/app.js?v=20261023-guarani"></script>
+<script src="lib/pdf-lib.min.js"></script>
+<script src="js/app.js?v=20261027-import"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
-<script src="js/importer.js?v=20261023-guarani"></script>
-<script src="js/dashboard.js?v=20261023-guarani"></script>
-<script src="js/receipt.js?v=20261023-guarani"></script>
-<script src="js/batch.js?v=20261023-guarani"></script>
+<script src="js/importer.js?v=20261027-import"></script>
+<script src="js/dashboard.js?v=20261027-import"></script>
+<script src="js/receipt.js?v=20261027-import"></script>
+<script src="js/batch.js?v=20261027-import"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
 <script src="js/cloud-archive.js?v=20261023-guarani"></script>

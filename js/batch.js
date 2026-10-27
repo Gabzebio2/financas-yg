@@ -16,6 +16,25 @@ const Batch = (() => {
   let includeGenerated = false;
   let reviewWarnings = [];
   let excludedCount = 0;
+  let coverage = [];
+  let partialReviewed = false;
+  let targetId = null;
+  let targetOwner = null;
+  let processedParts = 0;
+  const MAX_FILES = 15, MAX_PARTS = 120;
+
+  function contextValid(version = generation) {
+    return version === generation && (!Dashboard.getImportTargetId || Dashboard.getImportTargetId() === targetId) &&
+      (typeof Cloud === "undefined" || !Cloud.getSyncState || Cloud.getSyncState().owner === targetOwner);
+  }
+  function incomplete() { return excludedCount > 0 || coverage.some((p) => p.status !== "complete"); }
+  function coverageUI() {
+    const el = $("#batch-coverage");
+    el.innerHTML = coverage.map((p) => `<div>${escapeHtml(p.label)} · ${escapeHtml(p.status === "complete" ? `concluído${p.count != null ? " · " + p.count + " lançamento(s)" : ""}` : p.message || "ainda não lido")}</div>`).join("");
+    el.classList.toggle("hidden", !coverage.length);
+    $("#batch-partial-wrap").classList.toggle("hidden", !incomplete());
+    $("#batch-partial-ack").checked = partialReviewed;
+  }
 
   async function runImport(read, files) {
     if (reading) { toast("Aguarde a leitura atual terminar."); return; }
@@ -56,6 +75,10 @@ const Batch = (() => {
     includeGenerated = false;
     reviewWarnings = [];
     excludedCount = 0;
+    coverage = []; partialReviewed = false; processedParts = 0;
+    targetId = Dashboard.getImportTargetId?.() ?? null;
+    targetOwner = typeof Cloud !== "undefined" && Cloud.getSyncState ? Cloud.getSyncState().owner : null;
+    coverageUI();
     $("#batch-include-generated").checked = false;
     $("#batch-generated-wrap").classList.add("hidden");
     $("#batch-review-summary").textContent = "";
@@ -86,14 +109,16 @@ const Batch = (() => {
   // Botão "Upload do comprovante": abre a lista e processa os arquivos escolhidos
   // (fotos, PDFs e/ou Excel) no mesmo fluxo — serve para um gasto só ou para lote.
   async function openWithFiles(files) {
-    open({ title: "Upload do comprovante", hideSources: true });
+    open({ title: "Conferir documentos e lançamentos" });
     const version = generation;
-    const arr = Array.from(files || []).slice(0, 15);
+    const arr = Array.from(files || []);
+    if (arr.length > MAX_FILES) { setStatus(`Selecione até ${MAX_FILES} arquivos por lote. Nenhum arquivo foi lido.`, "err"); return; }
     // Fotos e PDFs vão juntos para a IA; Excel é lido localmente
     const aiFiles = arr.filter((f) =>
       /^image\//.test(f.type) || /\.(png|jpe?g|webp|gif)$/i.test(f.name) ||
       f.type === "application/pdf" || /\.pdf$/i.test(f.name));
     const excels = arr.filter((f) => /\.(xlsx?|xlsm|csv)$/i.test(f.name));
+    arr.filter((f) => !aiFiles.includes(f) && !excels.includes(f)).forEach((f) => coverage.push({ label: f.name, status: "failed", message: "formato não aceito" }));
     if (!aiFiles.length && !excels.length) { setStatus("Envie uma foto ou PDF (comprovante/fatura) ou um arquivo Excel.", "err"); return; }
     if (excels.length) await runImport(fromFiles, excels);
     if (version !== generation) return;
@@ -121,11 +146,14 @@ const Batch = (() => {
     if (excludedCount) messages.push(`${excludedCount} item(ns) não importado(s) por valor, moeda ou tipo ausente/inválido.`);
     const incomplete = rows.filter((r) => r.on && (!isValidISODate(r.date) || !r.desc.trim() || !Number.isFinite(r.amount) || r.amount <= 0)).length;
     if (incomplete) messages.push(`${incomplete} item(ns) selecionado(s) precisam de data, descrição ou valor antes de salvar.`);
+    const unresolved = rows.filter((r) => r.on && r.dup && r.confirmedMatch !== r.matchKey).length;
+    if (unresolved) messages.push(`${unresolved} coincidência(s) aguardam decisão: desmarque o item ou confirme que é um lançamento diferente.`);
     if (generated) messages.push(`${generated} lançamento(s) são projeções de parcelas ou repetições, não identificados no documento. ${includeGenerated ? "Revise as projeções selecionadas." : "Só serão incluídos se você ativar a opção abaixo."}`);
     if (rows.some((r) => !r.account) && (chosenAccount == null || chosenAccount === "original")) messages.push("Cartão não identificado em alguns itens: permanecerão sem cartão, a menos que você escolha um.");
     const el = $("#batch-review-summary");
     el.textContent = messages.join(" ");
     el.classList.toggle("hidden", !messages.length);
+    coverageUI();
   }
 
   function renderPreview() {
@@ -148,6 +176,7 @@ const Batch = (() => {
     accSel.innerHTML = '<option value="original">Manter cartão de cada item</option><option value="">(sem cartão)</option>' +
       accounts.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("");
     accSel.value = chosenAccount != null ? chosenAccount : "original";
+    flagDuplicates();
     renderReviewSummary();
 
     if (!rows.length) {
@@ -162,7 +191,7 @@ const Batch = (() => {
     const fallCat = sel.value; // linhas sem categoria da IA seguem o seletor geral
     $("#batch-tbody").innerHTML = rows.map((r, i) => r.gen && !includeGenerated ? "" : `
       <tr data-i="${i}" class="${r.on ? "" : "batch-off"}${r.dup ? " batch-dup" : ""}${r.gen ? " batch-generated" : ""}">
-        <td><input type="checkbox" class="batch-check" data-i="${i}" aria-label="Selecionar ${escapeHtml(r.desc || "item")}${r.gen ? " (projeção)" : ""}" ${r.on ? "checked" : ""}>${r.dup ? '<span class="dup-flag" title="Possível duplicado: já está na pasta ou repetiu entre os arquivos enviados">⚠</span>' : ""}</td>
+        <td><input type="checkbox" class="batch-check" data-i="${i}" aria-label="Selecionar ${escapeHtml(r.desc || "item")}${r.gen ? " (projeção)" : ""}" ${r.on ? "checked" : ""}>${r.dup ? '<span class="dup-flag" title="Coincidência para revisão; isso não comprova duplicação">⚠</span>' : ""}</td>
         <td><input type="date" data-f="date" data-i="${i}" aria-label="Data de ${escapeHtml(r.desc || "item")}" value="${escapeHtml(r.date)}"></td>
         <td><div class="batch-desc-cell"><input type="text" data-f="desc" data-i="${i}" value="${escapeHtml(r.desc)}">${
           r.installment
@@ -170,7 +199,7 @@ const Batch = (() => {
             : (r.fixed || r.fixa)
               ? `<span class="parc-tag" title="${r.gen ? "Projeção: repetição não identificada no documento" : "Assinatura/mensalidade detectada"}">${r.gen ? "Projeção · " : ""}fixa</span>`
               : ""
-        }</div>${rowReview(r).length ? `<small class="hint">${escapeHtml(rowReview(r).join(" · "))}</small>` : ""}${r.account ? `<small class="hint">${escapeHtml(r.account)}</small>` : ""}</td>
+        }</div>${rowReview(r).length ? `<small class="hint">${escapeHtml(rowReview(r).join(" · "))}</small>` : ""}${r.account ? `<small class="hint">${escapeHtml(r.account)}</small>` : ""}${r.sourceLabel ? `<small class="hint">${escapeHtml(r.sourceLabel)}</small>` : ""}${r.referenceId ? `<small class="hint">Referência: ${escapeHtml(r.referenceId)}</small>` : ""}${matchHTML(r, i)}</td>
         <td class="num"><input type="text" class="batch-val" data-f="amount" data-i="${i}" data-cur="${selectedCurrency === "original" ? r.currency : normCur(selectedCurrency)}" value="${fmtMoneyInput(r.amount, selectedCurrency === "original" ? r.currency : selectedCurrency)}"></td>
         <td>
           <select data-f="cat" data-i="${i}">
@@ -196,12 +225,12 @@ const Batch = (() => {
     const totals = {};
     on.forEach((r) => {
       const cur = selectedCurrency === "original" ? normCur(r.currency) : normCur(selectedCurrency);
-      totals[cur] = (totals[cur] || 0) + (r.type === "despesa" ? r.amount : -r.amount);
+      totals[cur] = (totals[cur] || 0) + (r.type === "receita" ? r.amount : -r.amount);
     });
     const total = Object.entries(totals).map(([cur, amount]) => fmtMoney(amount, cur)).join(" · ") || fmtMoney(0, "BRL");
-    $("#batch-count").textContent = `${on.length} de ${rows.length} selecionadas · líquido ${total}`;
+    $("#batch-count").textContent = `${on.length} de ${rows.length} selecionadas · Saldo da seleção: ${total}`;
     $("#btn-batch-save").textContent = `✅ Adicionar ${on.length} transaç${on.length === 1 ? "ão" : "ões"}`;
-    $("#btn-batch-save").disabled = reading || on.length === 0;
+    $("#btn-batch-save").disabled = reading || on.length === 0 || (incomplete() && !partialReviewed);
     renderReviewSummary();
   }
 
@@ -247,7 +276,10 @@ const Batch = (() => {
       }
 
       return { date, desc, amount, type, currency, on: true, cat, parcNum, parcTotal, fixa, review,
-        account: typeof it.account === "string" ? it.account.trim().slice(0, 80) : "",
+        account: typeof (it.account ?? it.instituicao) === "string" ? (it.account ?? it.instituicao).trim().slice(0, 80) : "",
+        referenceId: String(it.referenceId ?? it.referencia ?? "").trim().slice(0, 160),
+        sourceEvidence: String(it.sourceEvidence ?? it.evidencia ?? "").trim().slice(0, 300),
+        sourcePage: Number.isInteger(it.sourcePage ?? it.pagina) && (it.sourcePage ?? it.pagina) > 0 ? (it.sourcePage ?? it.pagina) : undefined,
         installment: parcTotal ? `${parcNum}/${parcTotal}` : null, fixed: it.fixed === true, groupId: it.groupId || null,
         totalValue: typeof it.totalValue === "number" && Number.isFinite(it.totalValue) && it.totalValue > 0 ? it.totalValue : null };
     }).filter(Boolean);
@@ -275,12 +307,12 @@ const Batch = (() => {
         const serie = `s${srcSeq}_${idx}`;
         for (let k = 1; k <= r.parcTotal; k++) {
           const gen = k !== r.parcNum;
-          out.push({ ...r, serie, date: shiftMonths(r.date, k - r.parcNum), installment: `${k}/${r.parcTotal}`, gen, on: gen ? includeGenerated : r.on, monthOffset: k - r.parcNum });
+          out.push({ ...r, ...(gen ? { referenceId: "", sourceEvidence: "", sourcePage: undefined } : {}), serie, date: shiftMonths(r.date, k - r.parcNum), installment: `${k}/${r.parcTotal}`, gen, on: gen ? includeGenerated : r.on, monthOffset: k - r.parcNum });
         }
       } else if (r.fixa) {
         const serie = `s${srcSeq}_${idx}`;
         for (let i = 0; i < 12; i++) {
-          out.push({ ...r, serie, date: shiftMonths(r.date, i), fixed: true, gen: i > 0, on: i > 0 ? includeGenerated : r.on, monthOffset: i });
+          out.push({ ...r, ...(i > 0 ? { referenceId: "", sourceEvidence: "", sourcePage: undefined } : {}), serie, date: shiftMonths(r.date, i), fixed: true, gen: i > 0, on: i > 0 ? includeGenerated : r.on, monthOffset: i });
         }
       } else {
         out.push(r);
@@ -296,7 +328,8 @@ const Batch = (() => {
     const det = typeof cartao === "string" ? stripAccents(cartao) : "";
     const card = det ? CARDS.find((c) => stripAccents(c) === det) || "" : "";
     detectedCard = card || detectedCard;
-    const normalized = normalize(itens).map((r) => ({ ...r, account: card }));
+    const normalized = normalize(itens).map((r) => ({ ...r, account: r.account || card,
+      sourceLabel: metadata.sourceLabel || "", sourcePage: r.sourcePage && metadata.pageStart ? r.sourcePage + metadata.pageStart - 1 : r.sourcePage }));
     const novos = expandSeries(normalized);
     if (novos.length) {
       const src = srcSeq++;
@@ -306,64 +339,40 @@ const Batch = (() => {
     return normalized.length;
   }
 
-  /* ---------- Proteção anti-duplicados ----------
-     Uma fatura enviada duas vezes (ou prints com sobreposição) fazia cada
-     gasto entrar em dobro. Aqui NADA é apagado — linhas suspeitas só vêm
-     DESMARCADAS, com aviso, e você marca de volta se forem compras reais.
-     Duas checagens:
-     1) Entre arquivos: para cada chave (data+descrição+valor+tipo), a lista
-        mantém no máximo o MAIOR nº de ocorrências visto num arquivo SÓ.
-        Assim "3× ELEVENLABS no mesmo dia" num arquivo continua válido, mas o
-        mesmo trio vindo de novo em outro print é desmarcado.
-     2) Contra a pasta: o que já existe lá (mesma chave) vem desmarcado —
-        cobre o caso de importar a mesma fatura de novo. */
+  // Coincidência não prova duplicação. Todas as observadas ficam selecionadas
+  // até decisão explícita; a revisão é invalidada se qualquer comparação mudar.
+  function effectiveRow(r) {
+    const cur = $("#batch-cur").value, account = $("#batch-acc").value;
+    return { ...r, currency: cur && cur !== "original" ? cur : r.currency,
+      account: account && account !== "original" ? account : account === "" && chosenAccount !== null ? "" : r.account };
+  }
   function flagDuplicates() {
-    // Parceladas e fixas usam chave de SÉRIE (sem data): a mesma compra
-    // parcelada vista na fatura do mês seguinte ("X 4/12") bate com a parcela
-    // 4/12 já criada antes — mesmo que os dias não coincidam.
-    const serieKeyOf = (r) => {
-      const suffix = `|${normCur(r.currency)}|${Number(r.amount).toFixed(curFrac(r.currency))}`;
-      return r.installment ? `p|${stripAccents(r.desc)}|${r.type}|${r.installment}${suffix}`
-        : (r.fixed || r.fixa) ? `f|${stripAccents(r.desc)}|${r.type}|${(r.date || "").slice(0, 7)}${suffix}`
-          : null;
-    };
-    const keyOf = (r) => `${dupTxKey(r.date, r.desc, r.amount, r.type)}|${normCur(r.currency)}`;
-
-    const perFile = {}; // chave -> { src: quantas vezes naquele arquivo }
-    rows.forEach((r) => {
-      if (serieKeyOf(r)) return; // séries têm checagem própria acima
-      const k = keyOf(r);
-      const bySrc = (perFile[k] = perFile[k] || {});
-      bySrc[r.src || 0] = (bySrc[r.src || 0] || 0) + 1;
-    });
-    const allowed = {};
-    for (const k in perFile) allowed[k] = Math.max(...Object.values(perFile[k]));
-
-    const existing = Dashboard.existingTxKeys();
-    const existingSeries = Dashboard.existingSeriesKeys();
-    const seenSeries = new Set();
-    const seen = {};
+    if (typeof ImportMatch === "undefined") return 0;
+    const existing = ImportMatch.createIndex(Dashboard.existingTransactions?.() || []);
+    const seen = ImportMatch.createIndex();
     let flagged = 0;
-    // Um lançamento realmente visto tem prioridade sobre uma projeção da
-    // mesma parcela criada ao ler outro documento.
     [...rows].sort((a, b) => Number(!!a.gen) - Number(!!b.gen)).forEach((r) => {
-      const sk = serieKeyOf(r);
-      if (sk) {
-        const isDup = existingSeries.has(sk) || seenSeries.has(sk);
-        seenSeries.add(sk);
-        if (isDup && !r.dup && (!r.gen || includeGenerated)) flagged++;
-        r.dup = isDup;
-        if (isDup && !r.selectionTouched) r.on = false;
-        return;
-      }
-      const k = keyOf(r);
-      seen[k] = (seen[k] || 0) + 1;
-      const isDup = existing.has(k) || seen[k] > allowed[k];
-      if (isDup && !r.dup) flagged++;
-      r.dup = isDup;
-      if (isDup && !r.selectionTouched) r.on = false;
+      const candidate = effectiveRow(r);
+      const matches = [
+        ...ImportMatch.find(candidate, existing).map((m) => ({ ...m, origin: "Já na pasta" })),
+        ...ImportMatch.find(candidate, seen).map((m) => ({ ...m, origin: "Neste lote" }))
+      ];
+      const key = ImportMatch.reviewKey(candidate, matches);
+      if (matches.length && r.matchKey !== key) flagged++;
+      r.matches = matches; r.matchKey = key; r.dup = matches.length > 0;
+      if (r.on) ImportMatch.addToIndex(seen, candidate);
     });
     return flagged;
+  }
+  function matchHTML(r, index) {
+    if (!r.dup) return "";
+    r.displayedMatchKey = r.matchKey;
+    const comparisons = r.matches.slice(0, 3).map((m) => {
+      const t = m.transaction;
+      return '<small>' + escapeHtml(m.origin + ': ' + m.reason + '. ' + t.date + ' · ' + t.desc + ' · ' + fmtMoney(t.amount, t.currency) + ' · ' + (t.account || 'sem conta') + (t.referenceId ? ' · ref. ' + t.referenceId : '')) + '</small>';
+    }).join("");
+    return '<div class="batch-match">' + comparisons + (r.matches.length > 3 ? '<small>Mais ' + (r.matches.length - 3) + ' comparação(ões).</small>' : '') +
+      (r.confirmedMatch === r.matchKey ? '<strong>Confirmado como lançamento diferente</strong>' : '<button type="button" class="btn btn-ghost btn-sm" data-distinct="' + index + '">É um lançamento diferente</button>') + '</div>';
   }
 
   // Mensagem de sucesso do acúmulo (menciona o total quando já havia itens)
@@ -378,100 +387,98 @@ const Batch = (() => {
      Aceita várias imagens/PDFs de uma vez (ex: 4 prints da fatura); lê em
      sequência e ACUMULA tudo numa lista só, para um único OK. */
   async function fromPhotos(files, version = generation) {
-    if (!proxyAvailable()) {
-      setStatus("Leitura de foto/PDF funciona no endereço da nuvem (Vercel). Para uso local, use o Arquivo Excel.", "err");
-      return;
-    }
-    const token = (typeof Cloud !== "undefined" && Cloud.getToken) ? Cloud.getToken() : null;
-    if (!token) { setStatus("Entre na sua conta (seção nuvem) para usar a leitura por foto/PDF.", "err"); return; }
-
+    const preflightFailure = (message) => {
+      partialReviewed = false;
+      coverage.push(...Array.from(files, (f) => ({ label: f.name || "Imagem", status: "failed", message: "não lido: " + message })));
+      setStatus(message, "err"); renderPreview();
+    };
+    if (!proxyAvailable()) { preflightFailure("Leitura de foto/PDF funciona no app publicado. Para uso local, use Excel."); return; }
+    const token = typeof Cloud !== "undefined" && Cloud.getToken ? Cloud.getToken() : null;
+    if (!token) { preflightFailure("Entre na sua conta (seção nuvem) para ler fotos/PDFs."); return; }
+    if (files.length > MAX_FILES) { setStatus("Selecione até 15 arquivos. Nenhum arquivo foi lido.", "err"); return; }
+    partialReviewed = false;
+    const fileRecords = Array.from(files, (file) => ({ label: file.name || "Imagem", status: "pending", message: "aguardando leitura" }));
+    coverage.push(...fileRecords);
     let added = 0;
-    let falhas = [];
-    for (let i = 0; i < files.length; i++) {
-      if (version !== generation) return;
-      setStatus(files.length > 1
-        ? `Lendo arquivo ${i + 1} de ${files.length}… 🔎`
-        : "Lendo o arquivo… isso pode levar alguns segundos 🔎");
-      let image;
-      try { image = await Receipt.prepareFile(files[i]); }
-      catch (e) {
-        if (version !== generation) return;
-        falhas.push(e && e.message === "pdf_grande"
-          ? `"${files[i].name}" é um PDF grande demais (máx. 3 MB)`
-          : `arquivo ${i + 1} ilegível`);
-        continue;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        if (!contextValid(version)) return;
+        const record = fileRecords[i];
+        let allComplete = true, partCount = 0;
+        try {
+          const parts = Receipt.prepareParts ? Receipt.prepareParts(files[i]) : (async function* () { yield { ...await Receipt.prepareFile(files[i]), documentContext: { pageStart: 1, pageEnd: 1, totalPages: 1 }, label: "imagem 1 de 1" }; })();
+          for await (const part of parts) {
+            if (!contextValid(version)) return;
+            if (processedParts >= MAX_PARTS) throw new Error("limite_lote");
+            processedParts++;
+            partCount++;
+            const label = record.label + " · " + part.label;
+            const progress = { label, status: "pending", message: "lendo" };
+            coverage.push(progress);
+            setStatus("Arquivo " + (i + 1) + " de " + files.length + " · " + part.label + "…");
+            coverageUI();
+            const post = () => fetch(PROXY_PATH, {
+              signal: AbortSignal.timeout(65000), method: "POST",
+              headers: { "content-type": "application/json", authorization: "Bearer " + token },
+              body: JSON.stringify({ image: { media_type: part.mediaType, data: part.data }, multi: true,
+                categories: Dashboard.getCats(), cards: CARDS, documentContext: part.documentContext })
+            });
+            try {
+              let res = await post();
+              if (!contextValid(version)) return;
+              let data = await res.json().catch(() => ({}));
+              if (!contextValid(version)) return;
+              // Repetir somente falha transitória; não reenviar após erro de sessão.
+              if ((res.status === 502 || res.status === 504) && data.error !== "auth_indisponivel") {
+                res = await post(); if (!contextValid(version)) return;
+                data = await res.json().catch(() => ({})); if (!contextValid(version)) return;
+              }
+              if (!res.ok || data.error || !Array.isArray(data.itens)) {
+                const message = data.error === "auth_indisponivel" ? "Não foi possível verificar sua sessão agora." :
+                  data.error === "saldo_ia" ? "O serviço de leitura está sem créditos. Os itens já lidos continuam na prévia." :
+                  data.error === "configuracao_ia" ? "A leitura por IA precisa de ajuste na configuração do servidor. Os itens já lidos continuam na prévia." :
+                  res.status === 401 ? "Sua sessão expirou. Entre novamente." : res.status === 429 ? "Limite de leitura atingido. Aguarde e envie as partes restantes." : "Não foi possível ler esta parte.";
+                progress.status = "failed"; progress.message = message; allComplete = false;
+                if ([401, 429, 501, 503].includes(res.status) || data.error === "auth_indisponivel") {
+                  record.status = "partial"; record.message = "leitura interrompida; há partes não lidas";
+                  setStatus(message, "err"); return;
+                }
+                continue;
+              }
+              const count = part.documentContext.pageEnd - part.documentContext.pageStart + 1;
+              const c = data.coverage;
+              const complete = data.partial !== true && c?.complete === true && Array.isArray(c.pagesRead) &&
+                Array.isArray(c.unreadablePages) && c.unreadablePages.length === 0 &&
+                Array.from({ length: count }, (_, n) => n + 1).every((n) => c.pagesRead.includes(n));
+              const beforeExcluded = excludedCount;
+              const countAdded = ingestAiResult(data.itens, data.cartao, { ...data, sourceLabel: label, pageStart: part.documentContext.pageStart });
+              progress.count = countAdded; added += countAdded;
+              progress.status = complete && excludedCount === beforeExcluded ? "complete" : "partial";
+              progress.message = "cobertura incompleta ou não confirmada; compare com o documento";
+              if (progress.status !== "complete") allComplete = false;
+            } catch (error) {
+              if (!contextValid(version)) return;
+              progress.status = "failed"; progress.message = "leitura falhou ou excedeu o tempo; parte não importada";
+              allComplete = false;
+            }
+          }
+          record.status = allComplete && partCount ? "complete" : "partial";
+          record.message = "há partes incompletas; revisão obrigatória";
+        } catch (error) {
+          if (!contextValid(version)) return;
+          record.status = "failed";
+          record.message = error?.message === "limite_lote" ? "Limite de 120 partes por lote atingido; envie o restante em outro lote." : Receipt.prepFailMsg ? Receipt.prepFailMsg(error) : "Arquivo ilegível ou acima do limite; confira as partes não lidas.";
+          reviewWarnings.push(record.label + ": " + record.message);
+        }
       }
-      if (version !== generation) return;
-
-      const postPhoto = () => fetch(PROXY_PATH, {
-        signal: AbortSignal.timeout(65000),
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer " + token },
-        body: JSON.stringify({
-          image: { media_type: image.mediaType, data: image.data },
-          multi: true,
-          categories: Dashboard.getCats(), // a IA escolhe a categoria por item
-          cards: CARDS,                    // e identifica de qual cartão é a fatura
-        }),
-      });
-      try {
-        let res = await postPhoto();
-        if (version !== generation) return;
-        let data = await res.json().catch(() => ({}));
-        if (version !== generation) return;
-        if (data.error === "auth_indisponivel") {
-          setStatus("Não foi possível verificar sua sessão agora. Tente novamente mais tarde; seus dados continuam salvos.", "err");
-          renderIfAny(added); return;
-        }
-        // 504/502 = a leitura demorou demais nesta imagem (fatura densa).
-        // Espera um instante e tenta ela de novo antes de dar como falha.
-        if (res.status === 504 || res.status === 502) {
-          setStatus(`O arquivo ${i + 1} demorou mais que o normal — tentando de novo… ⏳`);
-          await new Promise((r) => setTimeout(r, 2500));
-          if (version !== generation) return;
-          res = await postPhoto();
-          if (version !== generation) return;
-          data = await res.json().catch(() => ({}));
-          if (version !== generation) return;
-        }
-        // Erros de conta/servidor interrompem tudo (repetir não resolveria)
-        if (res.status === 401) { setStatus("Sua sessão expirou. Entre novamente na seção nuvem.", "err"); renderIfAny(added); return; }
-        if (res.status === 503) { setStatus("A IA está sobrecarregada agora (pico de uso do Google). Aguarde alguns segundos e clique de novo.", "err"); renderIfAny(added); return; }
-        if (res.status === 429) { setStatus("Limite de leituras atingido — aguarde um minuto e tente as imagens restantes.", "err"); renderIfAny(added); return; }
-        if (res.status === 501) { setStatus("A leitura por IA ainda não foi ativada no servidor.", "err"); renderIfAny(added); return; }
-        if (res.status === 504) {
-          falhas.push(`arquivo ${i + 1} demorou demais mesmo repetindo — se for uma fatura muito longa, envie-a em 2 pedaços (topo e fim)`);
-          continue;
-        }
-        if (!res.ok) {
-          const detail = data?.detail || data?.error || "";
-          falhas.push(`arquivo ${i + 1} falhou (${res.status}${detail ? " — " + detail : ""})`);
-          continue;
-        }
-        if (data.partial) falhas.push(`arquivo ${i + 1} foi lido parcialmente; confira se faltam linhas e envie o restante`);
-        if (data.error === "refusal") { falhas.push(`arquivo ${i + 1} não pôde ser lido`); continue; }
-        const novosN = ingestAiResult(data.itens, data.cartao, data);
-        if (!novosN) { falhas.push(`arquivo ${i + 1} sem itens reconhecidos`); continue; }
-        added += novosN;
-      } catch (e) {
-        if (version !== generation) return;
-        console.error(e);
-        setStatus("Sem conexão — tente de novo.", "err");
-        renderIfAny(added);
-        return;
+      if (!contextValid(version)) return;
+      setStatus(added + " lançamento(s) reconhecido(s). " + (incomplete() ? "Há partes incompletas: confira a lista de leitura." : "Confira os dados e possíveis repetições antes de adicionar."), incomplete() ? "warn" : "ok");
+    } finally {
+      if (contextValid(version)) {
+        coverage.filter((p) => p.status === "pending").forEach((p) => { p.status = "failed"; p.message = "não lido: execução interrompida"; });
+        flagDuplicates(); renderPreview();
       }
     }
-    if (version !== generation) return;
-    reviewWarnings.push(...falhas);
-    const flagged = flagDuplicates();
-    if (added) {
-      statusAcumulo(added);
-      if (falhas.length || reviewWarnings.length || excludedCount) setStatus(`${added} itens lidos com avisos. Confira a revisão abaixo antes de adicionar.`, "warn");
-      if (flagged) setStatus(`${added} itens lidos — ⚠ ${flagged} desmarcado(s) por parecerem duplicados. Se forem compras reais, marque-os de volta.${falhas.length ? " Atenção: " + falhas.join("; ") + "." : ""}`, "warn");
-    } else {
-      setStatus(falhas.length ? `Nada reconhecido: ${falhas.join("; ")}.` : "Não reconheci itens nesses arquivos. Tente fotos mais nítidas ou outro PDF.", "err");
-    }
-    renderPreview();
   }
 
   function renderIfAny(added) {
@@ -480,24 +487,34 @@ const Batch = (() => {
 
   /* ---------- Origem: ARQUIVO(s) EXCEL (local, offline) ---------- */
   async function fromFiles(files, version = generation) {
+    if (files.length > MAX_FILES) { setStatus("Selecione até 15 arquivos. Nenhum arquivo foi lido.", "err"); return; }
+    partialReviewed = false;
     let added = 0;
     let falhas = [];
     for (const file of files) {
-      if (version !== generation) return;
-      if (file.size > 30 * 1024 * 1024) { falhas.push(`"${file.name}" grande demais (máx. 30 MB)`); continue; }
+      if (!contextValid(version)) return;
+      const progress = { label: file.name, status: "pending", message: "aguardando leitura" };
+      coverage.push(progress);
+      if (file.size > 30 * 1024 * 1024) { falhas.push(`"${file.name}" grande demais (máx. 30 MB)`); progress.status = "failed"; progress.message = "acima de 30 MB"; continue; }
       setStatus(files.length > 1 ? `Lendo "${file.name}"…` : "Lendo a planilha…");
       try {
         const txs = await Importer.readForBatch(file);
-        if (version !== generation) return;
+        if (!contextValid(version)) return;
+        const report = txs.readReport;
+        if (report) reviewWarnings.push(...report.warnings);
+        progress.status = report && (report.skipped || report.unknownSheets.length || report.warnings.length) ? "partial" : "complete";
+        progress.message = "linhas/abas não reconhecidas ou dados estimados; compare com a planilha e confira os avisos";
         const novos = normalize(txs);
-        if (!novos.length) { falhas.push(`"${file.name}" sem transações reconhecidas`); continue; }
+        if (!novos.length) { falhas.push(`"${file.name}" sem transações reconhecidas`); progress.status = "failed"; continue; }
+        progress.count = novos.length;
         const src = srcSeq++;
-        novos.forEach((r) => { r.src = src; });
+        novos.forEach((r) => { r.src = src; r.sourceLabel = file.name; });
         rows.push(...novos);
         added += novos.length;
         reviewWarnings.push("Confira a moeda sugerida pela planilha. O seletor do lote permite corrigi-la antes de salvar.");
       } catch (e) {
-        if (version !== generation) return;
+        if (!contextValid(version)) return;
+        progress.status = "failed"; progress.message = "arquivo não lido";
         console.error(e);
         falhas.push(`"${file.name}" inválido`);
       }
@@ -507,7 +524,7 @@ const Batch = (() => {
     if (added) {
       statusAcumulo(added);
       if (falhas.length || excludedCount) setStatus(`${added} itens lidos com avisos. Confira a revisão abaixo antes de adicionar.`, "warn");
-      if (flagged) setStatus(`${added} itens lidos — ⚠ ${flagged} desmarcado(s) por parecerem duplicados (já estão na pasta ou repetiram entre os arquivos). Se forem compras reais, marque-os de volta.`, "warn");
+      if (flagged) setStatus(`${added} itens lidos — ${flagged} coincidência(s) precisam de revisão antes de adicionar.`, "warn");
     } else {
       setStatus(falhas.length ? `Nada lido: ${falhas.join("; ")}.` : "Não reconheci transações. Confira o formato (Data, Descrição, Valor).", "err");
     }
@@ -516,6 +533,12 @@ const Batch = (() => {
 
   function save() {
     if (reading) { toast("Aguarde a leitura terminar antes de adicionar."); return; }
+    if (!contextValid()) { toast("A pasta ou conta mudou. Reabra a importação na pasta desejada."); return; }
+    if (incomplete() && !partialReviewed) { toast("Confira as partes incompletas e confirme a revisão antes de salvar."); return; }
+    flagDuplicates();
+    if (rows.some((r) => r.on && r.dup && r.confirmedMatch !== r.matchKey)) {
+      renderPreview(); toast("Há coincidências para revisar. Desmarque o item ou confirme que é um lançamento diferente."); return;
+    }
     const fallbackCat = $("#batch-cat").value;
     const selectedCurrency = $("#batch-cur").value;
     const account = $("#batch-acc").value;
@@ -539,8 +562,12 @@ const Batch = (() => {
       installment: r.installment || null,
       totalValue: r.totalValue,
       fixed: r.fixed === true,
+      ...(r.referenceId ? { referenceId: r.referenceId } : {}),
+      ...(r.sourceEvidence ? { sourceEvidence: r.sourceEvidence } : {}),
+      ...(r.sourcePage ? { sourcePage: r.sourcePage } : {}),
     }));
     const n = Dashboard.appendImported(txs);
+    if (n !== txs.length) { toast("Não foi possível adicionar todos os itens. A prévia foi mantida; confira se a pasta ainda está disponível."); return; }
     close();
     toast(`${n} transaç${n === 1 ? "ão adicionada" : "ões adicionadas"} ✔`);
   }
@@ -550,7 +577,7 @@ const Batch = (() => {
     $("#btn-batch-photo").addEventListener("click", () => $("#batch-input-photo").click());
     $("#btn-batch-file").addEventListener("click", () => $("#batch-input-file").click());
     $("#batch-input-photo").addEventListener("change", (ev) => {
-      const fs = Array.from(ev.target.files || []).slice(0, 15);
+      const fs = Array.from(ev.target.files || []);
       if (fs.length) runImport(fromPhotos, fs);
       ev.target.value = "";
     });
@@ -562,12 +589,12 @@ const Batch = (() => {
       // da importação inicial (categoria/cartão/parcela/recorrente por linha),
       // adicionando à pasta atual. Contexto de amigo (categoria pré-definida):
       // mantém o modo simples que joga tudo na categoria do amigo.
-      if (!presetCat) {
+      if (!presetCat && fs.length === 1 && !rows.length && !coverage.length) {
         close();
         Importer.handleFile(fs[0], { addToCurrent: true });
         return;
       }
-      runImport(fromFiles, fs.slice(0, 15));
+      runImport(fromFiles, fs);
     });
     $("#btn-batch-cancel").addEventListener("click", close);
     $("#btn-batch-save").addEventListener("click", save);
@@ -576,18 +603,30 @@ const Batch = (() => {
     // Trocar a categoria geral aplica a TODAS as linhas (elas voltam a segui-la)
     $("#batch-cat").addEventListener("change", () => { rows.forEach((r) => { r.cat = null; }); renderPreview(); });
     // Cartão escolhido à mão prevalece sobre o detectado pela IA
-    $("#batch-acc").addEventListener("change", () => { chosenAccount = $("#batch-acc").value; renderReviewSummary(); });
+    $("#batch-acc").addEventListener("change", () => { chosenAccount = $("#batch-acc").value; renderPreview(); });
+    $("#batch-partial-ack").addEventListener("change", () => { partialReviewed = $("#batch-partial-ack").checked; updateCount(); });
     $("#batch-include-generated").addEventListener("change", () => {
       includeGenerated = $("#batch-include-generated").checked;
       flagDuplicates();
       rows.forEach((r) => {
-        if (r.gen) { r.on = includeGenerated && !r.dup; r.selectionTouched = false; }
+        if (r.gen) { r.on = includeGenerated; r.selectionTouched = false; }
       });
       renderPreview();
     });
 
     // Edição inline da lista
     const tbody = $("#batch-tbody");
+    tbody.addEventListener("click", (ev) => {
+      const button = ev.target.closest?.("[data-distinct]");
+      const index = button ? Number(button.dataset.distinct) : NaN;
+      if (!Number.isInteger(index) || !rows[index]) return;
+      const displayed = rows[index].displayedMatchKey;
+      flagDuplicates();
+      if (displayed !== rows[index].matchKey) { renderPreview(); toast("A comparação mudou. Confira os dados atualizados antes de confirmar."); return; }
+      rows[index].confirmedMatch = rows[index].matchKey;
+      rows[index].on = true;
+      renderPreview();
+    });
     tbody.addEventListener("input", (ev) => {
       const el = ev.target;
       const i = Number(el.dataset.i);
@@ -611,14 +650,14 @@ const Batch = (() => {
     });
     tbody.addEventListener("change", (ev) => {
       const el = ev.target;
-      if (el.dataset.f === "date") { renderPreview(); return; }
+      if (el.dataset.f) { renderPreview(); return; }
       if (!el.classList.contains("batch-check")) return;
       const i = Number(el.dataset.i);
       if (isNaN(i) || !rows[i]) return;
       rows[i].on = el.checked;
       rows[i].selectionTouched = true;
       el.closest("tr").classList.toggle("batch-off", !el.checked);
-      updateCount();
+      renderPreview();
     });
   });
 

@@ -53,8 +53,8 @@ const PALETTE = ["#8b5cf6","#45c483","#f5a524","#f06a5f","#38bdf8","#2dd4bf","#f
 
 const DEFAULT_CATS = ["Essencial","Lazer","Viagem","Moradia","Saúde","Transporte","Salário","Outros"];
 
-// Cartões/contas disponíveis no seletor (C6 vem pré-selecionado)
-const CARDS = ["C6","Nubank Yara","Nubank Gab","Picpay","Wise","Payoneer","Lily","Inter"];
+// Cartões/contas disponíveis no seletor; novas transações começam sem conta.
+const CARDS = ["C6","Nubank Yara","Nubank Gab","Picpay","Wise","Payoneer","Lily","Inter","Ether.fi","Ugly Cash","Ueno","Mercury","Itaú"];
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -75,6 +75,64 @@ function stripAccents(s) {
 function dupTxKey(date, desc, amount, type) {
   return `${date}|${stripAccents(desc)}|${(Number(amount) || 0).toFixed(6)}|${type}`;
 }
+
+// Comparação contextual: nenhum resultado é autorização para apagar um gasto.
+// A assinatura inclui os dados comparados para invalidar uma revisão após edição.
+const ImportMatch = (() => {
+  const text = (v) => stripAccents(v).replace(/\s+/g, " ");
+  const reference = (v) => String(v || "").trim().toLowerCase();
+  function signature(t) {
+    return JSON.stringify([t.id || "", t.date, text(t.desc), Number(t.amount), t.type,
+      normCur(t.currency), text(t.account), reference(t.referenceId), t.installment || ""]);
+  }
+  function compare(a, b) {
+    if (!a || !b || a.type !== b.type || normCur(a.currency) !== normCur(b.currency)) return null;
+    const ref = reference(a.referenceId), sameRef = ref && ref === reference(b.referenceId);
+    const sameValue = Number.isFinite(Number(a.amount)) && Number(a.amount) === Number(b.amount);
+    const sameDate = isValidISODate(a.date) && a.date === b.date;
+    if (!sameRef && !(sameValue && sameDate) && !((a.gen || b.gen) && a.installment && a.installment === b.installment && sameValue)) return null;
+    const aa = text(a.account), ba = text(b.account);
+    const sameDesc = text(a.desc) && text(a.desc) === text(b.desc);
+    // Projeções geradas podem coincidir com a parcela observada em outra fatura.
+    const projection = (a.gen || b.gen) && a.installment && a.installment === b.installment && sameDesc && sameValue && aa === ba;
+    if (sameRef) return { kind: sameDate && sameValue && aa === ba ? "strong" : "possible", reason: "Mesma referência informada; confira se identifica a mesma operação" };
+    if (projection) return { kind: "strong", reason: "Projeção da mesma parcela identificada no lote" };
+    if (!sameValue || !sameDate) return null;
+    if (aa && ba && aa !== ba) return { kind: "possible", reason: "Data e valor iguais, mas contas diferentes; confira a conta e se são operações distintas" };
+    if (a.referenceId && b.referenceId && reference(a.referenceId) !== reference(b.referenceId)) return { kind: "possible", reason: "Data e valor iguais, mas referências diferentes: podem ser operações distintas" };
+    if (sameDesc && aa === ba) return { kind: "strong", reason: "Mesma data, descrição, valor, moeda, tipo e conta informada" };
+    return { kind: "possible", reason: sameDesc ? "Data, descrição e valor iguais; falta confirmar a conta" : "Só data, valor, moeda e tipo coincidem; a descrição difere" };
+  }
+  function keys(t) {
+    const scope = [t.type, normCur(t.currency)];
+    return [JSON.stringify(["value", ...scope, t.date, Number(t.amount)]),
+      ...(reference(t.referenceId) ? [JSON.stringify(["ref", ...scope, reference(t.referenceId)])] : []),
+      ...(t.installment ? [JSON.stringify(["projection", ...scope, t.installment, Number(t.amount), text(t.desc), text(t.account)])] : [])];
+  }
+  function addToIndex(index, transaction) {
+    keys(transaction).forEach((key) => {
+      if (!index.buckets.has(key)) index.buckets.set(key, []);
+      index.buckets.get(key).push(transaction);
+    });
+  }
+  function createIndex(transactions = []) {
+    const index = { buckets: new Map() };
+    transactions.forEach((transaction) => addToIndex(index, transaction));
+    return index;
+  }
+  function find(candidate, transactions) {
+    const index = Array.isArray(transactions) ? createIndex(transactions) : transactions || createIndex();
+    const candidates = [...new Set(keys(candidate).flatMap((key) => index.buckets.get(key) || []))];
+    return candidates.flatMap((transaction) => {
+      const match = compare(candidate, transaction);
+      return match ? [{ ...match, transaction, signature: signature(transaction) }] : [];
+    });
+  }
+  function reviewKey(candidate, matches) {
+    return JSON.stringify([signature(candidate), matches.map((m) => [m.kind, m.signature]).sort()]);
+  }
+  return { find, compare, signature, reviewKey, createIndex, addToIndex };
+})();
 
 // 'YYYY-MM-DD' -> 'dd/mm/aaaa'
 function fmtDate(iso) {
@@ -430,9 +488,14 @@ function closeNameModal() {
 
 /* ---------- Modal de confirmação ---------- */
 let confirmCallback = null;
-function askConfirm(title, text, cb) {
+function askConfirm(title, text, cb, options) {
   $("#modal-confirm-title").textContent = title;
   $("#modal-confirm-text").textContent = text;
+  $("#modal-confirm-text").style.whiteSpace = "pre-line";
+  const button = $("#btn-confirm-ok");
+  button.textContent = options?.confirmLabel || "Excluir";
+  button.classList.toggle("btn-danger", !options?.confirmLabel);
+  button.classList.toggle("btn-primary", !!options?.confirmLabel);
   confirmCallback = cb;
   $("#modal-confirm").classList.remove("hidden");
 }
@@ -655,6 +718,9 @@ function sanitizeDataset(raw, opts) {
       desc: text(t.desc, 120).trim() || "(sem descrição)",
       category: text(t.category, 40).trim() || "Outros",
       account: text(t.account, 40).trim(),
+      ...(typeof t.referenceId === "string" && t.referenceId.trim() ? { referenceId: text(t.referenceId, 160).trim() } : {}),
+      ...(typeof t.sourceEvidence === "string" && t.sourceEvidence.trim() ? { sourceEvidence: text(t.sourceEvidence, 300).trim() } : {}),
+      ...(Number.isInteger(t.sourcePage) && t.sourcePage > 0 ? { sourcePage: t.sourcePage } : {}),
       type: t.type === "receita" ? "receita" : "despesa",
       amount,
       currency: normCur(t.currency),

@@ -35,3 +35,5 @@
 !/lib/xlsx.min.js
 !/server/whatsapp-core.cjs
 !/vercel.json
+!/lib/pdf-lib.min.js
+!/lib/pdf-lib.LICENSE.md

@@ -1004,3 +1004,12 @@ body.hide-money .fx-rows { filter: blur(7px); user-select: none; }
   .fx-metric-value strong { font-size: 12px; }
 }
 
+/* Conferência contextual de importações. */
+.import-review { margin: 12px 0; padding: 14px; border: 1px solid var(--border, #767080); border-radius: 12px; }
+.import-review article + article { border-top: 1px solid var(--border, #767080); margin-top: 12px; padding-top: 12px; }
+.import-review p, .batch-match p { margin: 4px 0 8px; }
+.batch-match { display: block; margin-top: 8px; padding: 9px; border: 1px solid #d49e37; border-radius: 8px; font-size: 12px; line-height: 1.5; white-space: normal; min-width: 230px; }
+.batch-match button { margin-top: 6px; white-space: normal; }
+.batch-match small { display: block; overflow-wrap: anywhere; }
+#batch-coverage { max-height: 180px; overflow-y: auto; font-size: 13px; }
+#batch-partial-wrap { padding: 10px; border: 1px solid #d49e37; border-radius: 10px; align-items: start; }
