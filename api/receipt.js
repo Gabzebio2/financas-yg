@@ -31,6 +31,12 @@ const EVIDENCE_PROMPT = `\nPara conferir a extração, inclua em cada operação
 Mesmo data, valor e estabelecimento iguais NÃO provam duplicação: preserve cada linha de operação distinta. A comparação com lançamentos já salvos acontece no app, com revisão humana.`;
 const COVERAGE_PROMPT = `\nAlém de cartao/itens, retorne "coverage": {"pagesRead":[1],"unreadablePages":[],"complete":true}.
 Liste em pagesRead TODAS as páginas locais percorridas, mesmo sem operações. Liste em unreadablePages páginas com linhas ilegíveis/cortadas. complete só é true quando percorreu integralmente todas as páginas enviadas e todas as operações foram legíveis. Nunca marque completo só porque encontrou alguns itens. Não omita silenciosamente linhas por falta de espaço.`;
+const AUDIT_PROMPT = `\nCONFERÊNCIA INDEPENDENTE: execute uma nova leitura cuidadosa do documento original. Você não recebe nem deve imaginar a extração de outra leitura. Extraia novamente cada operação visível no mesmo formato, preservando sua multiplicidade.
+ESCOPO DESTE ENVIO: documentos longos são enviados em partes de propósito. A conferência de completude abrange SOMENTE as páginas físicas recebidas neste arquivo, no intervalo declarado pelo contexto. Páginas anteriores ou posteriores desse documento que estão fora do intervalo serão tratadas em outros envios: sua ausência esperada NÃO é um problema, NÃO gera auditIssues e NÃO torna coverage.complete falso. Não exija o documento inteiro para confirmar este trecho. Exemplo: receber as posições 1 a 2 de 4 não é motivo para avisar que faltam as páginas 3 e 4.
+Percorra todas as linhas de cada página, inclusive margens e finais; confira dígitos, separador decimal, moeda original/cobrada, data, parcela e sinais de estorno/crédito. Distinga lançamentos de saldos, totais, liquidação de fatura e resumos. Não invente operações para fechar um total.
+Essa divisão intencional não dispensa verificar as páginas recebidas: cortes, linhas ilegíveis ou uma página ausente DENTRO do intervalo declarado continuam sendo problemas reais e devem ser sinalizados.
+Quando o documento trouxer um subtotal inequívoco das operações presentes neste trecho, use-o somente para conferir a leitura. Não compare um total de páginas ausentes com este trecho e não transforme resumo em lançamento. Uma divergência não resolvida, corte ou trecho ilegível deve ser informado.
+Inclua "auditIssues": lista de até 10 avisos curtos, em português, sobre problemas gerais de completude, legibilidade ou conferência de totais. Use [] apenas quando não houver problema identificado. Dúvidas específicas de uma operação vão em incertezas. Isto não é uma análise de duplicatas do banco de dados do usuário.`;
 
 function documentContext(value) {
   if (value == null) return null;
@@ -155,19 +161,24 @@ function providerConfig() {
 
 // Credencial própria do projeto (BYOK), mantida apenas no servidor. Não usamos
 // sessão/assinatura do ChatGPT nem enviamos o histórico financeiro para comparar.
-async function callOpenAI(key, image, categories, cards, multi, timeoutMs = 45000, context = null) {
+async function callOpenAI(key, image, categories, cards, multi, timeoutMs = 45000, context = null, audit = false) {
   const media = image.media_type === "application/pdf"
     ? { type: "input_file", filename: "documento.pdf", file_data: `data:application/pdf;base64,${image.data}` }
     : { type: "input_image", image_url: `data:${image.media_type};base64,${image.data}`, detail: "high" };
+  const schema = jsonSchema(geminiSchema(multi, categories));
+  if (audit) {
+    schema.properties.auditIssues = { type: "array", items: { type: "string" } };
+    schema.required.push("auditIssues");
+  }
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
     headers: { "content-type": "application/json", Authorization: `Bearer ${key}` },
     body: JSON.stringify({
-      model: MODEL_OPENAI, store: false, reasoning: { effort: "low" },
+      model: MODEL_OPENAI, store: false, reasoning: { effort: audit ? "medium" : "low" },
       max_output_tokens: multi ? 16384 : 4096,
-      instructions: promptFor(multi, categories, cards, context),
+      instructions: promptFor(multi, categories, cards, context) + (audit ? AUDIT_PROMPT : ""),
       input: [{ role: "user", content: [media, { type: "input_text", text: "Extraia as operações deste documento conforme as regras." }] }],
-      text: { format: { type: "json_schema", name: multi ? "extrato" : "comprovante", strict: true, schema: jsonSchema(geminiSchema(multi, categories)) } },
+      text: { format: { type: "json_schema", name: audit ? "conferencia_extrato" : multi ? "extrato" : "comprovante", strict: true, schema } },
     }),
   });
   if (!response.ok) {
@@ -422,6 +433,165 @@ function cleanCoverage(raw, context, itens) {
   return { pagesRead, unreadablePages, complete };
 }
 
+// reviewOf is comparison data, never a prompt. Reject malformed snapshots rather
+// than silently cleaning, truncating, coercing or dropping their financial rows.
+function validateReview(value, categories, cards, context) {
+  const object = v => !!v && typeof v === "object" && !Array.isArray(v);
+  const fieldsOnly = (v, fields) => Object.keys(v).every(key => fields.includes(key));
+  const string = (v, max) => typeof v === "string" && v.length <= max;
+  if (!context || !object(value) || !fieldsOnly(value, ["itens", "cartao", "coverage", "partial"]) ||
+      !Array.isArray(value.itens) || !string(value.cartao, 40) || typeof value.partial !== "boolean") return "revisao_invalida";
+  if (value.itens.length > 2000) return "revisao_grande";
+  let bytes = 0;
+  for (const char of JSON.stringify(value)) {
+    const cp = char.codePointAt(0);
+    bytes += cp < 128 ? 1 : cp < 2048 ? 2 : cp < 65536 ? 3 : 4;
+    if (bytes > 256 * 1024) return "revisao_grande";
+  }
+  if (value.cartao && !cards.includes(value.cartao)) return "revisao_invalida";
+  const count = context.pageEnd - context.pageStart + 1, coverage = value.coverage;
+  const pages = list => Array.isArray(list) && list.length <= count &&
+    list.every(page => Number.isSafeInteger(page) && page >= 1 && page <= count) && new Set(list).size === list.length;
+  if (!object(coverage) || !fieldsOnly(coverage, ["pagesRead", "unreadablePages", "complete"]) ||
+      typeof coverage.complete !== "boolean" || !pages(coverage.pagesRead) || !pages(coverage.unreadablePages)) return "revisao_invalida";
+  const required = { data: 10, descricao: 120, moeda: 4, tipo: 7, categoria: 80, parcela: 5 };
+  const optional = { referencia: 120, evidencia: 180, instituicao: 80 };
+  const allowed = [...Object.keys(required), ...Object.keys(optional), "valor", "fixa", "pagina", "revisar"];
+  for (const item of value.itens) {
+    if (!object(item) || !fieldsOnly(item, allowed) || typeof item.fixa !== "boolean" ||
+        typeof item.valor !== "number" || !(item.valor > 0) ||
+        Object.entries(required).some(([key, max]) => !string(item[key], max)) ||
+        Object.entries(optional).some(([key, max]) => item[key] !== undefined && !string(item[key], max)) ||
+        (item.pagina !== undefined && (!Number.isSafeInteger(item.pagina) || item.pagina < 1 || item.pagina > count)) ||
+        (item.revisar !== undefined && (!Array.isArray(item.revisar) || item.revisar.length > 10 || item.revisar.some(reason => !string(reason, 200))))) return "revisao_invalida";
+    const cleaned = cleanItem(item, categories, true, count);
+    if (!cleaned || cleaned.valor !== item.valor || cleaned.data !== item.data || cleaned.categoria !== item.categoria ||
+        cleaned.parcela !== item.parcela || cleaned.fixa !== item.fixa) return "revisao_invalida";
+  }
+  return null;
+}
+
+function batchResult(out, categories, cards, context, audit = false) {
+  let itens = [], cartao = "", rawCoverage, rawAuditIssues;
+  let partial = out.partial === true;
+  const avisos = [];
+  try {
+    const parsed = JSON.parse(out.text);
+    if (Array.isArray(parsed)) itens = parsed;
+    else if (parsed && typeof parsed === "object") {
+      if (!Array.isArray(parsed.itens)) throw new Error("formato_invalido");
+      itens = parsed.itens;
+      cartao = typeof parsed.cartao === "string" ? parsed.cartao.slice(0, 40) : "";
+      rawCoverage = parsed.coverage;
+      rawAuditIssues = parsed.auditIssues;
+    } else throw new Error("formato_invalido");
+  } catch {
+    itens = salvageItems(out.text);
+    partial = true;
+  }
+  const pageCount = context ? context.pageEnd - context.pageStart + 1 : 120;
+  const cleaned = itens.slice(0, 2000).map(item => cleanItem(item, categories, true, pageCount)).filter(Boolean);
+  const coverage = cleanCoverage(rawCoverage, context, itens);
+  if ((context || rawCoverage) && !coverage.complete) {
+    partial = true;
+    avisos.push("Cobertura incompleta ou não confirmada: confira as páginas/trechos deste envio.");
+  }
+  if (cleaned.length !== itens.length) {
+    partial = true;
+    avisos.push(`${itens.length - cleaned.length} linha(s) não incluída(s): valor, moeda, tipo ou resumo não confiável. Confira o documento.`);
+  }
+  const auditIssues = [];
+  if (audit) {
+    if (!Array.isArray(rawAuditIssues) || rawAuditIssues.length > 10 || rawAuditIssues.some(issue => typeof issue !== "string" || !issue.trim() || issue.length > 200)) {
+      auditIssues.push("A segunda leitura não confirmou a conferência geral do documento.");
+    }
+    if (Array.isArray(rawAuditIssues)) auditIssues.push(...rawAuditIssues.filter(issue => typeof issue === "string" && issue.trim()).slice(0, 10).map(issue => issue.trim().slice(0, 200)));
+  }
+  if (partial) { coverage.complete = false; avisos.push("Leitura parcial: compare a prévia com todas as páginas do documento."); }
+  if (cleaned.some(item => item.revisar?.length)) avisos.push("Há campos incertos. Revise os avisos de cada item antes de adicionar.");
+  if (!cleaned.length && partial) return { error: "resposta_invalida", avisos, coverage };
+  return { cartao: cards.includes(cartao) ? cartao : "", itens: cleaned, partial, avisos, coverage, ...(audit ? { auditIssues } : {}) };
+}
+
+// Conservative text equivalence: whitespace/case only, not fuzzy descriptions,
+// accent removal, punctuation stripping or amount/date-only deduplication.
+function reviewText(value) { return String(value || "").normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase(); }
+function reviewReference(item) { return (item.referencia || "").trim(); }
+function reviewFields(item, card) {
+  return [item.data, item.valor, item.moeda, item.tipo, item.parcela, item.fixa, reviewText(item.categoria),
+    reviewText(item.instituicao || card), reviewReference(item), reviewText(item.descricao), item.pagina || 0];
+}
+
+function compareReview(first, second, config, context) {
+  const available = new Set(second.itens.map((_, index) => index));
+  const matches = new Map(), ambiguous = new Set();
+  const exact = new Map(), references = new Map(), origins = new Map();
+  const push = (map, key, index) => { if (!map.has(key)) map.set(key, []); map.get(key).push(index); };
+  const origin = item => item.pagina && reviewText(item.descricao) ? JSON.stringify([item.pagina, reviewText(item.descricao)]) : "";
+  second.itens.forEach((item, index) => {
+    push(exact, JSON.stringify(reviewFields(item, second.cartao)), index);
+    if (reviewReference(item)) push(references, reviewReference(item), index);
+    if (origin(item)) push(origins, origin(item), index);
+  });
+  // Match exact occurrences first, so a divergent row cannot consume a later
+  // exact match and two legitimate identical purchases remain two occurrences.
+  first.itens.forEach((item, index) => {
+    const candidates = exact.get(JSON.stringify(reviewFields(item, first.cartao)));
+    if (candidates?.length) {
+      const found = candidates.pop();
+      matches.set(index, found); available.delete(found);
+    }
+  });
+  first.itens.forEach((item, index) => {
+    if (matches.has(index)) return;
+    let candidates = (references.get(reviewReference(item)) || []).filter(candidate => available.has(candidate));
+    if (candidates.length > 1) {
+      const sameOrigin = candidates.filter(candidate => origin(item) && origin(second.itens[candidate]) === origin(item));
+      if (sameOrigin.length) candidates = sameOrigin;
+    }
+    if (!candidates.length) candidates = (origins.get(origin(item)) || []).filter(candidate => available.has(candidate));
+    if (candidates.length > 1) {
+      const sameOperation = candidates.filter(candidate => {
+        const other = second.itens[candidate];
+        return other.data === item.data && other.valor === item.valor && other.moeda === item.moeda && other.tipo === item.tipo;
+      });
+      if (sameOperation.length) candidates = sameOperation;
+    }
+    if (candidates.length === 1) { matches.set(index, candidates[0]); available.delete(candidates[0]); }
+    else if (candidates.length > 1) ambiguous.add(index);
+  });
+  const globalReasons = [];
+  if (first.partial || !cleanCoverage(first.coverage, context, first.itens).complete) globalReasons.push("A primeira leitura tem cobertura incompleta ou não confirmada.");
+  if (second.partial || !second.coverage.complete) globalReasons.push("A segunda leitura tem cobertura incompleta ou não confirmada.");
+  if (reviewText(first.cartao) !== reviewText(second.cartao)) globalReasons.push("As leituras identificaram cartões/contas do documento diferentes.");
+  globalReasons.push(...second.auditIssues);
+  const labels = ["Data", "Valor", "Moeda", "Tipo de operação", "Parcela", "Recorrência", "Categoria", "Conta/cartão", "Referência", "Descrição", "Página de origem"];
+  const items = first.itens.map((item, index) => {
+    const reasons = [...globalReasons];
+    const found = matches.get(index);
+    if (found === undefined) reasons.push(ambiguous.has(index) ? "Há mais de uma correspondência possível; confira esta operação." : "Operação não localizada na segunda leitura.");
+    else {
+      const other = second.itens[found], a = reviewFields(item, first.cartao), b = reviewFields(other, second.cartao);
+      a.forEach((value, field) => { if (value !== b[field]) reasons.push(`${labels[field]} diverge entre as duas leituras.`); });
+      if (other.revisar?.length) reasons.push("Há campos incertos na segunda leitura desta operação.");
+      if (!other.evidencia?.trim()) reasons.push("A segunda leitura não informou evidência da linha.");
+    }
+    if (item.revisar?.length) reasons.push("Há campos incertos na primeira leitura desta operação.");
+    if (!item.data || !item.descricao.trim() || !item.categoria) reasons.push("A operação tem campos obrigatórios não identificados.");
+    if (!item.evidencia?.trim()) reasons.push("A primeira leitura não informou evidência da linha.");
+    const unique = [...new Set(reasons)];
+    return { index, status: unique.length ? "attention" : "verified", reasons: unique };
+  });
+  const additionalItems = [...available].map(index => second.itens[index]);
+  const issues = [...new Set(globalReasons)];
+  const attention = items.filter(item => item.status !== "verified").length;
+  // issues describe the whole document chunk. Row counts belong to items and
+  // additionalItems; treating those counts as global issues would unnecessarily
+  // invalidate every other independently verified operation.
+  return { status: issues.length || attention || additionalItems.length ? "attention" : "verified", model: config.model, provider: config.provider,
+    checkedCount: first.itens.length, items, additionalItems, issues, coverage: second.coverage };
+}
+
 /* ---------- Handler ---------- */
 module.exports = async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -465,10 +635,20 @@ module.exports = async (req, res) => {
   const categories = cleanNames(body.categories, ["Outros"]);
   // Cartões/contas do usuário: a IA escolhe de qual cartão é a fatura (lote)
   const cards = cleanNames(body.cards).slice(0, 20);
+  const reviewing = Object.prototype.hasOwnProperty.call(body, "reviewOf");
+  if (reviewing) {
+    const problem = multi ? validateReview(body.reviewOf, categories, cards, context) : "revisao_invalida";
+    if (problem) { res.status(problem === "revisao_grande" ? 413 : 400).json({ error: problem }); return; }
+    // An unavailable auditor is not replaced by the first reader or a different
+    // provider. The client keeps the original extraction for manual review.
+    if (config.provider !== "openai") { res.status(503).json({ error: "revisao_indisponivel" }); return; }
+  }
 
   // 3) Chama a IA com a chave secreta (só o resultado volta ao app)
   try {
-    const out = await callProvider(config, image, categories, cards, multi, 45000, context);
+    const out = reviewing
+      ? await callOpenAI(config.key, image, categories, cards, true, 45000, context, true)
+      : await callProvider(config, image, categories, cards, multi, 45000, context);
 
     if (out.quota) { res.status(503).json({ error: "saldo_ia" }); return; }
     if (out.configuration) { res.status(503).json({ error: "configuracao_ia" }); return; }
@@ -479,45 +659,10 @@ module.exports = async (req, res) => {
     if (out.refusal) { res.status(200).json({ error: "refusal" }); return; }
 
     if (multi) {
-      // Aceita array puro ou { cartao, itens: [...] }; se o JSON vier truncado
-      // (fatura longa), recupera os itens completos em vez de falhar por inteiro.
-      let itens = [];
-      let cartao = "";
-      let rawCoverage;
-      let partial = out.partial === true;
-      const avisos = [];
-      try {
-        const parsed = JSON.parse(out.text);
-        if (Array.isArray(parsed)) itens = parsed;
-        else if (parsed && typeof parsed === "object") {
-          if (!Array.isArray(parsed.itens)) throw new Error("formato_invalido");
-          itens = parsed.itens;
-          cartao = typeof parsed.cartao === "string" ? parsed.cartao.slice(0, 40) : "";
-          rawCoverage = parsed.coverage;
-        } else throw new Error("formato_invalido");
-      } catch {
-        itens = salvageItems(out.text);
-        partial = true;
-      }
-      const pageCount = context ? context.pageEnd - context.pageStart + 1 : 120;
-      const cleaned = itens.slice(0, 2000).map((item) => cleanItem(item, categories, true, pageCount)).filter(Boolean);
-      const coverage = cleanCoverage(rawCoverage, context, itens);
-      // Clientes antigos continuam recebendo partial/avisos; clientes paginados
-      // exigem cobertura explícita, inclusive quando a resposta encerra em STOP.
-      if ((context || rawCoverage) && !coverage.complete) {
-        partial = true;
-        avisos.push("Cobertura incompleta ou não confirmada: confira as páginas/trechos deste envio.");
-      }
-      if (partial) coverage.complete = false;
-      if (cleaned.length !== itens.length) {
-        partial = true;
-        avisos.push(`${itens.length - cleaned.length} linha(s) não incluída(s): valor, moeda, tipo ou resumo não confiável. Confira o documento.`);
-      }
-      if (partial) avisos.push("Leitura parcial: compare a prévia com todas as páginas do documento.");
-      if (cleaned.some((item) => item.revisar?.length)) avisos.push("Há campos incertos. Revise os avisos de cada item antes de adicionar.");
-      if (!cleaned.length && partial) { res.status(502).json({ error: "resposta_invalida", avisos, coverage }); return; }
-      if (partial) coverage.complete = false;
-      res.status(200).json({ cartao: cards.includes(cartao) ? cartao : "", itens: cleaned, partial, avisos, coverage, provider: config.provider, model: config.model });
+      const result = batchResult(out, categories, cards, context, reviewing);
+      if (result.error) { res.status(502).json(result); return; }
+      if (reviewing) res.status(200).json({ review: compareReview(body.reviewOf, result, config, context) });
+      else res.status(200).json({ ...result, provider: config.provider, model: config.model });
     } else {
       let parsed;
       try { parsed = JSON.parse(out.text); }

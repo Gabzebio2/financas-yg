@@ -21,6 +21,7 @@ const Batch = (() => {
   let targetId = null;
   let targetOwner = null;
   let processedParts = 0;
+  let viewFilter = "all";
   const MAX_FILES = 15, MAX_PARTS = 120;
 
   function contextValid(version = generation) {
@@ -76,6 +77,8 @@ const Batch = (() => {
     reviewWarnings = [];
     excludedCount = 0;
     coverage = []; partialReviewed = false; processedParts = 0;
+    viewFilter = "all";
+    $("#batch-details").open = false;
     targetId = Dashboard.getImportTargetId?.() ?? null;
     targetOwner = typeof Cloud !== "undefined" && Cloud.getSyncState ? Cloud.getSyncState().owner : null;
     coverageUI();
@@ -138,6 +141,56 @@ const Batch = (() => {
     return [...new Set(issues)];
   }
 
+  // The seal and the manual decision belong to the exact values being saved.
+  // No financial history is sent to either reading of the document.
+  function reviewSnapshot(r, original = false) {
+    const t = original ? r : effectiveRow(r);
+    return JSON.stringify([t.date, t.desc, t.amount, t.type, t.currency, t.account,
+      t.cat || $("#batch-cat").value, t.installment || null, t.fixed === true,
+      t.totalValue, t.referenceId || "", t.sourceEvidence || "", t.sourcePage || null]);
+  }
+  function autoVerified(r) { return !r.gen && !!r.verifiedSnapshot && r.verifiedSnapshot === reviewSnapshot(r); }
+  function manuallyReviewed(r) { return !!r.manualSnapshot && r.manualSnapshot === reviewSnapshot(r); }
+  function needsReview(r) { return !!r.reviewRequired && !autoVerified(r) && !manuallyReviewed(r); }
+  function invalidRow(r) { return !isValidISODate(r.date) || !r.desc.trim() || !Number.isFinite(r.amount) || r.amount <= 0 || r.amount > Number.MAX_SAFE_INTEGER; }
+  function pendingRow(r) { return invalidRow(r) || needsReview(r) || (r.dup && r.confirmedMatch !== r.matchKey); }
+  function reviewHTML(r, index) {
+    if (!r.reviewRequired) return "";
+    if (autoVerified(r)) return '<div class="batch-verification-row verified">Conferido em duas leituras</div>';
+    if (manuallyReviewed(r)) return '<div class="batch-verification-row manual">Conferido por você</div>';
+    r.displayedReviewSnapshot = reviewSnapshot(r);
+    const reasons = r.verifiedSnapshot ? ["Os dados foram alterados depois da conferência."] : r.auditReasons || ["Conferência manual necessária."];
+    return '<div class="batch-verification-row attention"><span>' + escapeHtml(reasons.join(" · ")) + '</span><button type="button" class="btn btn-ghost btn-sm" data-reviewed="' + index + '">Conferi este item</button></div>';
+  }
+  function renderVerification() {
+    const selected = rows.filter((r) => r.on);
+    const pending = selected.filter(pendingRow).length;
+    const automatic = selected.filter(autoVerified).length;
+    const manual = selected.filter((r) => !autoVerified(r) && manuallyReviewed(r)).length;
+    const hasAI = rows.some((r) => r.reviewRequired);
+    const clean = hasAI && !reading && !incomplete() && !pending && selected.length > 0 && automatic === selected.length &&
+      coverage.every((p) => !p.auditStatus || p.auditStatus === "verified");
+    $("#batch-verification").classList.toggle("is-verified", clean);
+    $("#batch-verification-title").textContent = reading ? "Conferindo seu documento" : clean ? "Duas leituras, dados de acordo" : pending || incomplete() ? "Alguns pontos precisam de você" : "Seleção pronta para incluir";
+    $("#batch-verification-note").textContent = clean ? "As duas leituras concordam nos itens selecionados. Confira o resumo e confirme a inclusão." : hasAI ? "Só os pontos pendentes exigem uma decisão. A conferência automática não elimina a possibilidade de erro." : "Planilha lida no seu dispositivo. Não houve conferência por IA.";
+    const selectedCurrency = $("#batch-cur").value;
+    if (selectedCurrency && selectedCurrency !== "original") $("#batch-verification-note").textContent += ` Você alterou a moeda do lote para ${selectedCurrency}; os valores não são convertidos. O resumo abaixo conserva a moeda lida, e o Saldo da seleção mostra o que será incluído.`;
+    $("#batch-verification-counts").textContent = hasAI ? `${automatic} conferido(s) em duas leituras · ${manual} conferido(s) por você · ${pending} pendente(s)` : `${selected.length} selecionado(s) · ${pending} pendente(s) · leitura local`;
+    const totals = {};
+    selected.forEach((r) => {
+      const code = r.currency;
+      if (!totals[code]) totals[code] = { receita: 0, despesa: 0 };
+      if (Number.isFinite(r.amount)) totals[code][r.type] += r.amount;
+    });
+    $("#batch-currency-totals").innerHTML = Object.entries(totals).map(([code, t]) => '<div class="batch-currency-line"><strong>' + escapeHtml(code) + '</strong><span>Entradas <b>' + escapeHtml(fmtMoney(t.receita, code)) + '</b></span><span>Saídas <b>' + escapeHtml(fmtMoney(t.despesa, code)) + '</b></span></div>').join("");
+    $("#batch-filter-pending").textContent = `Pendências (${rows.filter((r) => (!r.gen || includeGenerated) && pendingRow(r)).length})`;
+    ["pending", "all"].forEach((filter) => {
+      const button = $("#batch-filter-" + filter);
+      button.classList.toggle("active", viewFilter === filter);
+      button.setAttribute?.("aria-pressed", String(viewFilter === filter));
+    });
+  }
+
   function renderReviewSummary() {
     const generated = rows.filter((r) => r.gen).length;
     $("#batch-generated-wrap").classList.toggle("hidden", generated === 0);
@@ -154,6 +207,7 @@ const Batch = (() => {
     el.textContent = messages.join(" ");
     el.classList.toggle("hidden", !messages.length);
     coverageUI();
+    renderVerification();
   }
 
   function renderPreview() {
@@ -189,7 +243,7 @@ const Batch = (() => {
 
     const selectedCurrency = $("#batch-cur").value;
     const fallCat = sel.value; // linhas sem categoria da IA seguem o seletor geral
-    $("#batch-tbody").innerHTML = rows.map((r, i) => r.gen && !includeGenerated ? "" : `
+    $("#batch-tbody").innerHTML = rows.map((r, i) => (r.gen && !includeGenerated) || (viewFilter === "pending" && !pendingRow(r)) ? "" : `
       <tr data-i="${i}" class="${r.on ? "" : "batch-off"}${r.dup ? " batch-dup" : ""}${r.gen ? " batch-generated" : ""}">
         <td><input type="checkbox" class="batch-check" data-i="${i}" aria-label="Selecionar ${escapeHtml(r.desc || "item")}${r.gen ? " (projeção)" : ""}" ${r.on ? "checked" : ""}>${r.dup ? '<span class="dup-flag" title="Coincidência para revisão; isso não comprova duplicação">⚠</span>' : ""}</td>
         <td><input type="date" data-f="date" data-i="${i}" aria-label="Data de ${escapeHtml(r.desc || "item")}" value="${escapeHtml(r.date)}"></td>
@@ -199,7 +253,7 @@ const Batch = (() => {
             : (r.fixed || r.fixa)
               ? `<span class="parc-tag" title="${r.gen ? "Projeção: repetição não identificada no documento" : "Assinatura/mensalidade detectada"}">${r.gen ? "Projeção · " : ""}fixa</span>`
               : ""
-        }</div>${rowReview(r).length ? `<small class="hint">${escapeHtml(rowReview(r).join(" · "))}</small>` : ""}${r.account ? `<small class="hint">${escapeHtml(r.account)}</small>` : ""}${r.sourceLabel ? `<small class="hint">${escapeHtml(r.sourceLabel)}</small>` : ""}${r.referenceId ? `<small class="hint">Referência: ${escapeHtml(r.referenceId)}</small>` : ""}${matchHTML(r, i)}</td>
+        }</div>${rowReview(r).length ? `<small class="hint">${escapeHtml(rowReview(r).join(" · "))}</small>` : ""}${r.account ? `<small class="hint">${escapeHtml(r.account)}</small>` : ""}${r.sourceLabel ? `<small class="hint">${escapeHtml(r.sourceLabel)}</small>` : ""}${r.referenceId ? `<small class="hint">Referência: ${escapeHtml(r.referenceId)}</small>` : ""}${reviewHTML(r, i)}${matchHTML(r, i)}</td>
         <td class="num"><input type="text" class="batch-val" data-f="amount" data-i="${i}" data-cur="${selectedCurrency === "original" ? r.currency : normCur(selectedCurrency)}" value="${fmtMoneyInput(r.amount, selectedCurrency === "original" ? r.currency : selectedCurrency)}"></td>
         <td>
           <select data-f="cat" data-i="${i}">
@@ -213,6 +267,8 @@ const Batch = (() => {
           </select>
         </td>
       </tr>`).join("");
+    if (!$("#batch-tbody").innerHTML) $("#batch-tbody").innerHTML = '<tr><td colspan="6" class="empty-table">Nenhuma pendência nesta seleção. Use Todos para ver ou ajustar os lançamentos.</td></tr>';
+    $("#batch-details").open = viewFilter === "all" || rows.some((r) => r.on && pendingRow(r));
 
     $("#batch-preview").classList.remove("hidden");
     $("#btn-batch-save").classList.remove("hidden");
@@ -229,14 +285,14 @@ const Batch = (() => {
     });
     const total = Object.entries(totals).map(([cur, amount]) => fmtMoney(amount, cur)).join(" · ") || fmtMoney(0, "BRL");
     $("#batch-count").textContent = `${on.length} de ${rows.length} selecionadas · Saldo da seleção: ${total}`;
-    $("#btn-batch-save").textContent = `✅ Adicionar ${on.length} transaç${on.length === 1 ? "ão" : "ões"}`;
-    $("#btn-batch-save").disabled = reading || on.length === 0 || (incomplete() && !partialReviewed);
+    $("#btn-batch-save").textContent = `Confirmar e incluir ${on.length} lançamento${on.length === 1 ? "" : "s"}`;
+    $("#btn-batch-save").disabled = reading || on.length === 0 || on.some(pendingRow) || (incomplete() && !partialReviewed);
     renderReviewSummary();
   }
 
   // Normaliza itens vindos da IA/Excel para o formato interno
   function normalize(items) {
-    return (Array.isArray(items) ? items : []).map((it) => {
+    return (Array.isArray(items) ? items : []).map((it, sourceIndex) => {
       if (!it || typeof it !== "object") { excludedCount++; return null; }
       // A IA devolve o campo como "data" (pt); o Excel devolve "date". Aceita os dois.
       let date = typeof it.date === "string" ? it.date : (typeof it.data === "string" ? it.data : "");
@@ -275,7 +331,7 @@ const Batch = (() => {
         desc = desc.replace(/[\s\-–(]*(?:parc\.?\w*|parcela|cuota)?\s*\d{1,2}\s*(?:\/|de|of)\s*\d{1,2}\s*\)?/i, "").trim() || desc;
       }
 
-      return { date, desc, amount, type, currency, on: true, cat, parcNum, parcTotal, fixa, review,
+      return { date, desc, amount, type, currency, on: true, cat, parcNum, parcTotal, fixa, review, sourceIndex,
         account: typeof (it.account ?? it.instituicao) === "string" ? (it.account ?? it.instituicao).trim().slice(0, 80) : "",
         referenceId: String(it.referenceId ?? it.referencia ?? "").trim().slice(0, 160),
         sourceEvidence: String(it.sourceEvidence ?? it.evidencia ?? "").trim().slice(0, 300),
@@ -333,7 +389,14 @@ const Batch = (() => {
     const novos = expandSeries(normalized);
     if (novos.length) {
       const src = srcSeq++;
-      novos.forEach((r) => { r.src = src; });
+      novos.forEach((r) => {
+        r.src = src;
+        r.reviewRequired = metadata.reviewRequired === true;
+        r.auditReasons = [metadata.additional ? "Item encontrado somente na segunda leitura. Confira no documento." : "Aguardando a segunda leitura do documento."];
+        const rawCategory = itens[r.sourceIndex]?.categoria || itens[r.sourceIndex]?.category || "";
+        const extractedCategory = availableCats().find((c) => stripAccents(c) === stripAccents(rawCategory)) || "Outros";
+        r.extractedSnapshot = reviewSnapshot({ ...r, cat: extractedCategory }, true);
+      });
       rows.push(...novos);
     }
     return normalized.length;
@@ -355,7 +418,7 @@ const Batch = (() => {
       const candidate = effectiveRow(r);
       const matches = [
         ...ImportMatch.find(candidate, existing).map((m) => ({ ...m, origin: "Já na pasta" })),
-        ...ImportMatch.find(candidate, seen).map((m) => ({ ...m, origin: "Neste lote" }))
+        ...ImportMatch.find(candidate, seen).filter((m) => !independentReferences(candidate, m.transaction)).map((m) => ({ ...m, origin: "Neste lote" }))
       ];
       const key = ImportMatch.reviewKey(candidate, matches);
       if (matches.length && r.matchKey !== key) flagged++;
@@ -363,6 +426,12 @@ const Batch = (() => {
       if (r.on) ImportMatch.addToIndex(seen, candidate);
     });
     return flagged;
+  }
+  function independentReferences(a, b) {
+    const ref = (t) => String(t.referenceId || "").trim().toLowerCase();
+    return autoVerified(a) && autoVerified(b) && ref(a) && ref(b) && ref(a) !== ref(b) &&
+      a.currency === b.currency && a.type === b.type && !!a.account.trim() &&
+      stripAccents(a.account) === stripAccents(b.account);
   }
   function matchHTML(r, index) {
     if (!r.dup) return "";
@@ -381,6 +450,36 @@ const Batch = (() => {
     const observed = rows.filter((r) => !r.gen).length;
     const extra = observed !== added ? ` (total identificado: ${observed})` : "";
     setStatus(`${added} itens reconhecidos${extra} — confira e ajuste abaixo ✔`, "ok");
+  }
+
+  function completeCoverage(c, count) {
+    return c?.complete === true && Array.isArray(c.pagesRead) && Array.isArray(c.unreadablePages) &&
+      c.unreadablePages.length === 0 && Array.from({ length: count }, (_, n) => n + 1).every((n) => c.pagesRead.includes(n));
+  }
+  function applyDocumentReview(first, review, partRows, pageCount) {
+    const indexes = new Set();
+    const items = Array.isArray(review?.items) ? review.items : [];
+    const shape = ["verified", "attention"].includes(review?.status) && review.checkedCount === first.itens.length &&
+      items.length === first.itens.length && items.every((it) => {
+        if (!it || !Number.isInteger(it.index) || it.index < 0 || it.index >= first.itens.length || indexes.has(it.index) ||
+          !["verified", "attention"].includes(it.status) || !Array.isArray(it.reasons) || !it.reasons.every((s) => typeof s === "string")) return false;
+        indexes.add(it.index); return true;
+      }) && Array.isArray(review.issues) && review.issues.every((s) => typeof s === "string") && Array.isArray(review.additionalItems);
+    const complete = first.partial !== true && completeCoverage(first.coverage, pageCount) && completeCoverage(review?.coverage, pageCount);
+    const issues = shape ? review.issues.filter((s) => s.trim()).map((s) => s.slice(0, 300)) : ["A segunda leitura não confirmou todos os itens. Confira manualmente."];
+    if (!complete) issues.push("A cobertura das duas leituras não está completa. Compare com o documento.");
+    // A global attention verdict without an identified reason cannot earn a seal.
+    if (shape && review.status === "attention" && !issues.length && !review.additionalItems.length && items.every((it) => it.status === "verified" && !it.reasons.length)) issues.push("A segunda leitura pediu atenção sem indicar um item. Confira manualmente.");
+    const byIndex = new Map(items.map((it) => [it.index, it]));
+    partRows.forEach((r) => {
+      const result = byIndex.get(r.sourceIndex);
+      r.auditReasons = [...issues, ...(result?.reasons || []).map((s) => s.slice(0, 300)), ...rowReview(r)];
+      if (r.gen) r.auditReasons.push("Projeção calculada: esta data não foi identificada no documento.");
+      if (shape && complete && !issues.length && result?.status === "verified" && !r.auditReasons.length && !r.gen) r.verifiedSnapshot = r.extractedSnapshot;
+      else if (!r.auditReasons.length) r.auditReasons.push("As leituras divergiram neste item. Confira no documento.");
+    });
+    return { complete: shape && complete && !issues.length, issues,
+      verified: shape && complete && !issues.length && review.status === "verified" && !review.additionalItems.length && items.every((it) => it.status === "verified" && !it.reasons.length) };
   }
 
   /* ---------- Origem: FOTO(s)/PDF(s) — fatura/planilha via IA no servidor ----------
@@ -415,13 +514,14 @@ const Batch = (() => {
             const label = record.label + " · " + part.label;
             const progress = { label, status: "pending", message: "lendo" };
             coverage.push(progress);
-            setStatus("Arquivo " + (i + 1) + " de " + files.length + " · " + part.label + "…");
+            setStatus("Lendo · arquivo " + (i + 1) + " de " + files.length + " · " + part.label + "…");
             coverageUI();
-            const post = () => fetch(PROXY_PATH, {
+            const payload = { image: { media_type: part.mediaType, data: part.data }, multi: true,
+              categories: Dashboard.getCats(), cards: CARDS, documentContext: part.documentContext };
+            const post = (reviewOf) => fetch(PROXY_PATH, {
               signal: AbortSignal.timeout(65000), method: "POST",
               headers: { "content-type": "application/json", authorization: "Bearer " + token },
-              body: JSON.stringify({ image: { media_type: part.mediaType, data: part.data }, multi: true,
-                categories: Dashboard.getCats(), cards: CARDS, documentContext: part.documentContext })
+              body: JSON.stringify({ ...payload, ...(reviewOf ? { reviewOf } : {}) })
             });
             try {
               let res = await post();
@@ -446,15 +546,38 @@ const Batch = (() => {
                 continue;
               }
               const count = part.documentContext.pageEnd - part.documentContext.pageStart + 1;
-              const c = data.coverage;
-              const complete = data.partial !== true && c?.complete === true && Array.isArray(c.pagesRead) &&
-                Array.isArray(c.unreadablePages) && c.unreadablePages.length === 0 &&
-                Array.from({ length: count }, (_, n) => n + 1).every((n) => c.pagesRead.includes(n));
+              const complete = data.partial !== true && completeCoverage(data.coverage, count);
               const beforeExcluded = excludedCount;
-              const countAdded = ingestAiResult(data.itens, data.cartao, { ...data, sourceLabel: label, pageStart: part.documentContext.pageStart });
+              const rowStart = rows.length;
+              const countAdded = ingestAiResult(data.itens, data.cartao, { ...data, reviewRequired: true, sourceLabel: label, pageStart: part.documentContext.pageStart });
+              const partRows = rows.slice(rowStart);
               progress.count = countAdded; added += countAdded;
               progress.status = complete && excludedCount === beforeExcluded ? "complete" : "partial";
               progress.message = "cobertura incompleta ou não confirmada; compare com o documento";
+              viewFilter = "pending";
+              renderPreview();
+              setStatus("Conferindo documento · arquivo " + (i + 1) + " de " + files.length + " · " + part.label + "…");
+              try {
+                const checked = await post({ itens: data.itens, cartao: data.cartao, coverage: data.coverage, partial: data.partial });
+                if (!contextValid(version)) return;
+                const checkedData = await checked.json().catch(() => ({}));
+                if (!contextValid(version)) return;
+                if (!checked.ok || checkedData.error || !checkedData.review) throw new Error("review_failed");
+                const result = applyDocumentReview(data, checkedData.review, partRows, count);
+                progress.auditStatus = result.verified ? "verified" : "attention";
+                if (!result.complete) { progress.status = "partial"; progress.message = result.issues.join(" "); }
+                const extra = checkedData.review.additionalItems;
+                if (Array.isArray(extra) && extra.length) {
+                  const extraCount = ingestAiResult(extra, data.cartao, { reviewRequired: true, additional: true, sourceLabel: label + " · segunda leitura", pageStart: part.documentContext.pageStart });
+                  progress.count += extraCount; added += extraCount;
+                }
+                if (excludedCount !== beforeExcluded) { progress.status = "partial"; progress.message = "há itens não reconhecidos; compare com o documento"; }
+              } catch (error) {
+                if (!contextValid(version)) return;
+                partRows.forEach((r) => { r.auditReasons = ["A segunda conferência não foi concluída. Confira este item manualmente no documento."]; });
+                progress.auditStatus = "failed";
+                progress.status = "partial"; progress.message = "segunda conferência indisponível; cobertura não confirmada pelas duas leituras. Primeira leitura preservada, revisão manual obrigatória";
+              }
               if (progress.status !== "complete") allComplete = false;
             } catch (error) {
               if (!contextValid(version)) return;
@@ -472,7 +595,7 @@ const Batch = (() => {
         }
       }
       if (!contextValid(version)) return;
-      setStatus(added + " lançamento(s) reconhecido(s). " + (incomplete() ? "Há partes incompletas: confira a lista de leitura." : "Confira os dados e possíveis repetições antes de adicionar."), incomplete() ? "warn" : "ok");
+      setStatus(added + " lançamento(s) reconhecido(s). " + (incomplete() ? "Há partes incompletas: confira a lista de leitura." : "Leitura e conferência concluídas. Veja o resumo abaixo."), incomplete() ? "warn" : "ok");
     } finally {
       if (contextValid(version)) {
         coverage.filter((p) => p.status === "pending").forEach((p) => { p.status = "failed"; p.message = "não lido: execução interrompida"; });
@@ -539,6 +662,9 @@ const Batch = (() => {
     if (rows.some((r) => r.on && r.dup && r.confirmedMatch !== r.matchKey)) {
       renderPreview(); toast("Há coincidências para revisar. Desmarque o item ou confirme que é um lançamento diferente."); return;
     }
+    if (rows.some((r) => r.on && needsReview(r))) {
+      viewFilter = "pending"; renderPreview(); toast("Confira os itens pendentes no documento e use Conferi este item antes de incluir."); return;
+    }
     const fallbackCat = $("#batch-cat").value;
     const selectedCurrency = $("#batch-cur").value;
     const account = $("#batch-acc").value;
@@ -598,6 +724,7 @@ const Batch = (() => {
     });
     $("#btn-batch-cancel").addEventListener("click", close);
     $("#btn-batch-save").addEventListener("click", save);
+    ["pending", "all"].forEach((filter) => $("#batch-filter-" + filter).addEventListener("click", () => { viewFilter = filter; renderPreview(); $("#batch-details").open = true; }));
     // Trocar a moeda do lote reformata os valores das linhas e o total
     $("#batch-cur").addEventListener("change", renderPreview);
     // Trocar a categoria geral aplica a TODAS as linhas (elas voltam a segui-la)
@@ -617,6 +744,15 @@ const Batch = (() => {
     // Edição inline da lista
     const tbody = $("#batch-tbody");
     tbody.addEventListener("click", (ev) => {
+      const reviewed = ev.target.closest?.("[data-reviewed]");
+      if (reviewed?.dataset.reviewed != null) {
+        const row = rows[Number(reviewed.dataset.reviewed)];
+        if (!row || reading || !contextValid()) return;
+        if (row.displayedReviewSnapshot !== reviewSnapshot(row)) { renderPreview(); toast("Os dados mudaram. Confira a versão atual antes de confirmar."); return; }
+        if (invalidRow(row)) { toast("Preencha data, descrição e valor válidos antes de confirmar a revisão."); return; }
+        row.manualSnapshot = reviewSnapshot(row);
+        renderPreview(); return;
+      }
       const button = ev.target.closest?.("[data-distinct]");
       const index = button ? Number(button.dataset.distinct) : NaN;
       if (!Number.isInteger(index) || !rows[index]) return;

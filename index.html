@@ -14,7 +14,7 @@
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261027-import">
+<link rel="stylesheet" href="css/design.css?v=20261029-review">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 </head>
 <body>
@@ -576,7 +576,7 @@
       <div class="meta-modal-icon batch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 3H5v18h14V8zm0 0v5h5M9 12h6m-6 4h6" stroke-linejoin="round"/></svg></div>
       <div>
         <h3 id="batch-title">Importar em lote</h3>
-        <p class="meta-modal-sub">Envie uma fatura, comprovante ou planilha e confira os itens reconhecidos antes de adicionar.</p>
+        <p class="meta-modal-sub">Duas leituras do documento. Uma confirmação quando os dados estão de acordo.</p>
       </div>
     </div>
 
@@ -587,9 +587,17 @@
     </div>
     <input type="file" id="batch-input-photo" accept="image/*,.pdf,application/pdf" multiple hidden>
     <input type="file" id="batch-input-file" accept=".xlsx,.xls,.xlsm,.csv" multiple hidden>
-    <p class="hint">Selecione até 15 arquivos por vez. PDFs: até 50 MB e 120 páginas por arquivo. Fotos: até 20 MB. Documentos longos são lidos em partes para você conferir antes de salvar.</p>
+    <p class="hint">Selecione até 15 arquivos por vez. PDFs: até 50 MB e 120 páginas por arquivo. Fotos: até 20 MB. Documentos longos são lidos e conferidos em partes antes da sua confirmação.</p>
 
     <div id="batch-preview" class="hidden">
+      <section id="batch-verification" class="batch-verification" aria-live="polite">
+        <p class="batch-verification-eyebrow">Conferência do documento</p>
+        <h4 id="batch-verification-title">Conferindo seu documento</h4>
+        <p id="batch-verification-note"></p>
+        <p id="batch-verification-counts" class="batch-verification-counts"></p>
+        <div class="batch-totals-heading">Itens selecionados · entradas e saídas por moeda</div>
+        <div id="batch-currency-totals"></div>
+      </section>
       <div class="batch-controls">
         <label title="Confira o cartão identificado. Se não for reconhecido, escolha o correto ou deixe sem cartão.">Cartão/Conta
           <select id="batch-acc"></select>
@@ -602,11 +610,17 @@
         </label>
         <span class="hint" id="batch-count"></span>
       </div>
-      <p class="hint">A IA pode errar. Confira valores, datas, categorias, estornos e possíveis duplicados. Campos não identificados precisam ser preenchidos.</p>
+      <p class="hint">Alterar dados, categoria, moeda ou conta pede uma nova confirmação manual. Planilhas são lidas localmente, sem duas leituras por IA.</p>
       <label class="checkline hidden" id="batch-generated-wrap"><input type="checkbox" id="batch-include-generated"> Incluir também parcelas e meses estimados que não aparecem no documento</label>
       <p class="hint hidden" id="batch-review-summary" role="status"></p>
       <div id="batch-coverage" class="import-review hidden" role="status"></div>
       <label id="batch-partial-wrap" class="checkline hidden"><input type="checkbox" id="batch-partial-ack"> Conferi as partes incompletas e quero importar somente os lançamentos revisados abaixo. Isso não significa que o documento foi importado por inteiro.</label>
+      <div class="batch-review-filters" role="group" aria-label="Lançamentos para conferir">
+        <button type="button" class="btn btn-ghost btn-sm" id="batch-filter-pending" aria-pressed="true">Pendências</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="batch-filter-all" aria-pressed="false">Todos</button>
+      </div>
+      <details id="batch-details" class="batch-details">
+      <summary>Detalhes dos lançamentos <span aria-hidden="true">⌄</span></summary>
       <div class="table-wrap batch-table-wrap">
         <table id="batch-table">
           <thead>
@@ -615,6 +629,7 @@
           <tbody id="batch-tbody"></tbody>
         </table>
       </div>
+      </details>
     </div>
 
     <div class="modal-actions">
@@ -766,7 +781,7 @@
 <script src="js/importer.js?v=20261027-import"></script>
 <script src="js/dashboard.js?v=20261027-import"></script>
 <script src="js/receipt.js?v=20261027-import"></script>
-<script src="js/batch.js?v=20261027-import"></script>
+<script src="js/batch.js?v=20261029-review"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
 <script src="js/cloud-archive.js?v=20261023-guarani"></script>

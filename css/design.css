@@ -1013,3 +1013,33 @@ body.hide-money .fx-rows { filter: blur(7px); user-select: none; }
 .batch-match small { display: block; overflow-wrap: anywhere; }
 #batch-coverage { max-height: 180px; overflow-y: auto; font-size: 13px; }
 #batch-partial-wrap { padding: 10px; border: 1px solid #d49e37; border-radius: 10px; align-items: start; }
+
+/* A concordância fica no resumo; só as decisões ocupam a lista. */
+.batch-verification { margin: 20px 0; padding: 22px 24px; border-left: 3px solid var(--primary); background: var(--primary-soft); border-radius: 0 14px 14px 0; }
+.batch-verification-eyebrow { margin: 0 0 8px; color: var(--primary-text); font-size: 10px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+.batch-verification h4 { margin: 0 0 8px; font-size: 21px; font-weight: 650; letter-spacing: -.5px; }
+#batch-verification-note { margin: 0; color: var(--text-soft); font-size: 12px; line-height: 1.7; max-width: 620px; }
+.batch-verification-counts { margin: 14px 0 19px; color: var(--text); font-size: 12px; line-height: 1.8; font-variant-numeric: tabular-nums; }
+.batch-totals-heading { font-size: 10px; color: var(--text-soft); margin-bottom: 6px; }
+.batch-currency-line { display: grid; grid-template-columns: 65px 1fr 1fr; gap: 18px; padding: 10px 0; border-top: 1px solid var(--border); align-items: baseline; font-size: 12px; font-variant-numeric: tabular-nums; }
+.batch-currency-line > span { color: var(--text-soft); display: flex; gap: 8px; justify-content: space-between; flex-wrap: wrap; }
+.batch-currency-line b { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.batch-review-filters { display: flex; gap: 7px; margin: 18px 0 10px; }
+.batch-review-filters .active { color: var(--primary-text); background: var(--primary-soft); border-color: var(--primary); }
+.batch-details > summary { display: flex; justify-content: space-between; padding: 12px 0; color: var(--text-soft); font-size: 12px; cursor: pointer; list-style: none; }
+.batch-details > summary::-webkit-details-marker { display: none; }
+.batch-details > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.batch-details[open] > summary span { transform: rotate(180deg); }
+.batch-verification-row { margin-top: 8px; font-size: 11px; line-height: 1.6; white-space: normal; }
+.batch-verification-row.verified { color: var(--primary-text); }
+.batch-verification-row.manual { color: var(--text-soft); }
+.batch-verification-row.attention { color: var(--amber); padding: 9px; border-left: 2px solid var(--amber); background: var(--amber-soft); }
+.batch-verification-row button { display: block; margin-top: 8px; }
+.batch-controls #batch-count { flex-basis: 100%; }
+@media (max-width: 640px) {
+  .batch-verification { padding: 18px 16px; }
+  .batch-verification h4 { font-size: 19px; }
+  .batch-currency-line { grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+  .batch-currency-line > strong { grid-column: 1 / -1; }
+  .batch-currency-line > span { flex-direction: column; gap: 4px; }
+}
