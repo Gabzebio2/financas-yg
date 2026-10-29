@@ -145,7 +145,9 @@ function jsonSchema(schema) {
 }
 
 function providerConfig() {
-  if (process.env.OPENAI_API_KEY) return { provider: "openai", model: MODEL_OPENAI, key: process.env.OPENAI_API_KEY };
+  // Compatibilidade com o nome do segredo já cadastrado neste projeto Vercel.
+  const openaiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_KEYZAO;
+  if (openaiKey) return { provider: "openai", model: MODEL_OPENAI, key: openaiKey };
   if (process.env.GEMINI_API_KEY) return { provider: "gemini", model: MODELS_GEMINI[0], key: process.env.GEMINI_API_KEY };
   if (process.env.ANTHROPIC_API_KEY) return { provider: "anthropic", model: MODEL_ANTHROPIC, key: process.env.ANTHROPIC_API_KEY };
   return { provider: null, model: null, key: null };

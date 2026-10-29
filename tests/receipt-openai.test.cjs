@@ -96,6 +96,18 @@ test("OpenAI tem prioridade, PDF usa Responses e schema estrito com cobertura/ev
   assert.deepEqual(h.timers, [8000, 45000]);
 });
 
+test("segredo existente no projeto é aceito, com prioridade do nome padrão", async () => {
+  const h = harness(completed(), { env: { OPENAI_API_KEY: "", OPENAI_KEYZAO: SECRET } });
+  const result = await h.request();
+  assert.equal(result.status, 200);
+  assert.equal(result.body.provider, "openai");
+  assert.equal(h.calls[1].init.headers.Authorization, "Bearer " + SECRET);
+  assert(!JSON.stringify(result).includes(SECRET));
+  const canonical = harness(completed(), { env: { OPENAI_KEYZAO: "unused-alias" } });
+  assert.equal((await canonical.request()).status, 200);
+  assert.equal(canonical.calls[1].init.headers.Authorization, "Bearer " + SECRET);
+});
+
 test("imagem usa input_image high, comprovante mantém schema simples e limite menor", async () => {
   const h = harness(completed(single()));
   const result = await h.request({ multi: false, documentContext: null, image: { media_type: "image/jpeg", data: "aGVsbG8=" } });
