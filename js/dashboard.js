@@ -8,6 +8,7 @@ const Dashboard = (() => {
   let rowLimit = 100;
   const charts = {};
   let editingId = null;
+  let txDateEdited = false;
   let receiptRead = null;
   let txModalRevision = 0;
   let editingLimitId = null;
@@ -1321,7 +1322,7 @@ const Dashboard = (() => {
       return `
       <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
-        <td style="white-space:nowrap">${fmtDate(t.date)}</td>
+        <td style="white-space:nowrap">${fmtDate(t.date)}${cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}</td>
         <td><span class="tx-desc-cell">${catAvatar(t.category)}<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}</span></span></td>
         <td><span class="cat-chip" style="background:color-mix(in srgb, ${catColor(ds, t.category)} 16%, var(--card,#24212e));color:var(--chip-text,var(--text,#f1eff5));border:1px solid color-mix(in srgb, ${catColor(ds, t.category)} 28%, var(--card,#24212e))">${escapeHtml(t.category)}</span></td>
         <td>${escapeHtml(t.account || "—")}</td>
@@ -1508,6 +1509,7 @@ const Dashboard = (() => {
     if (!ds) { toast("Abra ou crie uma pasta antes de adicionar transações."); return; }
     opts = opts || {};
     editingId = txId;
+    txDateEdited = false;
     const isEdit = !!txId;
     const tx = isEdit ? ds.transactions.find((t) => t.id === txId) : null;
     if (isEdit && !tx) return;
@@ -1665,7 +1667,9 @@ const Dashboard = (() => {
     if (editingId) {
       const tx = ds.transactions.find((t) => t.id === editingId);
       if (!tx) { toast("Esta transação não está mais disponível. Abra a lista novamente."); return; }
+      const dateChanged = txDateEdited || date !== tx.date;
       Object.assign(tx, { amount: Math.abs(amount), date, desc, category, account, type: txType, currency }, evidence);
+      if (dateChanged) { delete tx.dateEstimated; delete tx.dateEstimate; }
       message = "Transação atualizada ✔";
     } else if (parts) {
       const n = parts.length;
@@ -2037,6 +2041,8 @@ const Dashboard = (() => {
     $("#btn-add-tx").addEventListener("click", () => openTxModal(null));
     $("#btn-tx-save").addEventListener("click", saveTxModal);
     $("#btn-tx-cancel").addEventListener("click", () => { $("#modal-tx").classList.add("hidden"); editingId = null; });
+    $("#tx-date").addEventListener("input", () => { txDateEdited = true; });
+    $("#tx-date").addEventListener("change", () => { txDateEdited = true; });
     $$("#tx-type-toggle button").forEach((b) => {
       b.addEventListener("click", () => { txType = b.dataset.type; updateTypeToggle(); });
     });
@@ -2164,7 +2170,7 @@ const Dashboard = (() => {
   function currentDatasetName() { return ds ? ds.name : ""; }
 
   function importEvidence(value) {
-    const out = {};
+    const out = cleanDateEstimate(value);
     for (const [key, max] of [["referenceId", 160], ["sourceEvidence", 300]]) {
       if (typeof value?.[key] === "string" && value[key].trim()) out[key] = value[key].trim().slice(0, max);
     }

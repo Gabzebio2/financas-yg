@@ -25,6 +25,7 @@
 !/js/dashboard.js
 !/js/folder-cleanup.js
 !/js/importer.js
+!/js/import-dates.js
 !/js/navigation.js
 !/js/rates.js
 !/js/receipt.js

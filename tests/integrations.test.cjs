@@ -42,7 +42,9 @@ function load(env, file, name, instrument) {
 
 function batchEnv() {
   let saved;
+  const confirmations = [];
   const env = environment({
+    askConfirm(title, text, callback, options) { confirmations.push({ title, text, callback, options }); },
     Dashboard: {
       getCats: () => ['Outros'], resolveImportDate: (s) => s || '2026-01-01',
       existingTxKeys: () => new Set(), existingSeriesKeys: () => new Set(),
@@ -53,7 +55,7 @@ function batchEnv() {
   vm.runInContext(core.slice(core.indexOf('const ImportMatch ='), core.indexOf("// 'YYYY-MM-DD'")), env.context);
   const batch = load(env, 'js/batch.js', 'Batch', (s) => s.replace('return { open, openWithFiles, ingestAiResult, refreshPreview };', 'return { open, close, openWithFiles, ingestAiResult, refreshPreview, save, fromFiles };'));
   env.callbacks.forEach((fn) => fn());
-  return { ...env, batch, saved: () => saved };
+  return { ...env, batch, saved: () => saved, confirmations, confirm: () => confirmations.at(-1)?.callback() };
 }
 
 test('parcelas retroativas opcionais atravessam janeiro com datas reais e dias limitados ao mês', () => {
@@ -65,6 +67,8 @@ test('parcelas retroativas opcionais atravessam janeiro com datas reais e dias l
   assert.equal(generated.checked, false);
   generated.checked = true; generated.listeners.get('change')();
   env.batch.save();
+  assert.equal(env.saved(), undefined);
+  assert.equal(env.confirmations.length, 1); env.confirm();
   assert.deepEqual(Array.from(env.saved(), (r) => r.date), ['2025-11-30','2025-12-31','2026-01-31','2026-02-28']);
   assert.equal(new Set(env.saved().map((r) => r.groupId)).size, 1);
 });
@@ -78,9 +82,9 @@ test('lote preserva moeda individual, recusa infinito e não reescreve anos de d
     { data: '2026-01-01', valor: Infinity, descricao: 'Inválido' }, null,
   ], ''), 2);
   env.batch.refreshPreview();
-  const partial = env.context.$('#batch-partial-ack');
-  partial.checked = true; partial.listeners.get('change')();
   env.batch.save();
+  assert.equal(env.saved(), undefined);
+  assert.equal(env.confirmations.length, 1); env.confirm();
   assert.deepEqual(Array.from(env.saved(), (r) => [r.currency, r.amount, r.date]), [['USD',10,'1999-01-01'],['BRL',20,'2026-01-01']]);
 });
 
@@ -105,6 +109,8 @@ test('transações iguais em moedas diferentes continuam selecionadas', () => {
   env.batch.ingestAiResult([{ data:'2026-01-01', valor:10, descricao:'Compra', tipo:'despesa', moeda:'BRL' }], '');
   assert.equal(env.batch.refreshPreview(),0);
   env.batch.save();
+  assert.equal(env.saved(), undefined);
+  assert.equal(env.confirmations.length, 1); env.confirm();
   assert.equal(env.saved().length,2);
 });
 

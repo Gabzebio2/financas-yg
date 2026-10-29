@@ -14,7 +14,7 @@
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261029-review">
+<link rel="stylesheet" href="css/design.css?v=20261029-batch-confirm">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 </head>
 <body>
@@ -576,7 +576,7 @@
       <div class="meta-modal-icon batch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 3H5v18h14V8zm0 0v5h5M9 12h6m-6 4h6" stroke-linejoin="round"/></svg></div>
       <div>
         <h3 id="batch-title">Importar em lote</h3>
-        <p class="meta-modal-sub">Duas leituras do documento. Uma confirmação quando os dados estão de acordo.</p>
+        <p class="meta-modal-sub">Duas leituras automáticas e uma confirmação para incluir o lote.</p>
       </div>
     </div>
 
@@ -610,17 +610,16 @@
         </label>
         <span class="hint" id="batch-count"></span>
       </div>
-      <p class="hint">Alterar dados, categoria, moeda ou conta pede uma nova confirmação manual. Planilhas são lidas localmente, sem duas leituras por IA.</p>
+      <p class="hint">Os avisos aparecem juntos antes de incluir o lote. Datas ausentes podem ser estimadas pelos vizinhos do mesmo documento; sem referência, o item fica fora. Planilhas são lidas localmente, sem IA.</p>
       <label class="checkline hidden" id="batch-generated-wrap"><input type="checkbox" id="batch-include-generated"> Incluir também parcelas e meses estimados que não aparecem no documento</label>
       <p class="hint hidden" id="batch-review-summary" role="status"></p>
       <div id="batch-coverage" class="import-review hidden" role="status"></div>
-      <label id="batch-partial-wrap" class="checkline hidden"><input type="checkbox" id="batch-partial-ack"> Conferi as partes incompletas e quero importar somente os lançamentos revisados abaixo. Isso não significa que o documento foi importado por inteiro.</label>
       <div class="batch-review-filters" role="group" aria-label="Lançamentos para conferir">
-        <button type="button" class="btn btn-ghost btn-sm" id="batch-filter-pending" aria-pressed="true">Pendências</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="batch-filter-pending" aria-pressed="true">Com avisos</button>
         <button type="button" class="btn btn-ghost btn-sm" id="batch-filter-all" aria-pressed="false">Todos</button>
       </div>
       <details id="batch-details" class="batch-details">
-      <summary>Detalhes dos lançamentos <span aria-hidden="true">⌄</span></summary>
+      <summary>Ver ou ajustar detalhes (opcional) <span aria-hidden="true">⌄</span></summary>
       <div class="table-wrap batch-table-wrap">
         <table id="batch-table">
           <thead>
@@ -776,12 +775,13 @@
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
-<script src="js/app.js?v=20261027-import"></script>
+<script src="js/import-dates.js?v=20261029-batch-confirm"></script>
+<script src="js/app.js?v=20261029-batch-confirm"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
 <script src="js/importer.js?v=20261027-import"></script>
-<script src="js/dashboard.js?v=20261027-import"></script>
+<script src="js/dashboard.js?v=20261029-batch-confirm"></script>
 <script src="js/receipt.js?v=20261027-import"></script>
-<script src="js/batch.js?v=20261029-review"></script>
+<script src="js/batch.js?v=20261029-batch-confirm"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
 <script src="js/cloud-archive.js?v=20261023-guarani"></script>

@@ -87,6 +87,37 @@ function acceptReceiptConfirmation() {
   vm.runInContext('closeConfirmModal()',ctx);cb();
 }
 
+test('importação mantém indicador de data aproximada e o apresenta na tabela', () => {
+  saveBase(dataset());
+  const item=tx('incoming',{date:'2026-10-09',dateEstimated:true,dateEstimate:{method:'between',previousDate:'2026-10-07',nextDate:'2026-10-11'}});
+  assert.equal(api.appendImported([item]),1);
+  const saved=JSON.parse(storage.get('fyg:ds:audit001')).transactions[0];
+  assert.equal(saved.dateEstimated,true);
+  assert.deepEqual(saved.dateEstimate,item.dateEstimate);
+  assert.match(get('#tx-tbody').innerHTML,/Data aproximada/);
+  api.refreshFromStore();
+  assert.equal(api.getDataset().transactions[0].dateEstimated,true);
+});
+
+test('edição de descrição preserva aproximação e alteração manual da data a remove', () => {
+  const ds=dataset();ds.transactions=[tx('estimated',{dateEstimated:true,dateEstimate:{method:'nearest',previousDate:'2026-10-09'}})];saveBase(ds);
+  api.openTxModal('estimated');get('#tx-desc').value='Descrição revisada';api.saveTxModal();
+  assert.equal(api.getDataset().transactions[0].dateEstimated,true);
+  api.openTxModal('estimated');get('#tx-date').value='2026-10-10';api.saveTxModal();
+  const saved=JSON.parse(storage.get('fyg:ds:audit001')).transactions[0];
+  assert.equal(saved.date,'2026-10-10');assert.equal(saved.dateEstimated,undefined);assert.equal(saved.dateEstimate,undefined);
+  assert(!get('#tx-tbody').innerHTML.includes('Data aproximada'));
+});
+
+test('redigitar a mesma data também remove aproximação, sem apagar antes de salvar', () => {
+  const ds=dataset();ds.transactions=[tx('estimated',{dateEstimated:true,dateEstimate:{method:'nearest',nextDate:'2026-10-09'}})];saveBase(ds);
+  api.openTxModal('estimated');get('#tx-date').listeners.get('input')();
+  assert.equal(api.getDataset().transactions[0].dateEstimated,true,'A edição pendente não altera os dados salvos');
+  api.saveTxModal();
+  const saved=JSON.parse(storage.get('fyg:ds:audit001')).transactions[0];
+  assert.equal(saved.date,'2026-10-09');assert.equal(saved.dateEstimated,undefined);assert.equal(saved.dateEstimate,undefined);
+});
+
 test('comprovante repetido pede comparação e só salva após confirmação explícita', () => {
   const ds=dataset();ds.transactions=[tx('original',{account:'C6',referenceId:'synthetic-reference'})];saveBase(ds);
   api.openTxModal(null);api.fillTxFromReceipt(receipt());api.saveTxModal();

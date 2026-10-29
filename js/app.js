@@ -588,6 +588,24 @@ function cleanISO(v, fallback) {
   return typeof v === "string" && isValidISODate(v.slice(0, 10)) && v[10] === "T" && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : fallback;
 }
 
+// The marker records an estimate, never proof of a date read from a document.
+// Keep only coherent anchors; malformed metadata cannot produce a UI claim.
+function cleanDateEstimate(transaction) {
+  if (transaction?.dateEstimated !== true || !isValidISODate(transaction.date)) return {};
+  const value = transaction.dateEstimate;
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+      Object.keys(value).some(key => !["method", "previousDate", "nextDate"].includes(key))) return {};
+  const previous = value.previousDate, next = value.nextDate;
+  if ((previous !== undefined && !isValidISODate(previous)) || (next !== undefined && !isValidISODate(next))) return {};
+  if (value.method === "between") {
+    if (!previous || !next || transaction.date < (previous < next ? previous : next) || transaction.date > (previous > next ? previous : next)) return {};
+  } else if (value.method === "nearest") {
+    if (!!previous === !!next || transaction.date !== (previous || next)) return {};
+  } else return {};
+  return { dateEstimated: true, dateEstimate: { method: value.method,
+    ...(previous ? { previousDate: previous } : {}), ...(next ? { nextDate: next } : {}) } };
+}
+
 // Dados locais já pertencem ao usuário. Uma simples leitura não pode
 // descartar lançamentos antigos, alterar sinais nem regenerar vínculos.
 // Só preenche campos adicionados em versões novas e protege a renderização.
@@ -607,17 +625,21 @@ function normalizeStoredDataset(raw) {
     displayCurrency: normDisplayCur(raw.displayCurrency),
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
-    transactions: raw.transactions.map((t) => ({
-      ...t,
-      id: typeof t.id === "string" && t.id ? t.id : uid(),
-      date: t.date,
-      amount: Number(t.amount),
-      desc: String(t.desc ?? ""),
-      category: String(t.category || "Outros"),
-      account: String(t.account || ""),
-      currency: normCur(t.currency),
-      type: t.type === "receita" ? "receita" : "despesa",
-    })),
+    transactions: raw.transactions.map((t) => {
+      const { dateEstimated, dateEstimate, ...fields } = t;
+      return {
+        ...fields,
+        id: typeof t.id === "string" && t.id ? t.id : uid(),
+        date: t.date,
+        amount: Number(t.amount),
+        desc: String(t.desc ?? ""),
+        category: String(t.category || "Outros"),
+        account: String(t.account || ""),
+        currency: normCur(t.currency),
+        type: t.type === "receita" ? "receita" : "despesa",
+        ...cleanDateEstimate(t),
+      };
+    }),
     limits: Array.isArray(raw.limits) ? raw.limits : [],
     metas: Array.isArray(raw.metas) ? raw.metas : [],
   };
@@ -715,6 +737,7 @@ function sanitizeDataset(raw, opts) {
       groupId: mapGroup(t.groupId),
       fixed: t.fixed === true,
       date,
+      ...cleanDateEstimate(t),
       desc: text(t.desc, 120).trim() || "(sem descrição)",
       category: text(t.category, 40).trim() || "Outros",
       account: text(t.account, 40).trim(),
