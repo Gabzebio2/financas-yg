@@ -1,8 +1,19 @@
 {
   "functions": {
-    "api/receipt-document.js": { "maxDuration": 180 },
-    "api/receipt.js": { "maxDuration": 60 },
-    "api/whatsapp.js": { "maxDuration": 60 },
-    "api/whatsapp-config.js": { "maxDuration": 30 }
+    "api/receipt-document.js": {
+      "maxDuration": 180
+    },
+    "api/receipt.js": {
+      "maxDuration": 60
+    },
+    "api/whatsapp.js": {
+      "maxDuration": 60
+    },
+    "api/whatsapp-config.js": {
+      "maxDuration": 30
+    },
+    "api/receipt-worker.js": {
+      "maxDuration": 130
+    }
   }
 }

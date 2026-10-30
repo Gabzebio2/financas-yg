@@ -7,6 +7,7 @@
 const Batch = (() => {
   const PROXY_PATH = "/api/receipt";
   let documentTasks = [];
+  let backgroundJobId = null;
   let documentExclusions = [];
   let documentFailure = false;
   let rows = [];          // [{ date, desc, amount, type, currency, on, src, dup, cat, installment, fixa... }]
@@ -77,6 +78,7 @@ const Batch = (() => {
     reading = false;
     $("#batch-preview").inert = false;
     opts = opts || {};
+    backgroundJobId = null;
     presetCat = opts.category || null;
     rows = [];
     documentTasks = []; documentExclusions = []; documentFailure = false;
@@ -112,6 +114,19 @@ const Batch = (() => {
     $("#btn-batch-save").classList.add("hidden");
     setStatus("");
     $("#modal-batch").classList.remove("hidden");
+    if(opts.backgroundJob)restoreBackgroundJob(opts.backgroundJob);
+  }
+
+  function restoreBackgroundJob(payload) {
+    backgroundJobId=payload.job.id;
+    rows=Array.isArray(payload.job.extra_rows)?payload.job.extra_rows:[];
+    srcSeq=rows.reduce((n,r)=>Math.max(n,Number(r.src)||0),0);
+    documentTasks=payload.pages.map(p=>({documentId:p.document_id,label:p.label,part:{documentContext:p.context},quick:p.quick,first:p.first_result,result:p.result,progress:{label:p.label,status:p.result?.partial?'partial':'complete',count:p.result?.itens?.length||0,auditStatus:p.result?.verified?'verified':'attention',message:(p.result?.avisos||[]).join(' ')}}));
+    coverage=documentTasks.map(t=>t.progress);
+    reviewWarnings=documentTasks.flatMap(t=>t.result?.avisos||[]);
+    documentFailure=payload.job.status!=='ready'||documentTasks.some(t=>!t.result);
+    rebuildDocumentPreview();flagDuplicates();renderPreview();
+    setStatus('Leitura concluída e guardada com privacidade. Confira o resumo e clique em Incluir para salvar.','ok');
   }
 
   function close() {
@@ -630,6 +645,7 @@ const Batch = (() => {
     rebuildDocumentPreview();
   }
   async function fromDocumentPages(files,version) {
+    if(backgroundJobId){setStatus('Conclua a inclusão deste documento antes de enviar outro.','err');return;}
     if(documentTasks.some(t=>!t.result)){setStatus('Conclua a leitura atual antes de anexar mais arquivos.','err');return;}
     const prepared=[];
     try {
@@ -644,6 +660,15 @@ const Batch = (() => {
       }
       const quick=prepared.length<=3&&prepared.every(t=>t.part.mediaType!=='application/pdf');
       prepared.forEach(t=>{t.quick=quick;});
+      if(typeof ReceiptJobs!=='undefined'){
+        try{
+          setStatus('Preparando envio privado. Mantenha o app aberto até terminar o envio…');
+          await ReceiptJobs.submit(prepared,rows.map(r=>({...r,documentTask:false})),msg=>{if(contextValid(version))setStatus(msg);});
+          if(!contextValid(version))return;
+          close();toast('Enviado! Pode apagar a tela. O resultado aparecerá em Documentos, nesta pasta.');
+        }catch(e){if(contextValid(version))setStatus(ReceiptJobs.message(e)+' Veja o envio em Documentos.','err');}
+        return;
+      }
       documentTasks.push(...prepared);coverage.push(...prepared.map(t=>t.progress));
       documentProgress();await processDocumentTasks(version);
     }catch(e){if(!contextValid(version))return;setStatus('Nenhuma página dos novos arquivos foi enviada. '+(Receipt.prepFailMsg?Receipt.prepFailMsg(e):'Não foi possível preparar todas as páginas.')+' Selecione os arquivos novamente.','err');}
@@ -861,19 +886,28 @@ const Batch = (() => {
     return { txs, warnings, failedAudit, totalText, key };
   }
 
-  function commitPlan(plan, version) {
+  async function commitPlan(plan, version) {
     if (committing || reading || !contextValid(version)) return;
     committing = true;
     pendingConfirmation = null;
     confirmationSeq++;
     updateCount();
     try {
-      const n = Dashboard.appendImported(plan.txs);
+      let n;
+      if(backgroundJobId){
+        const result=await ReceiptJobs.commit(backgroundJobId,plan.txs);
+        // The server committed once, even if this browser loses the response.
+        // Sync merges remote additions by their stable IDs, preserving local edits.
+        await Cloud.syncNow({fresh:true});
+        if(!contextValid(version))return;
+        Dashboard.refreshFromStore({force:true});
+        n=result.transactions.length;ReceiptJobs.refresh();
+      }else n = Dashboard.appendImported(plan.txs);
       if (n !== plan.txs.length) { toast("Não foi possível adicionar todos os itens. A prévia foi mantida; confira se a pasta ainda está disponível."); return; }
       close();
       toast(`${n} transaç${n === 1 ? "ão adicionada" : "ões adicionadas"} ✔`);
     } catch (error) {
-      toast("Não foi possível gravar o lote. A prévia foi mantida para tentar novamente.");
+      toast(backgroundJobId?"Não foi possível confirmar a resposta. Confira Documentos ou tente Incluir novamente; este lote está protegido contra gravação repetida.":"Não foi possível gravar o lote. A prévia foi mantida para tentar novamente.");
     } finally {
       committing = false;
       if (version === generation) updateCount();

@@ -77,6 +77,24 @@ function withDocument(itens, changes = {}) {
   return { ...env, calls, read: () => env.batch.fromPhotos([{ name: 'documento.png', size: 10 }]) };
 }
 function edit(env, index, field, value) { env.node('#batch-tbody').fire('input', { dataset: { i: String(index), f: field }, value }); }
+test('retomar documento privado restaura USD e cashback; só Incluir confirma na nuvem',async()=>{
+  const commits=[];let synced=0,refreshed=0;
+  const env=setup({ReceiptJobs:{commit:async(id,txs)=>{commits.push({id,txs});return {transactions:txs};},refresh(){}},Cloud:{getToken:()=> 'session',syncNow:async()=>{synced++;return true;}}});
+  env.context.Dashboard.refreshFromStore=()=>{refreshed++;};
+  const data={itens:[item({valor:8.78,moeda:'USD',cashback:{valor:.08,moeda:'USD'},incertezas:[],revisar:[]})],cartao:'',excluded:[],avisos:[],partial:false,verified:true,reviewMode:'automatic',ledger:{monetaryLines:0,accounted:0,missing:[]}};
+  env.batch.open({backgroundJob:{job:{id:'private-job',status:'ready',extra_rows:[]},pages:[{document_id:'doc1',label:'print',context:{pageStart:1,pageEnd:1,totalPages:1},quick:true,first_result:data,result:data}]}});
+  assert.equal(commits.length,0);assert.equal(env.node('#btn-batch-save').disabled,false);
+  env.batch.save();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(commits.length,1);assert.equal(commits[0].id,'private-job');assert.equal(commits[0].txs[0].currency,'USD');assert.equal(commits[0].txs[0].amount,8.78);assert.equal(commits[0].txs[0].cashback.amount,.08);assert.equal(synced,1);assert.equal(refreshed,1);assert.equal(env.savedCount(),0);
+});
+test('erro de confirmação mantém a prévia e permite repetir o mesmo job sem recriar lançamentos',async()=>{
+ let attempts=0;const env=setup({ReceiptJobs:{commit:async()=>{attempts++;throw Error('network');},refresh(){}}});
+ const data={itens:[item()],excluded:[],avisos:[],partial:false,verified:true,reviewMode:'automatic',ledger:{monetaryLines:0,accounted:0,missing:[]}};
+ env.batch.open({backgroundJob:{job:{id:'same-job',status:'ready',extra_rows:[]},pages:[{document_id:'doc1',label:'print',context:{pageStart:1,pageEnd:1,totalPages:1},quick:true,first_result:data,result:data}]}});
+ env.batch.save();await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(env.node('#modal-batch').classList.contains('hidden'),false);assert.equal(env.savedCount(),0);
+ env.batch.save();await new Promise(resolve=>setImmediate(resolve));assert.equal(attempts,2);
+});
 function select(env, index, checked) { env.node('#batch-tbody').fire('change', { dataset: { i: String(index) }, checked, classList: { contains: () => true }, closest: () => ({ classList: { toggle() {} } }) }); }
 function projections(env, on = true) { env.node('#batch-include-generated').checked = on; env.node('#batch-include-generated').fire('change'); }
 function ingest(env, items, card = 'C6', metadata = {}) { env.batch.ingestAiResult(items, card, metadata); env.batch.refreshPreview(); }

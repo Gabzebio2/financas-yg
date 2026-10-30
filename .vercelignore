@@ -46,3 +46,7 @@
 !/package.json
 
 !/pnpm-lock.yaml
+
+!/api/receipt-worker.js
+!/js/receipt-jobs.js
+!/css/receipt-jobs.css

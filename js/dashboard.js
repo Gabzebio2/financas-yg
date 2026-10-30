@@ -123,6 +123,7 @@ const Dashboard = (() => {
     $("#tx-search").value = "";
     showScreen("screen-dash");
     renderAll();
+    if(typeof ReceiptJobs!=="undefined")ReceiptJobs.refresh();
   }
 
   // Uma sincronização pode atualizar a pasta enquanto a lista ou um

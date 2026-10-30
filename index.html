@@ -14,8 +14,9 @@
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261030-quick-receipts">
+<link rel="stylesheet" href="css/design.css?v=20261030-background">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
+<link rel="stylesheet" href="css/receipt-jobs.css?v=20261030-background">
 </head>
 <body>
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -273,6 +274,12 @@
     </div>
 
     <p id="currency-warning" class="currency-warning hidden" role="status"></p>
+    <details id="receipt-jobs" class="receipt-jobs hidden" open>
+      <summary>Documentos <span>Leitura em segundo plano</span></summary>
+      <p class="hint">Arquivos privados, excluídos automaticamente após 14 dias. Os lançamentos que você incluir permanecem na pasta.</p>
+      <p data-jobs-error class="receipt-job-error" role="status"></p>
+      <div data-jobs-list></div>
+    </details>
     <!-- Cabeçalho estilo app Mobills: mês centralizado, saldo grande e
          Receitas × Despesas com ícones redondos -->
     <div class="dash-hero" id="dash-hero">
@@ -591,7 +598,7 @@
     </div>
 
     <p id="batch-phases" role="status" aria-live="polite" style="white-space:pre-line"></p>
-      <p class="hint">Mantenha o app aberto até a prévia ficar pronta. Os lançamentos só são salvos quando você clicar em Incluir.</p>
+      <p class="hint">Mantenha o app aberto só até terminar o envio. A leitura continua com a tela apagada; o resultado fica em Documentos por 14 dias. Os lançamentos só são salvos ao clicar em Incluir.</p>
       <button type="button" class="btn btn-ghost hidden" id="btn-batch-retry">Continuar leitura</button>
       <p id="batch-source-summary" class="hint"></p>
       <details><summary>Exclusões explicadas e cashback</summary><ul id="batch-exclusions"></ul></details>
@@ -790,18 +797,19 @@
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
-<script src="js/import-dates.js?v=20261030-quick-receipts"></script>
-<script src="js/app.js?v=20261030-quick-receipts"></script>
+<script src="js/import-dates.js?v=20261030-background"></script>
+<script src="js/app.js?v=20261030-background"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
 <script src="js/importer.js?v=20261027-import"></script>
-<script src="js/dashboard.js?v=20261030-quick-receipts"></script>
-<script src="js/receipt.js?v=20261030-quick-receipts"></script>
-<script src="js/batch.js?v=20261030-quick-receipts"></script>
+<script src="js/dashboard.js?v=20261030-background"></script>
+<script src="js/receipt.js?v=20261030-background"></script>
+<script src="js/batch.js?v=20261030-background"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
 <script src="js/cloud-archive.js?v=20261023-guarani"></script>
 <script src="js/cloud-merge.js?v=20261023-pilot"></script>
 <script src="js/cloud.js?v=20261023-guarani"></script>
+<script src="js/receipt-jobs.js?v=20261030-background"></script>
 <script src="js/navigation.js?v=20261023-guarani"></script>
 <script src="js/whatsapp.js?v=20261023-pilot"></script>
 </body>

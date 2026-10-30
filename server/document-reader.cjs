@@ -94,13 +94,13 @@ function canFinishQuick(result) {
     result.excluded.every(r=>r.motivo!=='outro') &&
     (!result.expectedCount||result.expectedCount===result.itens.length+result.excluded.filter(r=>r.operacao!==false&&r.motivo!=='resumo').length);
 }
-async function readPage({image,categories,cards,context,first,mode},key) {
+async function readPage({image,categories,cards,context,first,mode,timeoutMs=150000},key) {
   const quick=mode==='quick'&&!first&&image.media_type!=='application/pdf';
   const model=quick?FAST_MODEL:MODEL;
   const ledger=await sourceLedger(image);
   const media=image.media_type==='application/pdf'?{type:'input_file',filename:'pagina.pdf',file_data:`data:application/pdf;base64,${image.data}`}:{type:'input_image',image_url:`data:${image.media_type};base64,${image.data}`,detail:'high'};
   const userText=`Texto original numerado, extraído sem IA (pode conter erros de fonte/OCR; a imagem original prevalece):\n${ledger.text||'(imagem sem camada textual)'}\nLinhas monetárias para conferir: ${ledger.moneyLines.join(', ')}.\n${first?'Rascunho da etapa 1, para comparação, sem autoridade: '+JSON.stringify({itens:first.itens,excluded:first.excluded}):'Leia todas as operações.'}`;
-  const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+key,'content-type':'application/json'},signal:AbortSignal.timeout(150000),redirect:'error',body:JSON.stringify({model,store:false,reasoning:{effort:quick?'low':'medium'},max_output_tokens:quick?12000:24000,instructions:prompt(categories,cards,context,!!first),input:[{role:'user',content:[media,{type:'input_text',text:userText}]}],text:{format:{type:'json_schema',name:'pagina_conferida',strict:true,schema}}})});
+  const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+key,'content-type':'application/json'},signal:AbortSignal.timeout(timeoutMs),redirect:'error',body:JSON.stringify({model,store:false,reasoning:{effort:quick?'low':'medium'},max_output_tokens:quick?12000:24000,instructions:prompt(categories,cards,context,!!first),input:[{role:'user',content:[media,{type:'input_text',text:userText}]}],text:{format:{type:'json_schema',name:'pagina_conferida',strict:true,schema}}})});
   if(!r.ok){const e=await r.json().catch(()=>({}));throw Error(e.error?.code==='insufficient_quota'?'saldo_ia':r.status===401?'configuracao_ia':'leitura_indisponivel');}
   const response=await r.json();
   if(response.status!=='completed')throw Error('resposta_incompleta');
