@@ -6,6 +6,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const coreSource = fs.readFileSync(path.join(__dirname, "../js/app.js"), "utf8");
 const repairSource = fs.readFileSync(path.join(__dirname, "../js/cloud-repair.js"), "utf8");
+const mergeSource = fs.readFileSync(path.join(__dirname, "../js/cloud-merge.js"), "utf8");
 const cloudSource = fs.readFileSync(path.join(__dirname, "../js/cloud.js"), "utf8").replace(
   "repairLegacyDates, exportRepairBackup };",
   "repairLegacyDates, exportRepairBackup, ensureClient, syncNow, logout };"
@@ -116,6 +117,7 @@ function harness({ values = new Map(), server = makeServer(), auto = false } = {
   });
   vm.runInContext(coreSource + "\nthis.core = { Store }; renderFolders = () => {}; toast = () => {};", context);
   vm.runInContext(repairSource, context);
+  vm.runInContext(mergeSource, context);
   vm.runInContext(cloudSource + "\nthis.subject = Cloud;", context);
   const { Store } = context.core, cloud = context.subject;
   return { values, server, storage, timers, nodes, events, downloads, context, Store, cloud,
@@ -172,7 +174,7 @@ test("pausa mantém lançamentos e fila duráveis; recarregar e reativar envia u
   assert.equal(restored.remote().data.transactions.length, 2);
   assert.equal(restored.cloud.getSyncState().pendingCount, 0);
   assert.equal(restored.cloud.getSyncState().status, "synced");
-  assert.equal(restored.timers.size, 0, "não há ping periódico depois de esvaziar a fila");
+  assert.deepEqual([...restored.timers.values()].map((timer) => timer.delay), [30000], "fila vazia acompanha inclusões externas somente com a página visível");
 });
 
 test("backoff cresce apenas enquanto há pendências e retoma ao ficar online", async () => {
@@ -188,19 +190,23 @@ test("backoff cresce apenas enquanto há pendências e retoma ao ficar online", 
   assert.equal(h.cloud.getSyncState().pendingCount, 0);
 });
 
-test("conflito com remoto mais novo preserva ambas as versões em pastas separadas sem repetir cópia no retry", async () => {
-  const h = await seeded(); h.add("Minha compra"); changeRemote(h);
+test("edições divergentes no mesmo ID preservam as versões e bloqueiam overwrite sem repetir cópia no retry", async () => {
+  const h = await seeded(); const local = h.local(); local.transactions[0].desc = "Minha edição"; h.Store.saveDataset(local);
+  h.remote().data.transactions[0].desc = "Outra edição";
+  h.remote().updated_at = h.remote().data.updatedAt = "2027-01-01T00:00:00.000Z";
   h.server.failWrites = 1;
   assert.equal(await h.sync(), false);
   let copies = h.Store.loadIndex().filter((ds) => ds.id !== "folder0001");
   assert.equal(copies.length, 1);
-  assert.deepEqual(Array.from(h.local().transactions, (t) => t.desc), ["Base", "Minha compra"]);
-  assert.deepEqual(Array.from(h.local(copies[0].id).transactions, (t) => t.desc), ["Base", "Outro aparelho"]);
-  assert.equal(await h.sync(), true);
+  assert.deepEqual(Array.from(h.local().transactions, (t) => t.desc), ["Minha edição"]);
+  assert.deepEqual(Array.from(h.local(copies[0].id).transactions, (t) => t.desc), ["Outra edição"]);
+  assert.equal(await h.sync(), false);
   copies = h.Store.loadIndex().filter((ds) => ds.id !== "folder0001");
   assert.equal(copies.length, 1);
   assert.equal(h.server.rows.size, 2);
-  assert.deepEqual(h.remote().data.transactions.map((t) => t.desc), ["Base", "Minha compra"]);
+  assert.deepEqual(h.remote().data.transactions.map((t) => t.desc), ["Outra edição"]);
+  assert.equal(h.cloud.getSyncState().pendingUploads, 1);
+  assert.equal(h.cloud.getSyncState().mergeConflictCount, 1);
 });
 
 test("edição durante upload não perde sua revisão quando a resposta antiga chega", async () => {
@@ -222,8 +228,9 @@ test("CAS impede sobrescrever edição remota ocorrida depois do pull", async ()
   assert.equal(h.cloud.getSyncState().pendingUploads, 1);
   assert.equal(h.remote().data.transactions[1].desc, "Mudou durante envio");
   await h.sync();
-  assert.equal(h.Store.loadIndex().length, 2);
+  assert.equal(h.Store.loadIndex().length, 1);
   assert.equal(h.remote().data.transactions[1].desc, "Minha compra");
+  assert.equal(h.remote().data.transactions[2].desc, "Mudou durante envio");
 });
 
 test("CAS avança updated_at mesmo com relógio congelado entre alterações", async () => {
@@ -383,14 +390,15 @@ test("timeout de request mantém fila e programa retentativa sem requisições s
   assert.equal(h.remote().data.transactions.length, 1);
 });
 
-test("retorno de autenticação e visibilidade agenda apenas recuperação de pendências", async () => {
+test("retorno de autenticação e visibilidade recupera pendências e relê inclusões externas com fila limpa", async () => {
   const h = await seeded({ auto: true }); h.server.paused = true; h.add("Pendente"); await h.sync();
   h.context.document.fire("visibilitychange");
   assert.ok([...h.timers.values()].some((timer) => timer.delay === 0));
   h.server.paused = false; h.login("user-a", "TOKEN_REFRESHED"); await h.tick(0);
   const calls = h.server.calls.length;
   h.context.document.fire("visibilitychange");
-  assert.equal(h.timers.size, 0); assert.equal(h.server.calls.length, calls);
+  assert.deepEqual([...h.timers.values()].map((timer) => timer.delay), [0]);
+  await h.tick(0); assert.equal(h.server.calls.length, calls + 1);
   assert.ok(h.events.some((event) => event.type === "fyg:cloudstate" && event.detail.status === "synced"));
 });
 
@@ -413,7 +421,7 @@ test("remoto inválido antes dos demais não bloqueia upload válido nem esconde
   assert.match(h.nodes.get("#cloud-status").textContent, /dados inválidos/);
   assert.doesNotMatch(h.nodes.get("#cloud-status").textContent, /Tudo sincronizado/);
   assert.deepEqual(h.server.calls.map((call) => call.operation), ["select", "insert"]);
-  assert.equal(h.timers.size, 0, "sem pendências, não faz polling automático do registro inválido");
+  assert.deepEqual([...h.timers.values()].map((timer) => timer.delay), [30000], "leitura periódica não altera o registro inválido");
 });
 
 test("upload do mesmo ID inválido fica intacto na fila e usa backoff crescente e limitado", async () => {
@@ -680,8 +688,10 @@ test("reparo permite pendência do dono atual e mantém bloqueio de exclusão e 
   assert.equal(repairBackups(h).length, 0);
   h.login("user-a"); assert.equal(await h.cloud.repairLegacyDates(), false);
   assert.equal(repairBackups(h).length, 2);
-  assert.ok(h.remote().data.transactions.some((t) => t.desc === "Local pendente"));
-  assert.equal(storedQueue(h).dirty.folder0001, undefined);
+  assert.ok(h.local().transactions.some((t) => t.desc === "Local pendente"));
+  assert.ok(h.remote().data.transactions.every((t) => t.desc === "Notebook"), "reparo não autoriza sobrescrever campos financeiros divergentes");
+  assert.ok(storedQueue(h).dirty.folder0001);
+  assert.equal(h.cloud.getSyncState().mergeConflictCount, 1);
   assert.equal(storedQueue(h).deletes.folder0002 != null, true);
   assert.equal(h.remote("folder0002").data.transactions[1].date, "2025-00-20");
 });
@@ -695,17 +705,18 @@ test("edição em outra aba antes do plano é preservada e exclusão durante pul
     const repair = first.cloud.repairLegacyDates(); await settle();
     if (action === "edit") second.add("Mudança em outra aba");
     else second.Store.deleteDataset("folder0001");
-    gate.resolve(); assert.equal(await repair, action === "edit");
+    gate.resolve(); assert.equal(await repair, false);
     if (action === "delete") {
       assert.deepEqual(first.remote(), original);
       assert.equal(repairBackups(first).length, 0);
       assert.equal(first.server.calls.filter((call) => call.operation !== "select").length, writesBefore);
       assert.equal(first.cloud.getSyncState().pendingCount, 1);
     } else {
-      assert.ok(first.remote().data.transactions.some((t) => t.desc === "Mudança em outra aba"));
+      assert.ok(first.remote().data.transactions.every((t) => t.desc === "Notebook"));
       assert.ok(first.local().transactions.some((t) => t.desc === "Mudança em outra aba"));
       assert.equal(repairBackups(first).length, 2);
-      assert.equal(first.cloud.getSyncState().pendingCount, 0);
+      assert.equal(first.cloud.getSyncState().pendingCount, 1);
+      assert.equal(first.cloud.getSyncState().mergeConflictCount, 1);
     }
   }
 });

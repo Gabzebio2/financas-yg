@@ -44,6 +44,15 @@ test("repara três grupos completos independentes 1/10 e 1/12 sem alterar outros
   assert.equal(JSON.stringify(result.dataset), JSON.stringify(expected));
 });
 
+test("reparo de data aceita moedas novas sem mudar moeda, preferência ou precisão", () => {
+  for (const currency of ["EUR", "GBP", "USDT", "USDC"]) {
+    const raw = { ...dataset(series("new-currency", 3, { currency, amount: 1.123456 })), displayCurrency: "DEFAULT" };
+    const expected = JSON.parse(JSON.stringify(raw)); expected.transactions[0].date = "2025-12-15";
+    const result = analyzeDataset(raw);
+    assert.equal(result.repairable, true); assert.deepEqual(result.dataset, expected);
+  }
+});
+
 test("ordem das transações não interfere na inferência e parcelas podem diferir em centavos", () => {
   const raw = dataset(series().reverse());
   const result = analyzeDataset(raw);
@@ -93,7 +102,7 @@ test("recusa contexto divergente de tipo, moeda, conta ou descrição", () => {
   for (const [field, value] of [["type", "receita"], ["currency", "USD"], ["account", "Outra conta"], ["desc", "Outra compra"]]) {
     const rows = series(); rows[5][field] = value; expectRefused(dataset(rows));
   }
-  for (const overrides of [{ type: undefined }, { currency: "EUR" }, { account: undefined }, { desc: "" }]) {
+  for (const overrides of [{ type: undefined }, { currency: "CHF" }, { account: undefined }, { desc: "" }]) {
     expectRefused(dataset(series("invalid-context", 12, overrides)));
   }
 });
