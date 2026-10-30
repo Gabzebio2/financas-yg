@@ -1,5 +1,6 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {normalize,sourceLedger,prompt}=require('../server/document-reader.cjs');
+const {canFinishQuick,readPage,FAST_MODEL}=require('../server/document-reader.cjs');
 const {PDFDocument,StandardFonts}=require('../lib/pdf-lib.min.js');
 const row=(extra={})=>({data:'2026-10-10',descricao:'Compra',valor:21.83,moeda:'USD',tipo:'despesa',categoria:'Outros',parcela:'',instituicao:'',referencia:'',evidencia:'Debitado USD 21.83',incertezas:[],linhas:[2],cashback:{valor:0.65,moeda:'USD'},...extra});
 const ledger={lines:['DATA','Compra USD 21.83 + USD 0.65','Saldo USD 200.00'],moneyLines:[2,3]};
@@ -48,4 +49,25 @@ test('duas descrições do mesmo resumo não são duas operações omitidas',()=
 });
 test('prompt exige débito efetivo, comparação com original e cashback fora de receita',()=>{
  assert.match(prompt(['Outros'],[],{},true),/COMP[A]?RE A PÁGINA ORIGINAL/);assert.match(prompt([],[],{},false),/MOEDA EFETIVAMENTE DEBITADA/);assert.match(prompt([],[],{},true),/nunca é receita/);
+});
+
+const imageLedger={lines:[],moneyLines:[],text:'',pdf:false};
+test('débito identificado vence valor local sem converter ou subtrair cashback',()=>{
+ const r=normalize(raw({itens:[row({valor:43,moeda:'BRL',linhas:[],cobranca:{valor:8.78,moeda:'USD',origem:'usd_abaixo_local'},cashback:{valor:0.08,moeda:''}})],excluidos:[]}),imageLedger);
+ assert.equal(r.itens[0].valor,8.78);assert.equal(r.itens[0].moeda,'USD');assert.deepEqual(r.itens[0].cashback,{valor:0.08,moeda:'USD'});assert.equal(canFinishQuick(r),true);
+});
+test('USDC é preservado no depósito e moeda incerta não usa o valor local',()=>{
+ const r=normalize(raw({itens:[row({tipo:'receita',valor:241.16,moeda:'BRL',linhas:[],cobranca:{valor:241.16,moeda:'USDC',origem:'debito_explicito'}}),row({valor:43,moeda:'BRL',linhas:[],cobranca:{valor:null,moeda:'',origem:'incerta'}})],excluidos:[]}),imageLedger);
+ assert.equal(r.itens[0].moeda,'USDC');assert.equal(r.itens[1].valor,null);assert.equal(r.itens[1].invalid,true);assert.equal(canFinishQuick(r),false);
+});
+test('leitura rápida exige poucos itens, datas reais, moeda legível e contagem compatível',()=>{
+ const r=normalize(raw({itens:[row({linhas:[]})],excluidos:[]}),imageLedger);
+ assert.equal(canFinishQuick(r),true);
+ for(const edit of [{itens:Array(11).fill(r.itens[0])},{itens:[{...r.itens[0],data:'2026-02-31'}]},{expectedCount:2},{verified:false},{itens:[]},{excluded:[{motivo:'outro'}]}])assert.equal(canFinishQuick({...r,...edit}),false);
+});
+test('modo rápido usa low e uma chamada; segunda leitura sempre usa medium',async(t)=>{
+ const requests=[];t.mock.method(global,'fetch',async(url,init)=>{requests.push(JSON.parse(init.body));return {ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(raw({itens:[row({linhas:[]})],excluidos:[]}))}]}]})};});
+ const args={image:{media_type:'image/png',data:'YWJj'},categories:['Outros'],cards:[],context:{pageStart:1,pageEnd:1,totalPages:1},mode:'quick'};
+ const first=await readPage(args,'test-only');assert.equal(first.reviewMode,'automatic');assert.equal(requests.length,1);assert.equal(requests[0].model,FAST_MODEL);assert.equal(requests[0].reasoning.effort,'low');assert.equal(requests[0].store,false);
+ const second=await readPage({...args,first},'test-only');assert.equal(second.reviewMode,'compared');assert.equal(requests[1].reasoning.effort,'medium');
 });

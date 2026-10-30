@@ -11,3 +11,9 @@ test('sessão inválida nunca chega ao leitor',async()=>{const e=setup();e.conte
 test('página fracionária, ausente, excessiva ou com intervalo não consome IA',async()=>{for(const c of [{pageStart:1,pageEnd:1},{pageStart:1,pageEnd:1,totalPages:'1'},{pageStart:1,pageEnd:2,totalPages:2},{pageStart:1,pageEnd:1,totalPages:121}]){const e=setup();assert.equal((await e.invoke({...input(),documentContext:c})).code,400);assert.equal(e.calls.length,1);}});
 test('sessão vai só para Supabase; leitor recebe chave do servidor e contexto limitado',async()=>{const e=setup(),body=input();body.documentContext.instruction='untrusted';assert.equal((await e.invoke(body)).code,200);assert.match(e.calls[0].url,/supabase.co\/auth\/v1\/user$/);assert.equal(e.calls[1].key,'server-test-secret');assert.equal(e.calls[1].value.context.instruction,undefined);assert.equal(e.calls[1].value.token,undefined);});
 test('erro interno não expõe detalhes do provedor',async()=>{const e=setup();e.context.fetch=async()=>{throw Error('secret-value');};const r=await e.invoke(input());assert.equal(r.code,502);assert(!JSON.stringify(r).includes('secret-value'));});
+
+test('modo rápido só é permitido para imagem sem rascunho; cliente não escolhe modelo',async()=>{
+ for(const [body,want] of [[{...input(),mode:'quick',model:'untrusted'},'quick'],[{...input(),mode:'quick',image:{media_type:'application/pdf',data:'YWJj'}},'full'],[{...input(),mode:'quick',first:{itens:[]}},'full']]){
+  const e=setup();assert.equal((await e.invoke(body)).code,200);assert.equal(e.calls[1].value.mode,want);assert.equal(e.calls[1].value.model,undefined);
+ }
+});

@@ -134,7 +134,7 @@ test('data ausente com vizinhos do mesmo arquivo é estimada e incluída com met
   await env.read();
   assert.match(env.node('#batch-review-summary').textContent, /1 data\(s\) estimada/);
   assert.equal(env.node('#btn-batch-save').disabled, false);
-  env.batch.save(); assert.match(env.confirmations[0].text, /1 data\(s\) foram estimadas/);
+  env.batch.save(); assert.equal(env.confirmations.length, 1); // estimate is already disclosed in the preview
   env.confirm();
   assert.equal(env.saved()[1].date, '2026-01-12'); assert.equal(env.saved()[1].dateEstimated, true);
   assert.deepEqual(env.saved()[1].dateEstimate, { method: 'between', previousDate: '2026-01-10', nextDate: '2026-01-14' });

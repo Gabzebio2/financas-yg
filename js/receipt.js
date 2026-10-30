@@ -414,11 +414,15 @@ const Receipt = (() => {
     new MutationObserver(() => {
       if (modal.classList.contains("hidden")) { requestVersion++; pendingFile = null; }
     }).observe(modal, { attributes: true, attributeFilter: ["class"] });
-    // Tirar foto: captura pela câmera e preenche o formulário (comprovante avulso)
+    // New photos use the same quick, multi-operation flow as uploaded prints.
+    // Editing an existing transaction still fills its form rather than adding rows.
     $("#btn-receipt-camera").addEventListener("click", () => $("#receipt-input-camera").click());
     $("#receipt-input-camera").addEventListener("change", (ev) => {
       const file = ev.target.files[0];
-      if (file) analyze(file);
+      if (file) {
+        if (Dashboard.isEditingTransaction?.()) analyze(file);
+        else { $("#modal-tx").classList.add("hidden"); Batch.openWithFiles([file]); }
+      }
       ev.target.value = "";
     });
     // Upload do comprovante: foto (gasto único ou fatura/lista) ou Excel — tudo

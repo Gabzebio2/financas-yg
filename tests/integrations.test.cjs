@@ -68,6 +68,41 @@ function documentEnv(reply) {
 function documentResult(n,extra={}) {
  return {itens:Array.from({length:n},(_,i)=>({data:'2026-10-10',valor:i+10,descricao:'Operação '+i,tipo:'despesa',moeda:'USD',categoria:'Outros',revisar:[],cashback:{valor:0.5,moeda:'USD'}})),cartao:'C6',excluded:[],avisos:[],verified:true,partial:false,ledger:{monetaryLines:n,accounted:n,missing:[],duplicates:[]},...extra};
 }
+
+function quickEnv(reply){
+ const env=documentEnv(reply);
+ env.context.Receipt.prepareParts=async function*(file){yield {mediaType:'image/jpeg',data:file.name==='b.jpg'?'Yg==':'YQ==',label:'imagem',documentContext:{pageStart:1,pageEnd:1,totalPages:1}};};
+ return env;
+}
+test('print claro usa uma leitura e salva USD e cashback separado com um clique',async()=>{
+ const response=documentResult(1,{reviewMode:'automatic',cartao:''});response.itens[0].valor=8.78;response.itens[0].cashback.valor=0.08;
+ const env=quickEnv(()=>response);await env.batch.openWithFiles([{type:'image/jpeg',name:'a.jpg'}]);
+ assert.equal(env.calls.length,1);assert.equal(env.calls[0].mode,'quick');assert.match(env.context.$('#batch-phases').textContent,/Leitura rápida concluída/);assert.doesNotMatch(env.context.$('#batch-verification-title').textContent,/Duas leituras/);
+ assert.doesNotMatch(env.context.$('#batch-review-summary').textContent,/Cartão não identificado/);
+ env.batch.save();assert.equal(env.confirmations.length,0);assert.equal(env.saved()[0].amount,8.78);assert.equal(env.saved()[0].currency,'USD');assert.equal(env.saved()[0].cashback.amount,0.08);
+});
+test('print ambíguo recebe segunda leitura automática antes de permitir salvar',async()=>{
+ const env=quickEnv(body=>documentResult(1,{reviewMode:body.first?'compared':'pending',verified:!!body.first}));
+ await env.batch.openWithFiles([{type:'image/jpeg',name:'a.jpg'}]);assert.equal(env.calls.length,2);assert.equal(env.calls[1].mode,'full');assert.ok(env.calls[1].first);env.batch.save();assert.equal(env.saved().length,1);
+});
+test('print que excede a resposta rápida migra para leitura completa sem intervenção',async()=>{
+ const env=quickEnv(body=>body.mode==='quick'?{error:'resposta_incompleta'}:documentResult(1));
+ await env.batch.openWithFiles([{type:'image/jpeg',name:'a.jpg'}]);assert.equal(env.calls.length,3);assert.deepEqual(env.calls.map(x=>x.mode),['quick','full','full']);assert.ok(env.calls[2].first);env.batch.save();assert.equal(env.saved().length,1);
+});
+test('mais de três imagens mantém a dupla leitura completa',async()=>{
+ const env=quickEnv(()=>documentResult(1));await env.batch.openWithFiles(Array.from({length:4},(_,i)=>({type:'image/jpeg',name:i+'.jpg'})));
+ assert.equal(env.calls.length,8);assert.ok(env.calls.every(r=>r.mode==='full'));
+});
+test('duas leituras rápidas simultâneas conservam sucesso e repetem apenas a falha',async()=>{
+ let pending=0,max=0,failed=false;
+ const env=quickEnv(async body=>{pending++;max=Math.max(max,pending);await new Promise(r=>setTimeout(r,10));pending--;if(body.image.data==='Yg=='&&!failed){failed=true;return {error:'tempo_ia'};}return documentResult(1,{reviewMode:'automatic'});});
+ await env.batch.openWithFiles([{type:'image/jpeg',name:'a.jpg'},{type:'image/jpeg',name:'b.jpg'}]);assert.equal(max,2);assert.equal(env.calls.length,2);env.batch.save();assert.equal(env.saved(),undefined);
+ await env.context.$('#btn-batch-retry').listeners.get('click')();assert.equal(env.calls.length,3);assert.equal(env.calls[2].image.data,'Yg==');
+});
+test('respostas rápidas tardias não reaparecem após fechar o lote',async()=>{
+ let finish;const wait=new Promise(r=>finish=r);const env=quickEnv(async()=>{await wait;return documentResult(1,{reviewMode:'automatic'});});
+ const reading=env.batch.openWithFiles([{type:'image/jpeg',name:'a.jpg'}]);await new Promise(r=>setTimeout(r,0));env.batch.close();finish();await reading;env.batch.save();assert.equal(env.saved(),undefined);
+});
 test('novo leitor compara todas as páginas e inclui 75 itens em uma confirmação',async()=>{
  const env=documentEnv(body=>documentResult((body.first?[16,22,23,14]:[14,20,22,13])[body.documentContext.pageStart-1]));
  await env.batch.openWithFiles([{type:'application/pdf',name:'inventado.pdf',pages:4}]);
@@ -148,8 +183,7 @@ test('transações iguais em moedas diferentes continuam selecionadas', () => {
   env.batch.ingestAiResult([{ data:'2026-01-01', valor:10, descricao:'Compra', tipo:'despesa', moeda:'BRL' }], '');
   assert.equal(env.batch.refreshPreview(),0);
   env.batch.save();
-  assert.equal(env.saved(), undefined);
-  assert.equal(env.confirmations.length, 1); env.confirm();
+  assert.equal(env.confirmations.length, 0); // different currencies and optional category do not need an alert
   assert.equal(env.saved().length,2);
 });
 

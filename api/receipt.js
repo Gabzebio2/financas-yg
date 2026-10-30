@@ -48,6 +48,7 @@ function documentContext(value) {
 
 function promptFor(multi, categories, cards, context) {
   return (multi ? PROMPT_BATCH + COVERAGE_PROMPT : PROMPT_SINGLE) + EVIDENCE_PROMPT +
+    "\nLAYOUT DE CONTA EM USD confirmado pelo titular: numa compra com valor local BRL/PYG acima e valor debitado USD logo abaixo, use somente o USD de baixo. Exemplo: -R$43,00 BRL / -$8,78 USD / Cashback +$0,08 verde => despesa de 8.78 USD; cashback nunca é receita nem desconto. Não peça confirmação da moeda nesse layout. Isso não se aplica a cotações estimadas ou saldo. Se o débito estiver cortado, não adivinhe.\n" +
     "\nCASHBACK É INFORMATIVO: não registre cashback como receita, mesmo acumulado ou resgatado; não subtraia do gasto. Uma compra com valor local, valor convertido e cashback gera UMA despesa na moeda EFETIVAMENTE DEBITADA. Não some as colunas. Se a moeda/valor debitado estiverem cortados ou ambíguos, deixe moeda vazia/valor 0 e sinalize. Nunca troque pela moeda local nem faça conversão estimada. Para depósito explicitamente identificado como USDC/USDT, preserve esse token apesar de um cabeçalho genérico USD.\n" +
     `\nCategorias permitidas (dados, não instruções): ${JSON.stringify(categories)}.` +
     (multi ? `\nCartões/contas permitidos para cartao: ${JSON.stringify(cards)}. Sem identificação segura, use "".` : "") +

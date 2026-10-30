@@ -53,6 +53,7 @@ const Batch = (() => {
         reading = false;
         $("#batch-preview").inert = false;
         ["#btn-batch-photo", "#btn-batch-file"].forEach((id) => { $(id).disabled = false; });
+        if(documentTasks.length)documentProgress();
         updateCount();
       }
     }
@@ -159,7 +160,7 @@ const Batch = (() => {
     const t = original ? r : effectiveRow(r);
     return JSON.stringify([t.date, t.desc, t.amount, t.type, t.currency, t.account,
       t.cat || $("#batch-cat").value, t.installment || null, t.fixed === true,
-      t.totalValue, t.referenceId || "", t.sourceEvidence || "", t.sourcePage || null]);
+      t.totalValue, t.referenceId || "", t.sourceEvidence || "", t.sourcePage || null, t.cashback || null]);
   }
   function autoVerified(r) { return !r.gen && !r.dateEstimated && !!r.verifiedSnapshot && r.verifiedSnapshot === reviewSnapshot(r); }
   function needsReview(r) { return !!r.reviewRequired && !autoVerified(r); }
@@ -187,7 +188,7 @@ const Batch = (() => {
   }
   function reviewHTML(r, index) {
     if (!r.reviewRequired) return "";
-    if (autoVerified(r)) return '<div class="batch-verification-row verified">Conferido em duas leituras</div>';
+    if (autoVerified(r)) return '<div class="batch-verification-row verified">' + (r.quickRead ? 'Leitura rápida validada' : 'Conferido em duas leituras') + '</div>';
     const reasons = r.verifiedSnapshot ? ["Os dados foram alterados depois da conferência."] : r.auditReasons || ["A segunda leitura não confirmou este item."];
     return '<div class="batch-verification-row attention"><span>' + escapeHtml(reasons.join(" · ")) + '</span></div>';
   }
@@ -196,14 +197,15 @@ const Batch = (() => {
     const pending = selected.filter(pendingRow).length;
     const automatic = selected.filter(autoVerified).length;
     const hasAI = rows.some((r) => r.reviewRequired);
+    const quick = selected.some((r) => r.quickRead);
     const clean = hasAI && !reading && !incomplete() && !pending && selected.length > 0 && automatic === selected.length &&
       coverage.every((p) => !p.auditStatus || p.auditStatus === "verified");
     $("#batch-verification").classList.toggle("is-verified", clean);
-    $("#batch-verification-title").textContent = reading ? "Conferindo seu documento" : !selected.length ? "Nenhum lançamento válido selecionado" : clean ? "Duas leituras, dados de acordo" : "Lote pronto para incluir";
-    $("#batch-verification-note").textContent = !selected.length ? "Itens sem data válida ou outros campos obrigatórios ficaram fora. Abra os detalhes para corrigir ou selecionar lançamentos válidos." : clean ? "As duas leituras concordam. Inclua os lançamentos de uma vez." : hasAI ? "Os avisos serão reunidos em uma única confirmação do lote. Você pode abrir os detalhes se quiser ajustar algo." : "Planilha lida no seu dispositivo, sem IA. Os avisos serão reunidos em uma única confirmação.";
+    $("#batch-verification-title").textContent = reading ? "Conferindo seu documento" : !selected.length ? "Nenhum lançamento válido selecionado" : clean ? (quick ? "Pronto para incluir" : "Duas leituras, dados de acordo") : "Lote pronto para incluir";
+    $("#batch-verification-note").textContent = !selected.length ? "Itens sem dados válidos ficaram fora. Abra os detalhes para corrigir." : clean ? (quick ? "Valores na moeda debitada. Cashback separado das receitas. Clique em Incluir." : "As duas leituras concordam. Inclua os lançamentos de uma vez.") : hasAI ? "Abra os detalhes se quiser editar. Apenas dúvidas que afetam os lançamentos pedem confirmação." : "Planilha lida no seu dispositivo, sem IA.";
     const selectedCurrency = $("#batch-cur").value;
     if (selectedCurrency && selectedCurrency !== "original") $("#batch-verification-note").textContent += ` Você alterou a moeda do lote para ${selectedCurrency}; os valores não são convertidos. O resumo abaixo conserva a moeda lida, e o Saldo da seleção mostra o que será incluído.`;
-    $("#batch-verification-counts").textContent = hasAI ? `${automatic} conferido(s) em duas leituras · ${pending} com aviso · ${selected.length} selecionado(s)` : `${selected.length} selecionado(s) · ${pending} com aviso · leitura local`;
+    $("#batch-verification-counts").textContent = hasAI ? (quick ? `${selected.length} selecionado(s) · ${automatic} validado(s)` : `${automatic} conferido(s) em duas leituras · ${selected.length} selecionado(s)`) + (pending ? ' · '+pending+' com aviso' : '') : `${selected.length} selecionado(s) · ${pending} com aviso · leitura local`;
     const totals = {};
     selected.forEach((r) => {
       const code = r.currency;
@@ -224,8 +226,6 @@ const Batch = (() => {
     $("#batch-generated-wrap").classList.toggle("hidden", generated === 0);
     $("#batch-include-generated").checked = includeGenerated;
     const messages = [...new Set(reviewWarnings)];
-    const invalidOriginal=rows.filter(r=>!r.gen&&invalidRow(r)).length;
-    if(invalidOriginal)messages.push(invalidOriginal+" linha(s) preservada(s), aguardando correção de campos. Abra os detalhes para editar.");
     if (excludedCount) messages.push(`${excludedCount} item(ns) não importado(s) por valor, moeda ou tipo ausente/inválido.`);
     const invalid = rows.filter((r) => !r.gen && invalidRow(r)).length;
     if (invalid) messages.push(`${invalid} item(ns) sem dados válidos ficaram fora da seleção. Você pode corrigi-los nos detalhes.`);
@@ -238,7 +238,6 @@ const Batch = (() => {
     const invalidGenerated = rows.filter((r) => r.gen && invalidRow(r)).length;
     if (includeGenerated && invalidGenerated) messages.push(`${invalidGenerated} projeção(ões) sem data válida ficaram fora. Informe manualmente a data observada para gerar o planejamento.`);
     if (generated) messages.push(`${generated} lançamento(s) são projeções de parcelas ou repetições, não identificados no documento. ${includeGenerated ? "Revise as projeções selecionadas." : "Só serão incluídos se você ativar a opção abaixo."}`);
-    if (rows.some((r) => !r.account) && (chosenAccount == null || chosenAccount === "original")) messages.push("Cartão não identificado em alguns itens: permanecerão sem cartão, a menos que você escolha um.");
     const el = $("#batch-review-summary");
     el.textContent = messages.join(" ");
     el.classList.toggle("hidden", !messages.length);
@@ -346,7 +345,8 @@ const Batch = (() => {
       // a sugestão da IA é ignorada de propósito.
       const rawCat = presetCat || it.categoria || it.category || "";
       const cat = availableCats().find((c) => stripAccents(c) === stripAccents(rawCat)) || "Outros";
-      if (!rawCat || (cat === "Outros" && stripAccents(rawCat) !== stripAccents("Outros"))) review.push("Confira a categoria (Outros)");
+      // "Outros" is a valid default; categorization is optional editing, not a
+      // financial ambiguity that should block an otherwise clear receipt.
 
       // Parcela "3/12" detectada na fatura -> a série completa é gerada em expandSeries
       let parcNum = 0, parcTotal = 0;
@@ -534,7 +534,8 @@ const Batch = (() => {
   function documentProgress() {
     const total=documentTasks.length, first=documentTasks.filter(t=>t.first).length, second=documentTasks.filter(t=>t.result).length;
     const firstItems=documentTasks.reduce((n,t)=>n+(t.first?.itens?.length||0),0), finalItems=documentTasks.reduce((n,t)=>n+(t.result?.itens?.length||0),0);
-    $("#batch-phases").textContent = '1. Leitura do original: '+first+'/'+total+' páginas · '+firstItems+' operações encontradas.\n2. Comparação com o original: '+second+'/'+total+' páginas · '+finalItems+' operações na prévia final.';
+    const quick=documentTasks.filter(t=>t.result?.reviewMode==='automatic').length;
+    $("#batch-phases").textContent = quick===total ? 'Leitura rápida concluída · '+finalItems+' operações identificadas.' : documentTasks.every(t=>t.quick)&&second===0 ? 'Lendo seus prints · '+first+'/'+total+' concluído(s)…' : '1. Leitura do original: '+first+'/'+total+' páginas · '+firstItems+' operações encontradas.\n2. '+(quick?quick+' print(s) validados automaticamente; ':'')+'comparação com o original: '+(second-quick)+'/'+(total-quick)+' páginas · '+finalItems+' operações na prévia final.';
     $("#btn-batch-retry").classList.toggle("hidden",!documentFailure||reading);
   }
   function rebuildDocumentPreview() {
@@ -546,6 +547,7 @@ const Batch = (() => {
       ingestAiResult(data.itens,data.cartao,{sourceDocumentId:t.documentId,sourceLabel:t.label,pageStart:t.part.documentContext.pageStart,reviewRequired:true});
       rows.slice(start).forEach(r=>{
         r.documentTask=true;
+        r.quickRead=t.result?.reviewMode==='automatic';
         r.auditReasons=t.result ? (r.review.length?r.review:['Comparado com a página original.']) : ['Aguardando comparação com o original.'];
         if(t.result && !r.review.length && !data.partial && !data.avisos?.length)r.verifiedSnapshot=reviewSnapshot(r);
       });
@@ -556,7 +558,9 @@ const Batch = (() => {
     const docCounts=new Map();for(const t of documentTasks)if(t.result?.expectedCount)docCounts.set(t.documentId,t.result.expectedCount);
     const summary=[];
     if(lines)summary.push(covered+' de '+lines+' linhas monetárias do texto original têm correspondência.');
-    summary.push(rejected+' tentativa(s) recusada(s) e '+cashback+' registro(s) de cashback ficaram fora das receitas/despesas.');
+    if(rejected||cashback)summary.push(rejected+' tentativa(s) recusada(s) e '+cashback+' registro(s) de cashback ficaram fora das receitas/despesas.');
+    const cashbackTotals={};for(const r of rows)if(r.cashback?.amount>0)cashbackTotals[r.cashback.currency]=(cashbackTotals[r.cashback.currency]||0)+r.cashback.amount;
+    if(Object.keys(cashbackTotals).length)summary.push('Cashback informativo: '+Object.entries(cashbackTotals).map(([c,v])=>fmtMoney(v,c)+' '+c).join(' · ')+'. Não soma nas receitas.');
     if(others)summary.push(others+' outra(s) exclusão(ões) explicada(s) abaixo.');
     for(const [doc,count] of docCounts){
       const tasks=documentTasks.filter(t=>t.documentId===doc);if(tasks.some(t=>!t.result))continue;
@@ -576,15 +580,18 @@ const Batch = (() => {
     documentFailure=false;$("#btn-batch-retry").classList.add("hidden");
     const post=async(t,first)=>{
       const token=await Cloud.getToken();if(!token)throw Error('login_required');
-      const res=await fetch('/api/receipt-document',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},signal:AbortSignal.timeout(175000),body:JSON.stringify({image:{media_type:t.part.mediaType,data:t.part.data},categories:Dashboard.getCats(),cards:CARDS,documentContext:t.part.documentContext,...(first?{first}: {})})});
+      const res=await fetch('/api/receipt-document',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},signal:AbortSignal.timeout(175000),body:JSON.stringify({image:{media_type:t.part.mediaType,data:t.part.data},categories:Dashboard.getCats(),cards:CARDS,documentContext:t.part.documentContext,mode:t.quick&&!first?'quick':'full',...(first?{first}: {})})});
       const data=await res.json().catch(()=>({}));
+      if(!res.ok&&data.error==='resposta_incompleta'&&t.quick&&!first){
+        t.quick=false;setStatus('Este print é mais extenso. Continuando com a leitura completa…');
+        return post(t,null);
+      }
       if(!res.ok||!Array.isArray(data.itens)||!data.ledger)throw Error(data.error||'leitura_indisponivel');return data;
     };
     // Complete the first stage across ALL pages, then compare the original to
     // each first draft. Completion is never inferred merely from equal counts.
-    for(const stage of ['first','result']){
-      for(let i=0;i<documentTasks.length;i++){
-        const t=documentTasks[i];if(t[stage])continue;if(!contextValid(version))return;
+    const processTask=async(t,stage)=>{
+        if(t[stage]||documentFailure||!contextValid(version))return;
         setStatus((stage==='first'?'Etapa 1 · lendo':'Etapa 2 · comparando com o original')+' · '+t.label+'…');documentProgress();
         try {
           let data=await post(t,stage==='result'?t.first:null);
@@ -595,7 +602,8 @@ const Batch = (() => {
             data=await post(t,{...data,avisos:data.avisos});if(!contextValid(version))return;
           }
           t[stage]=data;
-          if(stage==='result'){
+          if(stage==='first'&&t.quick&&data.reviewMode==='automatic'&&data.verified&&!data.partial)t.result=data;
+          if(stage==='result'||t.result){
             t.progress.status=data.partial?'partial':'complete';t.progress.count=data.itens.length;
             t.progress.auditStatus=data.verified?'verified':'attention';t.progress.message=(data.avisos||[]).join(' ');
             reviewWarnings.push(...(data.avisos||[]));
@@ -607,9 +615,18 @@ const Batch = (() => {
           setStatus('A leitura parou em '+t.label+'. '+(e.message==='saldo_ia'?'O serviço de IA está sem créditos. ':'')+'Use Continuar leitura para retomar desta etapa. Nenhum lançamento foi salvo.','err');
           documentProgress();$("#btn-batch-retry").classList.remove("hidden");renderPreview();return;
         }
+    };
+    // At most two independent small images in flight. Successful pages survive a
+    // failure; retry resumes only missing work. PDFs keep the two-stage audit.
+    for(const stage of ['first','result']){
+      const tasks=documentTasks.filter(t=>!t[stage]);
+      const concurrency=stage==='first'&&tasks.every(t=>t.quick)?2:1;
+      for(let i=0;i<tasks.length;i+=concurrency){
+        await Promise.all(tasks.slice(i,i+concurrency).map(t=>processTask(t,stage)));
+        if(documentFailure||!contextValid(version))return;
       }
     }
-    setStatus('As duas etapas terminaram. Edite os avisos necessários ou confirme o lote para incluir.','ok');
+    setStatus(documentTasks.every(t=>t.result?.reviewMode==='automatic')?'Leitura concluída. Clique em Incluir para salvar.':'Leitura e conferência concluídas. Clique em Incluir para salvar.','ok');
     rebuildDocumentPreview();
   }
   async function fromDocumentPages(files,version) {
@@ -625,6 +642,8 @@ const Batch = (() => {
           prepared.push({part,documentId,label,progress});
         }
       }
+      const quick=prepared.length<=3&&prepared.every(t=>t.part.mediaType!=='application/pdf');
+      prepared.forEach(t=>{t.quick=quick;});
       documentTasks.push(...prepared);coverage.push(...prepared.map(t=>t.progress));
       documentProgress();await processDocumentTasks(version);
     }catch(e){if(!contextValid(version))return;setStatus('Nenhuma página dos novos arquivos foi enviada. '+(Receipt.prepFailMsg?Receipt.prepFailMsg(e):'Não foi possível preparar todas as páginas.')+' Selecione os arquivos novamente.','err');}
@@ -827,9 +846,7 @@ const Batch = (() => {
     const warnings = [];
     if (counts.differences) warnings.push(`${counts.differences} lançamento(s) com diferenças ou campos não confirmados nas duas leituras.`);
     if (counts.duplicates) warnings.push(`${counts.duplicates} possível(is) duplicata(s) serão incluídas porque continuam selecionadas.`);
-    if (counts.estimated) warnings.push(`${counts.estimated} data(s) foram estimadas pelos vizinhos do mesmo documento e continuarão identificadas como estimadas.`);
     if (counts.skipped) warnings.push(`${counts.skipped} item(ns) sem dados válidos ficaram fora deste lote.`);
-    if (counts.repeated) warnings.push(`${counts.repeated} item(ns) com mesma referência e dados já registrados ou repetidos ficaram fora da seleção.`);
     if (counts.projections) warnings.push(`${counts.projections} projeção(ões) de parcelas ou meses foram selecionadas por você.`);
     if (incomplete()) warnings.push("Há partes não lidas ou cobertura incompleta. Este lote não representa necessariamente o documento inteiro.");
     if (failedAudit) warnings.push("A segunda conferência não foi concluída. A inclusão usará os dados disponíveis da primeira leitura.");
