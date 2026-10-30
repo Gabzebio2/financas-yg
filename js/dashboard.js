@@ -12,6 +12,7 @@ const Dashboard = (() => {
   let receiptRead = null;
   let txModalRevision = 0;
   let editingLimitId = null;
+  let pendingAdvance = null;
   let pendingParcTx = null; // transação parcelada aguardando escolha de exclusão
   const selectedTx = new Set(); // ids das transações marcadas (seleção em lote)
 
@@ -19,6 +20,7 @@ const Dashboard = (() => {
   let ratesHooked = false; // registra o ouvinte de cotação uma única vez
 
   const UI_ICON_PATHS = {
+    advance: '<path d="m4 5 7 7-7 7V5Zm9 0 7 7-7 7V5Z"/>',
     edit: '<path d="m15 5 4 4M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11L4 20Z"/>',
     trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/>',
     target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="1"/>',
@@ -1323,13 +1325,14 @@ const Dashboard = (() => {
       <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
         <td style="white-space:nowrap">${fmtDate(t.date)}${cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}</td>
-        <td><span class="tx-desc-cell">${catAvatar(t.category)}<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}</span></span></td>
+        <td><span class="tx-desc-cell">${catAvatar(t.category)}<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span></span></td>
         <td><span class="cat-chip" style="background:color-mix(in srgb, ${catColor(ds, t.category)} 16%, var(--card,#24212e));color:var(--chip-text,var(--text,#f1eff5));border:1px solid color-mix(in srgb, ${catColor(ds, t.category)} 28%, var(--card,#24212e))">${escapeHtml(t.category)}</span></td>
         <td>${escapeHtml(t.account || "—")}</td>
-        <td>${t.installment ? escapeHtml(t.installment) : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
+        <td>${t.installment ? escapeHtml(t.installment) + (t.advance ? '<br><span class="fixa-chip">Adiantada</span>' : '') : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
         <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtTxAmount(t)}</td>
         <td class="tx-actions">
           <button class="btn-icon" data-action="edit" title="Editar" aria-label="Editar transação">${uiIcon("edit")}</button>
+          ${installmentTotal(t) > 1 ? `<button class="btn-icon" data-action="advance" title="Adiantar parcelas" aria-label="Adiantar parcelas">${uiIcon("advance")}</button>` : ""}
           <button class="btn-icon" data-action="delete" title="Excluir" aria-label="Excluir transação">${uiIcon("trash")}</button>
         </td>
       </tr>`;
@@ -1436,7 +1439,7 @@ const Dashboard = (() => {
     return ds.transactions.filter((t) =>
       installmentTotal(t) === n && t.desc === tx.desc && t.account === tx.account &&
       t.type === tx.type && normCur(t.currency) === normCur(tx.currency) &&
-      originMonth(t) === originMonth(tx) && (t.totalValue ?? null) === (tx.totalValue ?? null));
+      originMonth({ ...t, date: t.advance?.scheduledDate || t.date }) === originMonth({ ...tx, date: tx.advance?.scheduledDate || tx.date }) && (t.totalValue ?? null) === (tx.totalValue ?? null));
   }
 
   function fixedSiblings(tx) {
@@ -1457,23 +1460,64 @@ const Dashboard = (() => {
     const tx = ds.transactions.find((t) => t.id === id);
     if (!tx) return;
 
-    if (tx.fixed) {
-      const ids = fixedSiblings(tx).filter((t) => t.date >= tx.date).map((t) => t.id);
-      askConfirm("Excluir despesa fixa?",
-        `"${tx.desc}" será excluída de ${fmtDate(tx.date)} em diante — este mês e todos os meses seguintes (${ids.length} lançamento(s)). Os meses anteriores são mantidos.`,
-        () => removeTxs(ids, `Despesa fixa excluída deste mês em diante (${ids.length} lançamentos).`));
-      return;
-    }
-
-    if (installmentTotal(tx) > 1) {
-      pendingParcTx = tx;
-      $("#modal-del-parc-text").textContent = `"${tx.desc}" — parcela ${tx.installment} de ${fmtTxAmount(tx)} em ${fmtDate(tx.date)}. O que você quer excluir?`;
+    if (tx.fixed || installmentTotal(tx) > 1) {
+      pendingParcTx = { id: tx.id, folder: ds.id, owner: typeof Cloud !== "undefined" ? Cloud.getSyncState().owner : null };
+      $("#modal-del-parc-title").textContent = tx.fixed ? "Excluir lançamento fixo" : "Excluir compra parcelada";
+      $("#modal-del-parc-text").textContent = '"' + tx.desc + '" em ' + fmtDate(tx.date) + '. Escolha o alcance da exclusão.';
+      $("#btn-delparc-one").classList.toggle("hidden", !!tx.fixed);
+      $("#btn-delparc-following").textContent = tx.fixed ? "Deste mês em diante" : "Esta e as seguintes";
       $("#modal-del-parc").classList.remove("hidden");
       return;
     }
 
     askConfirm("Excluir transação?", `"${tx.desc}" de ${fmtTxAmount(tx)} será removida.`, () =>
       removeTxs([tx.id], "Transação excluída."));
+  }
+
+  function pendingSeriesTx(pending) {
+    if (!pending || ds?.id !== pending.folder || pending.owner !== (typeof Cloud !== "undefined" ? Cloud.getSyncState().owner : null)) return null;
+    return ds.transactions.find(t => t.id === pending.id);
+  }
+  function deleteSeries(mode) {
+    const tx = pendingSeriesTx(pendingParcTx); pendingParcTx = null;
+    $("#modal-del-parc").classList.add("hidden");
+    if (!tx) return;
+    const siblings = tx.fixed ? fixedSiblings(tx) : parcSiblings(tx);
+    const chosen = mode === "one" ? [tx] : mode === "all" ? siblings : siblings.filter(t => tx.fixed ? t.date.slice(0,7) >= tx.date.slice(0,7) : installmentIdx(t) >= installmentIdx(tx));
+    const folder=ds.id, owner=typeof Cloud !== "undefined" ? Cloud.getSyncState().owner : null;
+    askConfirm("Confirmar exclusão", chosen.length + " lançamento(s) de “" + tx.desc + "” serão excluídos. " + (mode === "all" ? "Inclui os meses anteriores e seguintes desta série." : mode === "one" ? "As outras parcelas serão mantidas." : "Os meses anteriores serão mantidos."), () => {
+      if(ds?.id!==folder || owner !== (typeof Cloud !== "undefined" ? Cloud.getSyncState().owner : null)) return;
+      removeTxs(chosen.map(t=>t.id), chosen.length + " lançamento(s) excluído(s).");
+    });
+  }
+  function advanceCandidates(tx,date) {
+    return parcSiblings(tx).filter(t=>!t.advance && t.date>date && installmentIdx(t)>=installmentIdx(tx)).sort((a,b)=>installmentIdx(a)-installmentIdx(b));
+  }
+  function updateAdvance() {
+    const tx=pendingSeriesTx(pendingAdvance), date=$("#advance-date").value;
+    const list=tx && isValidISODate(date) ? advanceCandidates(tx,date) : [];
+    const input=$("#advance-count"); input.max=String(list.length);
+    if(Number(input.value)>list.length) input.value=String(list.length);
+    const count=$("#advance-all").checked ? list.length : Number(input.value);
+      if($("#advance-all").checked)input.value=String(list.length);
+    input.disabled=$("#advance-all").checked;
+    const valid=Number.isInteger(count)&&count>0&&count<=list.length;
+    $("#btn-advance-save").disabled=!valid;
+    $("#advance-summary").textContent=valid ? count+" parcela(s), total "+fmtTxAmount({...tx,amount:list.slice(0,count).reduce((n,t)=>n+t.amount,0)})+". Serão movidas para a data do pagamento, sem duplicar despesas." : "Escolha uma data anterior às parcelas e uma quantidade disponível.";
+  }
+  function openAdvance(id) {
+    const tx=ds.transactions.find(t=>t.id===id);if(!tx)return;
+    pendingAdvance={id,folder:ds.id,owner:typeof Cloud!=="undefined"?Cloud.getSyncState().owner:null};
+    $("#advance-description").textContent=tx.desc+" · a partir da parcela "+tx.installment;
+    $("#advance-date").value=todayISO();$("#advance-count").value="1";$("#advance-all").checked=false;
+    updateAdvance();$("#modal-advance").classList.remove("hidden");
+  }
+  function saveAdvance() {
+    const tx=pendingSeriesTx(pendingAdvance),date=$("#advance-date").value;if(!tx||!isValidISODate(date))return;
+    const list=advanceCandidates(tx,date),count=$("#advance-all").checked?list.length:Number($("#advance-count").value);
+    if(!Number.isInteger(count)||count<1||count>list.length)return;
+    list.slice(0,count).forEach(t=>{t.advance={scheduledDate:t.date,paidDate:date};t.date=date;delete t.dateEstimated;delete t.dateEstimate;});
+    saveCur();renderAll();pendingAdvance=null;$("#modal-advance").classList.add("hidden");toast(count+" parcela(s) adiantada(s).");
   }
 
   /* ---------- Modal de transação ---------- */
@@ -1936,6 +1980,7 @@ const Dashboard = (() => {
       const tr = ev.target.closest("tr[data-id]");
       if (!tr) return;
       const action = ev.target.closest("[data-action]")?.dataset.action;
+      if (action === "advance") { openAdvance(tr.dataset.id); return; }
       if (action === "delete") { requestDeleteTx(tr.dataset.id); return; }
       if (action === "edit") { openTxModal(tr.dataset.id); return; }
       // Celular: toque na linha abre a edição (como no Mobills). Ignora a
@@ -1997,20 +2042,10 @@ const Dashboard = (() => {
 
     // Modal de exclusão de parcelada
     $("#btn-delparc-cancel").addEventListener("click", () => { $("#modal-del-parc").classList.add("hidden"); pendingParcTx = null; });
-    $("#btn-delparc-one").addEventListener("click", () => {
-      if (pendingParcTx) removeTxs([pendingParcTx.id], "Parcela excluída.");
-      $("#modal-del-parc").classList.add("hidden");
-      pendingParcTx = null;
-    });
-    $("#btn-delparc-following").addEventListener("click", () => {
-      if (pendingParcTx) {
-        const idx = installmentIdx(pendingParcTx);
-        const ids = parcSiblings(pendingParcTx).filter((t) => installmentIdx(t) >= idx).map((t) => t.id);
-        removeTxs(ids, `${ids.length} parcela(s) excluída(s) — desta em diante.`);
-      }
-      $("#modal-del-parc").classList.add("hidden");
-      pendingParcTx = null;
-    });
+    ["one","following","all"].forEach(mode=>$("#btn-delparc-"+mode).addEventListener("click",()=>deleteSeries(mode)));
+    ["#advance-date","#advance-count","#advance-all"].forEach(id=>$(id).addEventListener("input",updateAdvance));
+    $("#btn-advance-save").addEventListener("click",saveAdvance);
+    $("#btn-advance-cancel").addEventListener("click",()=>{$("#modal-advance").classList.add("hidden");pendingAdvance=null;});
 
     // Renomear pasta pelo painel
     const renameDs = () => {
@@ -2170,7 +2205,7 @@ const Dashboard = (() => {
   function currentDatasetName() { return ds ? ds.name : ""; }
 
   function importEvidence(value) {
-    const out = cleanDateEstimate(value);
+    const out = {...cleanDateEstimate(value),...cleanCashback(value)};
     for (const [key, max] of [["referenceId", 160], ["sourceEvidence", 300]]) {
       if (typeof value?.[key] === "string" && value[key].trim()) out[key] = value[key].trim().slice(0, max);
     }

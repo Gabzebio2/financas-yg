@@ -59,6 +59,7 @@ vm.runInContext(fs.readFileSync(path.join(appDir, 'js/app.js'), 'utf8'), ctx);
 let source = fs.readFileSync(path.join(appDir, 'js/dashboard.js'), 'utf8');
 source = source.replace('  return { open, openTxModal,', `
   globalThis.audit = {
+    requestDeleteTx, deleteSeries, openAdvance, saveAdvance, advanceCandidates, updateAdvance,
     splitInstallments, tableTxs, sortTxs, saveTxModal, openTxModal, openMetaModal, saveMetaModal,
     openLimitModal, saveLimitModal, renderTable, renderSummary, parcSiblings, fixedSiblings,
     resolveImportDate, appendImported, addBulk, exportCSV, saveCur, undo, moneyTip, refreshFromStore,
@@ -422,6 +423,38 @@ test('sem cotação valores da própria moeda continuam válidos', () => {
     const ds=dataset(); ds.transactions=[tx('trans001',{amount:20})]; saveBase(ds); api.renderSummary();
     assert.match(get('#hero-desp').textContent,/20/); assert.match(get('#hero-saldo').textContent,/-/);
   } finally { ratesAvailable=true; }
+});
+
+const series = (fixed=false) => Array.from({length:4},(_,i)=>tx('series'+i,{date:`2026-${String(i+8).padStart(2,'0')}-15`,groupId:'series-group',fixed,installment:fixed?null:`${i+1}/4`}));
+test('fixa: excluir deste mês em diante mantém meses anteriores e outra série',()=>{
+ const ds=dataset();ds.transactions=[...series(true),tx('outside',{groupId:'other'})];saveBase(ds);
+ api.requestDeleteTx('series2');api.deleteSeries('following');assert.equal(ds.transactions.length,5);acceptReceiptConfirmation();
+ assert.deepEqual(Array.from(api.getDataset().transactions,t=>t.id),['series0','series1','outside']);api.undo();assert.equal(api.getDataset().transactions.length,5);
+});
+test('fixa: excluir tudo remove apenas a série, incluindo meses anteriores',()=>{
+ const ds=dataset();ds.transactions=[...series(true),tx('outside')];saveBase(ds);api.requestDeleteTx('series2');api.deleteSeries('all');acceptReceiptConfirmation();
+ assert.deepEqual(Array.from(api.getDataset().transactions,t=>t.id),['outside']);
+});
+test('parcelas: apagar somente a escolhida preserva anteriores e seguintes',()=>{
+ const ds=dataset();ds.transactions=series();saveBase(ds);api.requestDeleteTx('series2');api.deleteSeries('one');acceptReceiptConfirmation();
+ assert.deepEqual(Array.from(api.getDataset().transactions,t=>t.id),['series0','series1','series3']);
+});
+test('parcelas: apagar tudo inclui parcelas anteriores e posteriores',()=>{
+ const ds=dataset();ds.transactions=series();saveBase(ds);api.requestDeleteTx('series2');api.deleteSeries('all');acceptReceiptConfirmation();assert.equal(api.getDataset().transactions.length,0);
+});
+test('exclusão pendente não atravessa troca de pasta',()=>{
+ const ds=dataset();ds.transactions=series();saveBase(ds);api.requestDeleteTx('series2');api.deleteSeries('all');const next=dataset();next.id='other';next.transactions=series();saveBase(next);acceptReceiptConfirmation();assert.equal(api.getDataset().transactions.length,4);
+});
+test('adiantar N parcelas move datas, conserva valor total e não cria lançamentos',()=>{
+ const ds=dataset();ds.transactions=series();saveBase(ds);api.openAdvance('series2');get('#advance-date').value='2026-09-20';get('#advance-count').value='2';api.saveAdvance();
+ const saved=api.getDataset().transactions;assert.equal(saved.length,4);assert.equal(saved.reduce((n,t)=>n+t.amount,0),40);assert.equal(saved[0].date,'2026-08-15');assert.equal(saved[1].date,'2026-09-15');assert.equal(saved[2].date,'2026-09-20');assert.equal(saved[3].date,'2026-09-20');assert.equal(saved[3].advance.scheduledDate,'2026-11-15');
+ api.refreshFromStore();assert.equal(api.getDataset().transactions[3].advance.scheduledDate,'2026-11-15');api.setFilters({mode:'all'});api.renderTable();assert.match(get('#tx-tbody').innerHTML,/Adiantada/);
+});
+test('adiantar todas não reaplica adiantadas e valor inválido não grava',()=>{
+ const ds=dataset();ds.transactions=series();saveBase(ds);api.openAdvance('series1');get('#advance-date').value='2026-08-20';get('#advance-count').value='99';api.saveAdvance();assert(!ds.transactions.some(t=>t.advance));get('#advance-all').checked=true;api.saveAdvance();assert.equal(api.getDataset().transactions.filter(t=>t.advance).length,3);api.openAdvance('series1');api.saveAdvance();assert.equal(api.getDataset().transactions.length,4);
+});
+test('cashback informativo sobrevive à gravação sem virar outra receita',()=>{
+ saveBase(dataset());assert.equal(api.appendImported([tx('cash',{cashback:{amount:0.65,currency:'USD'}})]),1);api.refreshFromStore();const saved=api.getDataset().transactions;assert.equal(saved.length,1);assert.equal(saved[0].type,'despesa');assert.equal(saved[0].cashback.amount,0.65);assert.match(get('#tx-tbody').innerHTML,/Cashback:.*informativo/);
 });
 
 (async()=>{

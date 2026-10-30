@@ -1,0 +1,1 @@
+{"name":"financas-yg","version":"1.0.0","private":true,"engines":{"node":"24.x"},"dependencies":{"unpdf":"2.0.1"}}

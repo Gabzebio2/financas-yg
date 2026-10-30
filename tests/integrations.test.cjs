@@ -58,6 +58,45 @@ function batchEnv() {
   return { ...env, batch, saved: () => saved, confirmations, confirm: () => confirmations.at(-1)?.callback() };
 }
 
+function documentEnv(reply) {
+ const env=batchEnv();let count=0;const calls=[];
+ env.context.Cloud={getToken:async()=> 'synthetic-token',getSyncState:()=>({owner:'synthetic-user'})};
+ env.context.Receipt={documentReaderVersion:2,async *prepareParts(file,options){assert.equal(options.singlePage,true);for(let i=1;i<=file.pages;i++)yield {mediaType:'application/pdf',data:'YWJj',label:`página ${i}`,documentContext:{pageStart:i,pageEnd:i,totalPages:file.pages}};}};
+ env.context.fetch=async(url,init)=>{assert.equal(url,'/api/receipt-document');const body=JSON.parse(init.body);calls.push(body);const result=await reply(body,++count);return {ok:!result.error,json:async()=>result};};
+ return {...env,calls};
+}
+function documentResult(n,extra={}) {
+ return {itens:Array.from({length:n},(_,i)=>({data:'2026-10-10',valor:i+10,descricao:'Operação '+i,tipo:'despesa',moeda:'USD',categoria:'Outros',revisar:[],cashback:{valor:0.5,moeda:'USD'}})),cartao:'C6',excluded:[],avisos:[],verified:true,partial:false,ledger:{monetaryLines:n,accounted:n,missing:[],duplicates:[]},...extra};
+}
+test('novo leitor compara todas as páginas e inclui 75 itens em uma confirmação',async()=>{
+ const env=documentEnv(body=>documentResult((body.first?[16,22,23,14]:[14,20,22,13])[body.documentContext.pageStart-1]));
+ await env.batch.openWithFiles([{type:'application/pdf',name:'inventado.pdf',pages:4}]);
+ assert.equal(env.calls.length,8);assert(env.calls.slice(0,4).every(x=>!x.first));assert(env.calls.slice(4).every(x=>x.first&&x.image.data));assert(env.calls.every(x=>!x.transactions));
+ assert.equal(env.context.$('#btn-batch-save').disabled,false);assert.match(env.context.$('#batch-phases').textContent,/4\/4 páginas.*75 operações/);
+ env.context.$('#btn-batch-save').listeners.get('click')();if(!env.saved())env.confirm();assert.equal(env.saved().length,75);assert.equal(env.saved()[0].cashback.amount,0.5);
+});
+test('falha na segunda etapa bloqueia inclusão e retoma somente a etapa faltante',async()=>{
+ let failed=false;const env=documentEnv(body=>{if(body.first&&!failed){failed=true;return {error:'tempo_ia'};}return documentResult(2);});
+ await env.batch.openWithFiles([{type:'application/pdf',name:'inventado.pdf',pages:1}]);env.batch.save();assert.equal(env.saved(),undefined);assert.equal(env.context.$('#btn-batch-save').disabled,true);
+ await env.context.$('#btn-batch-retry').listeners.get('click')();assert.equal(env.calls.length,3);assert(env.calls[2].first);assert.equal(env.context.$('#btn-batch-save').disabled,false);
+ env.batch.save();if(!env.saved())env.confirm();assert.equal(env.saved().length,2);
+});
+test('contagem impressa divergente aparece na confirmação única, sem selo de completude',async()=>{
+ const env=documentEnv(()=>documentResult(2,{expectedCount:4}));await env.batch.openWithFiles([{type:'application/pdf',name:'inventado.pdf',pages:1}]);
+ env.batch.save();assert.equal(env.saved(),undefined);assert.match(env.confirmations.at(-1).text,/contagem impressa \(4\).*\(2\)/);env.confirm();assert.equal(env.saved().length,2);
+});
+test('campo ilegível continua editável na prévia em vez de desaparecer',async()=>{
+ const result=documentResult(2);result.itens[0].valor=null;result.itens[0].moeda='';const env=documentEnv(()=>result);
+ await env.batch.openWithFiles([{type:'application/pdf',name:'inventado.pdf',pages:1}]);assert.match(env.context.$('#batch-count').textContent,/1 de 2/);assert.match(env.context.$('#batch-tbody').innerHTML,/Definir moeda/);
+ env.context.maskMoneyEl=()=>{};env.context.moneyInputValue=()=>42;
+ const tbody=env.context.$('#batch-tbody');tbody.listeners.get('input')({target:{dataset:{i:'0',f:'currency'},value:'USD'}});tbody.listeners.get('input')({target:{dataset:{i:'0',f:'amount'},value:'42'}});env.batch.refreshPreview();assert.match(env.context.$('#batch-count').textContent,/2 de 2/);
+ env.batch.save();if(!env.saved())env.confirm();assert.equal(env.saved().length,2);assert.equal(env.saved()[0].amount,42);
+});
+test('falha ao preparar PDF não permite importar só suas páginas iniciais',async()=>{
+ const env=documentEnv(()=>documentResult(2));env.context.Receipt.prepareParts=async function*(){yield {documentContext:{pageStart:1,pageEnd:1,totalPages:2},label:'1',data:'YWJj',mediaType:'application/pdf'};throw Error('pdf_corrompido');};
+ await env.batch.openWithFiles([{type:'application/pdf',name:'inventado.pdf',pages:2}]);assert.equal(env.calls.length,0);assert.match(env.context.$('#batch-status').textContent,/Nenhuma página/);assert.equal(env.saved(),undefined);
+});
+
 test('parcelas retroativas opcionais atravessam janeiro com datas reais e dias limitados ao mês', () => {
   const env = batchEnv();
   env.batch.open();
@@ -80,7 +119,7 @@ test('lote preserva moeda individual, recusa infinito e não reescreve anos de d
     { data: '1999-01-01', valor: 10, descricao: 'Dólar', tipo: 'despesa', moeda: 'USD' },
     { data: '2026-01-01', valor: 20, descricao: 'Real', tipo: 'despesa', moeda: 'BRL' },
     { data: '2026-01-01', valor: Infinity, descricao: 'Inválido' }, null,
-  ], ''), 2);
+    ], ''), 3);
   env.batch.refreshPreview();
   env.batch.save();
   assert.equal(env.saved(), undefined);

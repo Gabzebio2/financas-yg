@@ -14,7 +14,7 @@
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261029-batch-confirm">
+<link rel="stylesheet" href="css/design.css?v=20261029-original-audit">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 </head>
 <body>
@@ -559,15 +559,25 @@
 <!-- Excluir compra parcelada -->
 <div class="modal-backdrop hidden" id="modal-del-parc">
   <div class="modal modal-sm">
-    <h3>Excluir compra parcelada</h3>
+    <h3 id="modal-del-parc-title">Excluir compra parcelada</h3>
     <p id="modal-del-parc-text"></p>
     <div class="modal-actions modal-actions-wrap">
       <button class="btn btn-ghost" id="btn-delparc-cancel">Cancelar</button>
       <button class="btn btn-ghost btn-ghost-danger" id="btn-delparc-one">Só esta parcela</button>
-      <button class="btn btn-danger" id="btn-delparc-following">Esta e as seguintes</button>
+      <button class="btn btn-ghost btn-ghost-danger" id="btn-delparc-following">Esta e as seguintes</button>
+      <button class="btn btn-danger" id="btn-delparc-all">Excluir toda a série</button>
     </div>
   </div>
 </div>
+
+<div class="modal-backdrop hidden" id="modal-advance"><div class="modal modal-sm">
+  <h3>Adiantar parcelas</h3><p id="advance-description"></p>
+  <label class="field">Data do pagamento<input type="date" id="advance-date"></label>
+  <label class="field">Quantas parcelas?<input type="number" min="1" step="1" id="advance-count" value="1"></label>
+  <label class="check"><input type="checkbox" id="advance-all"> Adiantar todas as restantes</label>
+  <p id="advance-summary" role="status"></p>
+  <div class="modal-actions"><button class="btn btn-ghost" id="btn-advance-cancel">Cancelar</button><button class="btn btn-primary" id="btn-advance-save">Confirmar adiantamento</button></div>
+</div></div>
 
 <!-- Importação em lote (fatura/planilha/Excel) -->
 <div class="modal-backdrop hidden" id="modal-batch">
@@ -580,7 +590,12 @@
       </div>
     </div>
 
-    <div class="batch-sources">
+    <p id="batch-phases" role="status" aria-live="polite" style="white-space:pre-line"></p>
+      <p class="hint">Mantenha o app aberto durante as duas etapas. Os lançamentos só serão gravados após sua confirmação.</p>
+      <button type="button" class="btn btn-ghost hidden" id="btn-batch-retry">Continuar leitura</button>
+      <p id="batch-source-summary" class="hint"></p>
+      <details><summary>Exclusões explicadas e cashback</summary><ul id="batch-exclusions"></ul></details>
+      <div class="batch-sources">
       <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7h5l2-3h4l2 3h5v13H3z" stroke-linejoin="round"/><circle cx="12" cy="13" r="4"/></svg> Foto ou PDF</button>
       <button type="button" class="btn btn-ghost btn-sm" id="btn-batch-file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12M3 15h18"/></svg> Excel ou CSV</button>
       <span class="receipt-status hidden" id="batch-status"></span>
@@ -775,13 +790,13 @@
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
-<script src="js/import-dates.js?v=20261029-batch-confirm"></script>
-<script src="js/app.js?v=20261029-batch-confirm"></script>
+<script src="js/import-dates.js?v=20261029-original-audit"></script>
+<script src="js/app.js?v=20261029-original-audit"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
 <script src="js/importer.js?v=20261027-import"></script>
-<script src="js/dashboard.js?v=20261029-batch-confirm"></script>
-<script src="js/receipt.js?v=20261027-import"></script>
-<script src="js/batch.js?v=20261029-batch-confirm"></script>
+<script src="js/dashboard.js?v=20261029-original-audit"></script>
+<script src="js/receipt.js?v=20261029-original-audit"></script>
+<script src="js/batch.js?v=20261029-original-audit"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
 <script src="js/cloud-archive.js?v=20261023-guarani"></script>

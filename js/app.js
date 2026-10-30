@@ -590,6 +590,16 @@ function cleanISO(v, fallback) {
 
 // The marker records an estimate, never proof of a date read from a document.
 // Keep only coherent anchors; malformed metadata cannot produce a UI claim.
+function cleanCashback(t) {
+  const c=t?.cashback;
+  return c && Number.isFinite(c.amount) && c.amount>0 && c.amount<=Number.MAX_SAFE_INTEGER && typeof c.currency==='string' && /^[A-Z]{2,10}$/.test(c.currency)
+    ? {cashback:{amount:c.amount,currency:c.currency}} : {};
+}
+function cleanAdvance(t) {
+  const a=t?.advance;
+  return a && isValidISODate(a.scheduledDate) && isValidISODate(a.paidDate) && a.paidDate===t.date && a.paidDate<a.scheduledDate && typeof t.installment==="string" && RE_PARC.test(t.installment)
+    ? {advance:{scheduledDate:a.scheduledDate,paidDate:a.paidDate}} : {};
+}
 function cleanDateEstimate(transaction) {
   if (transaction?.dateEstimated !== true || !isValidISODate(transaction.date)) return {};
   const value = transaction.dateEstimate;
@@ -626,7 +636,7 @@ function normalizeStoredDataset(raw) {
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: raw.transactions.map((t) => {
-      const { dateEstimated, dateEstimate, ...fields } = t;
+      const { dateEstimated, dateEstimate, advance, cashback, ...fields } = t;
       return {
         ...fields,
         id: typeof t.id === "string" && t.id ? t.id : uid(),
@@ -637,7 +647,7 @@ function normalizeStoredDataset(raw) {
         account: String(t.account || ""),
         currency: normCur(t.currency),
         type: t.type === "receita" ? "receita" : "despesa",
-        ...cleanDateEstimate(t),
+        ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t),
       };
     }),
     limits: Array.isArray(raw.limits) ? raw.limits : [],
@@ -737,7 +747,7 @@ function sanitizeDataset(raw, opts) {
       groupId: mapGroup(t.groupId),
       fixed: t.fixed === true,
       date,
-      ...cleanDateEstimate(t),
+      ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t),
       desc: text(t.desc, 120).trim() || "(sem descrição)",
       category: text(t.category, 40).trim() || "Outros",
       account: text(t.account, 40).trim(),

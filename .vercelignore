@@ -38,3 +38,11 @@
 !/vercel.json
 !/lib/pdf-lib.min.js
 !/lib/pdf-lib.LICENSE.md
+
+!/api/receipt-document.js
+
+!/server/document-reader.cjs
+
+!/package.json
+
+!/pnpm-lock.yaml

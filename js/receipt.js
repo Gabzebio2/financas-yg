@@ -105,7 +105,7 @@ const Receipt = (() => {
 
   // Divisão local, sem executar conteúdo do PDF. Um trecho nunca é enviado
   // parcialmente por exceder o limite: PDFs densos recuam de duas para uma página.
-  async function* prepareParts(file) {
+  async function* prepareParts(file, options = {}) {
     if (!file?.size) throw new Error("leitura");
     if (isPdf(file)) {
       if (file.size > 50 * 1024 * 1024) throw new Error("pdf_entrada_grande");
@@ -116,7 +116,7 @@ const Receipt = (() => {
       const totalPages = pdf.getPageCount();
       if (!totalPages || totalPages > 120) throw new Error("partes_demais");
       for (let start = 0; start < totalPages;) {
-        let count = Math.min(2, totalPages - start), data;
+        let count = Math.min(options.singlePage ? 1 : 2, totalPages - start), data;
         for (;;) {
           const part = await PDFLib.PDFDocument.create();
           const pages = await part.copyPages(pdf, Array.from({ length: count }, (_, i) => start + i));
@@ -458,5 +458,5 @@ const Receipt = (() => {
     refreshKeyUI();
   });
 
-  return { analyze, prepareImage, prepareFile, prepareParts, prepFailMsg };
+  return { documentReaderVersion: 2, analyze, prepareImage, prepareFile, prepareParts, prepFailMsg };
 })();

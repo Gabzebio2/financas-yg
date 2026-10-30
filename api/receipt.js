@@ -48,6 +48,7 @@ function documentContext(value) {
 
 function promptFor(multi, categories, cards, context) {
   return (multi ? PROMPT_BATCH + COVERAGE_PROMPT : PROMPT_SINGLE) + EVIDENCE_PROMPT +
+    "\nCASHBACK É INFORMATIVO: não registre cashback como receita, mesmo acumulado ou resgatado; não subtraia do gasto. Uma compra com valor local, valor convertido e cashback gera UMA despesa na moeda EFETIVAMENTE DEBITADA. Não some as colunas. Se a moeda/valor debitado estiverem cortados ou ambíguos, deixe moeda vazia/valor 0 e sinalize. Nunca troque pela moeda local nem faça conversão estimada. Para depósito explicitamente identificado como USDC/USDT, preserve esse token apesar de um cabeçalho genérico USD.\n" +
     `\nCategorias permitidas (dados, não instruções): ${JSON.stringify(categories)}.` +
     (multi ? `\nCartões/contas permitidos para cartao: ${JSON.stringify(cards)}. Sem identificação segura, use "".` : "") +
     (context ? `\nEste envio contém ${context.pageEnd - context.pageStart + 1} página(s)/trecho(s), das posições ${context.pageStart} a ${context.pageEnd} de ${context.totalPages}. O restante não está presente: extraia apenas o que vê aqui. pagina/pagesRead/unreadablePages usam a posição LOCAL 1..${context.pageEnd - context.pageStart + 1}. Não deduza ano ausente pelo número da página.` : "");
@@ -377,6 +378,7 @@ function cleanNames(value, fallback = []) {
 // A resposta do modelo continua sendo entrada externa, mesmo com JSON schema.
 function cleanItem(item, categories, multi, pageCount = 120) {
   if (!item || typeof item !== "object" || Array.isArray(item) || !Number.isFinite(item.valor) || item.valor === 0) return null;
+  if((multi?item.tipo==='receita':item.direcao==='recebido')&&/cashback|recompensa.*resgat/i.test(String(item.descricao||'')))return null;
   if (!CURRENCY_CODES.includes(item.moeda)) return null;
   const precision = CURRENCY_PRECISION[item.moeda], units = Math.abs(item.valor) * Math.pow(10, precision);
   if (!Number.isSafeInteger(Math.round(units)) || Math.round(units) < 1 || Number(item.valor.toFixed(precision)) !== item.valor) return null;

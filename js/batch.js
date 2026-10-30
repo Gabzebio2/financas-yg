@@ -6,6 +6,9 @@
 
 const Batch = (() => {
   const PROXY_PATH = "/api/receipt";
+  let documentTasks = [];
+  let documentExclusions = [];
+  let documentFailure = false;
   let rows = [];          // [{ date, desc, amount, type, currency, on, src, dup, cat, installment, fixa... }]
   let presetCat = null;   // categoria destino sugerida (ex: amigo)
   let srcSeq = 0;         // nº do arquivo de origem de cada linha (p/ detectar sobreposição)
@@ -42,11 +45,13 @@ const Batch = (() => {
     if (reading) { toast("Aguarde a leitura atual terminar."); return; }
     const version = generation;
     reading = true;
+    $("#batch-preview").inert = true;
     ["#btn-batch-photo", "#btn-batch-file", "#btn-batch-save"].forEach((id) => { $(id).disabled = true; });
     try { await read(files, version); }
     finally {
       if (version === generation) {
         reading = false;
+        $("#batch-preview").inert = false;
         ["#btn-batch-photo", "#btn-batch-file"].forEach((id) => { $(id).disabled = false; });
         updateCount();
       }
@@ -69,9 +74,13 @@ const Batch = (() => {
     generation++;
     confirmationSeq++; pendingConfirmation = null; committing = false;
     reading = false;
+    $("#batch-preview").inert = false;
     opts = opts || {};
     presetCat = opts.category || null;
     rows = [];
+    documentTasks = []; documentExclusions = []; documentFailure = false;
+    $("#batch-phases").textContent = ""; $("#btn-batch-retry").classList.add("hidden");
+    $("#batch-source-summary").textContent = ""; $("#batch-exclusions").innerHTML = "";
     srcSeq = 0;
     detectedCard = null;
     chosenAccount = null;
@@ -215,6 +224,8 @@ const Batch = (() => {
     $("#batch-generated-wrap").classList.toggle("hidden", generated === 0);
     $("#batch-include-generated").checked = includeGenerated;
     const messages = [...new Set(reviewWarnings)];
+    const invalidOriginal=rows.filter(r=>!r.gen&&invalidRow(r)).length;
+    if(invalidOriginal)messages.push(invalidOriginal+" linha(s) preservada(s), aguardando correção de campos. Abra os detalhes para editar.");
     if (excludedCount) messages.push(`${excludedCount} item(ns) não importado(s) por valor, moeda ou tipo ausente/inválido.`);
     const invalid = rows.filter((r) => !r.gen && invalidRow(r)).length;
     if (invalid) messages.push(`${invalid} item(ns) sem dados válidos ficaram fora da seleção. Você pode corrigi-los nos detalhes.`);
@@ -279,8 +290,8 @@ const Batch = (() => {
             : (r.fixed || r.fixa)
               ? `<span class="parc-tag" title="${r.gen ? "Projeção: repetição não identificada no documento" : "Assinatura/mensalidade detectada"}">${r.gen ? "Projeção · " : ""}fixa</span>`
               : ""
-        }</div>${r.dateEstimated ? '<small class="batch-estimated-date">Data estimada pelos vizinhos do documento</small>' : ""}${rowReview(r).length ? `<small class="hint">${escapeHtml(rowReview(r).join(" · "))}</small>` : ""}${r.account ? `<small class="hint">${escapeHtml(r.account)}</small>` : ""}${r.sourceLabel ? `<small class="hint">${escapeHtml(r.sourceLabel)}</small>` : ""}${r.referenceId ? `<small class="hint">Referência: ${escapeHtml(r.referenceId)}</small>` : ""}${reviewHTML(r, i)}${matchHTML(r, i)}</td>
-        <td class="num"><input type="text" class="batch-val" data-f="amount" data-i="${i}" data-cur="${selectedCurrency === "original" ? r.currency : normCur(selectedCurrency)}" value="${fmtMoneyInput(r.amount, selectedCurrency === "original" ? r.currency : selectedCurrency)}"></td>
+        }</div>${r.dateEstimated ? '<small class="batch-estimated-date">Data estimada pelos vizinhos do documento</small>' : ""}${rowReview(r).length ? `<small class="hint">${escapeHtml(rowReview(r).join(" · "))}</small>` : ""}${r.account ? `<small class="hint">${escapeHtml(r.account)}</small>` : ""}${r.sourceLabel ? `<small class="hint">${escapeHtml(r.sourceLabel)}</small>` : ""}${r.referenceId ? `<small class="hint">Referência: ${escapeHtml(r.referenceId)}</small>` : ""}${r.cashback ? `<small class="hint">Cashback informativo: ${escapeHtml(String(r.cashback.amount))} ${escapeHtml(r.cashback.currency)} · fora das receitas</small>` : ""}${reviewHTML(r, i)}${matchHTML(r, i)}</td>
+        <td class="num"><input type="text" class="batch-val" data-f="amount" data-i="${i}" data-cur="${selectedCurrency === "original" ? r.currency : normCur(selectedCurrency)}" value="${Number.isFinite(r.amount)?fmtMoneyInput(r.amount, selectedCurrency === "original" ? r.currency : selectedCurrency):""}"><select data-f="currency" data-i="${i}" aria-label="Moeda debitada"><option value="">Definir moeda</option>${CURRENCY_CODES.map(c=>`<option value="${c}" ${r.currency===c?"selected":""}>${c}</option>`).join("")}</select></td>
         <td>
           <select data-f="cat" data-i="${i}">
             ${cats.map((c) => `<option value="${escapeHtml(c)}" ${(r.cat || fallCat) === c ? "selected" : ""}>${escapeHtml(c)}</option>`).join("")}
@@ -288,6 +299,7 @@ const Batch = (() => {
         </td>
         <td>
           <select data-f="type" data-i="${i}">
+            <option value="" ${!r.type?"selected":""}>Definir tipo</option>
             <option value="despesa" ${r.type === "despesa" ? "selected" : ""}>Despesa</option>
             <option value="receita" ${r.type === "receita" ? "selected" : ""}>Receita</option>
           </select>
@@ -312,7 +324,7 @@ const Batch = (() => {
     const total = Object.entries(totals).map(([cur, amount]) => fmtMoney(amount, cur)).join(" · ") || fmtMoney(0, "BRL");
     $("#batch-count").textContent = `${on.length} de ${rows.length} selecionadas · Saldo da seleção: ${total}`;
     $("#btn-batch-save").textContent = `Incluir ${on.length} lançamento${on.length === 1 ? "" : "s"}`;
-    $("#btn-batch-save").disabled = reading || committing || on.length === 0;
+    $("#btn-batch-save").disabled = reading || committing || documentFailure || on.length === 0;
     renderReviewSummary();
   }
 
@@ -327,10 +339,6 @@ const Batch = (() => {
       const amount = (typeof rawAmount === "number" || (typeof rawAmount === "string" && rawAmount.trim())) ? Number(rawAmount) : NaN;
       const type = it.type ?? it.tipo;
       const currency = typeof (it.moeda ?? it.currency) === "string" ? (it.moeda ?? it.currency).trim().toUpperCase() : "";
-      if (!Number.isFinite(amount) || amount <= 0 || amount > Number.MAX_SAFE_INTEGER || !["receita", "despesa"].includes(type) || !CURRENCY_CODES.includes(currency)) {
-        excludedCount++;
-        return null;
-      }
       const review = Array.isArray(it.revisar) ? it.revisar.filter((v) => typeof v === "string" && v.trim()).map((v) => v.slice(0, 180)) : [];
 
       // Categoria sugerida pela IA por item (validada contra as da pasta).
@@ -358,6 +366,7 @@ const Batch = (() => {
       }
 
       return { date, desc, amount, type, currency, on: true, cat, parcNum, parcTotal, fixa, review, sourceIndex,
+        cashback: it.cashback && Number.isFinite(it.cashback.valor) && it.cashback.valor>0 ? {amount:it.cashback.valor,currency:it.cashback.moeda} : null,
         account: typeof (it.account ?? it.instituicao) === "string" ? (it.account ?? it.instituicao).trim().slice(0, 80) : "",
         referenceId: String(it.referenceId ?? it.referencia ?? "").trim().slice(0, 160),
         sourceEvidence: String(it.sourceEvidence ?? it.evidencia ?? "").trim().slice(0, 300),
@@ -522,7 +531,107 @@ const Batch = (() => {
   /* ---------- Origem: FOTO(s)/PDF(s) — fatura/planilha via IA no servidor ----------
      Aceita várias imagens/PDFs de uma vez (ex: 4 prints da fatura); lê em
      sequência e ACUMULA tudo numa lista só, para um único OK. */
+  function documentProgress() {
+    const total=documentTasks.length, first=documentTasks.filter(t=>t.first).length, second=documentTasks.filter(t=>t.result).length;
+    const firstItems=documentTasks.reduce((n,t)=>n+(t.first?.itens?.length||0),0), finalItems=documentTasks.reduce((n,t)=>n+(t.result?.itens?.length||0),0);
+    $("#batch-phases").textContent = '1. Leitura do original: '+first+'/'+total+' páginas · '+firstItems+' operações encontradas.\n2. Comparação com o original: '+second+'/'+total+' páginas · '+finalItems+' operações na prévia final.';
+    $("#btn-batch-retry").classList.toggle("hidden",!documentFailure||reading);
+  }
+  function rebuildDocumentPreview() {
+    rows=rows.filter(r=>!r.documentTask);
+    documentExclusions=[];
+    for(const t of documentTasks){
+      const data=t.result||t.first;if(!data)continue;
+      const start=rows.length;
+      ingestAiResult(data.itens,data.cartao,{sourceDocumentId:t.documentId,sourceLabel:t.label,pageStart:t.part.documentContext.pageStart,reviewRequired:true});
+      rows.slice(start).forEach(r=>{
+        r.documentTask=true;
+        r.auditReasons=t.result ? (r.review.length?r.review:['Comparado com a página original.']) : ['Aguardando comparação com o original.'];
+        if(t.result && !r.review.length && !data.partial && !data.avisos?.length)r.verifiedSnapshot=reviewSnapshot(r);
+      });
+      if(t.result)documentExclusions.push(...(data.excluded||[]).map(x=>({...x,label:t.label})));
+    }
+    const rejected=documentExclusions.filter(x=>x.operacao!==false&&x.motivo==='recusado').length, cashback=documentExclusions.filter(x=>x.operacao!==false&&x.motivo==='cashback').length, others=documentExclusions.filter(x=>x.operacao!==false&&!['recusado','cashback','resumo'].includes(x.motivo)).length;
+    const lines=documentTasks.reduce((n,t)=>n+(t.result?.ledger?.monetaryLines||0),0), covered=documentTasks.reduce((n,t)=>n+(t.result?.ledger?.accounted||0),0);
+    const docCounts=new Map();for(const t of documentTasks)if(t.result?.expectedCount)docCounts.set(t.documentId,t.result.expectedCount);
+    const summary=[];
+    if(lines)summary.push(covered+' de '+lines+' linhas monetárias do texto original têm correspondência.');
+    summary.push(rejected+' tentativa(s) recusada(s) e '+cashback+' registro(s) de cashback ficaram fora das receitas/despesas.');
+    if(others)summary.push(others+' outra(s) exclusão(ões) explicada(s) abaixo.');
+    for(const [doc,count] of docCounts){
+      const tasks=documentTasks.filter(t=>t.documentId===doc);if(tasks.some(t=>!t.result))continue;
+      const accounted=tasks.reduce((n,t)=>n+t.result.itens.length+(t.result.excluded||[]).filter(x=>x.operacao!==false&&x.motivo!=='resumo').length,0);
+      summary.push('Documento informa '+count+' operações; '+accounted+' foram identificadas e explicadas.');
+      if(count!==accounted){
+        const message='A contagem impressa ('+count+') difere das operações identificadas ('+accounted+'). Confira as exclusões e o documento antes de incluir.';
+        summary.push(message);if(!reviewWarnings.includes(message))reviewWarnings.push(message);
+        rows.filter(r=>tasks.some(t=>t.documentId===r.sourceDocumentId)).forEach(r=>{delete r.verifiedSnapshot;});
+      }
+    }
+    $("#batch-source-summary").textContent=summary.join(' ');
+    $("#batch-exclusions").innerHTML=documentExclusions.filter(x=>x.motivo!=='resumo').map(x=>'<li>'+escapeHtml(x.descricao)+' — '+escapeHtml(x.explicacao)+(x.operacao===false?' (informação de resumo)':'')+' <small>'+escapeHtml(x.label)+'</small></li>').join('');
+    renderPreview();documentProgress();
+  }
+  async function processDocumentTasks(version) {
+    documentFailure=false;$("#btn-batch-retry").classList.add("hidden");
+    const post=async(t,first)=>{
+      const token=await Cloud.getToken();if(!token)throw Error('login_required');
+      const res=await fetch('/api/receipt-document',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},signal:AbortSignal.timeout(175000),body:JSON.stringify({image:{media_type:t.part.mediaType,data:t.part.data},categories:Dashboard.getCats(),cards:CARDS,documentContext:t.part.documentContext,...(first?{first}: {})})});
+      const data=await res.json().catch(()=>({}));
+      if(!res.ok||!Array.isArray(data.itens)||!data.ledger)throw Error(data.error||'leitura_indisponivel');return data;
+    };
+    // Complete the first stage across ALL pages, then compare the original to
+    // each first draft. Completion is never inferred merely from equal counts.
+    for(const stage of ['first','result']){
+      for(let i=0;i<documentTasks.length;i++){
+        const t=documentTasks[i];if(t[stage])continue;if(!contextValid(version))return;
+        setStatus((stage==='first'?'Etapa 1 · lendo':'Etapa 2 · comparando com o original')+' · '+t.label+'…');documentProgress();
+        try {
+          let data=await post(t,stage==='result'?t.first:null);
+          if(!contextValid(version))return;
+          // Missing text anchors are concrete evidence for a targeted reread.
+          if(stage==='result'&&data.ledger.missing.length){
+            setStatus('Rechecando linhas sem correspondência · '+t.label+'…');
+            data=await post(t,{...data,avisos:data.avisos});if(!contextValid(version))return;
+          }
+          t[stage]=data;
+          if(stage==='result'){
+            t.progress.status=data.partial?'partial':'complete';t.progress.count=data.itens.length;
+            t.progress.auditStatus=data.verified?'verified':'attention';t.progress.message=(data.avisos||[]).join(' ');
+            reviewWarnings.push(...(data.avisos||[]));
+          }
+          rebuildDocumentPreview();
+        }catch(e){
+          if(!contextValid(version))return;
+          documentFailure=true;t.progress.status='failed';t.progress.message=stage==='first'?'Primeira leitura não concluída':'Comparação não concluída';
+          setStatus('A leitura parou em '+t.label+'. '+(e.message==='saldo_ia'?'O serviço de IA está sem créditos. ':'')+'Use Continuar leitura para retomar desta etapa. Nenhum lançamento foi salvo.','err');
+          documentProgress();$("#btn-batch-retry").classList.remove("hidden");renderPreview();return;
+        }
+      }
+    }
+    setStatus('As duas etapas terminaram. Edite os avisos necessários ou confirme o lote para incluir.','ok');
+    rebuildDocumentPreview();
+  }
+  async function fromDocumentPages(files,version) {
+    if(documentTasks.some(t=>!t.result)){setStatus('Conclua a leitura atual antes de anexar mais arquivos.','err');return;}
+    const prepared=[];
+    try {
+      if(files.length>MAX_FILES)throw Error('partes_demais');
+      for(const file of files){
+        const documentId='document-'+(++documentSeq);
+        for await(const part of Receipt.prepareParts(file,{singlePage:true})){
+          if(!contextValid(version))return;if(documentTasks.length+prepared.length>=MAX_PARTS)throw Error('partes_demais');
+          const label=file.name+' · '+part.label,progress={label,status:'pending',message:'Aguardando leitura'};
+          prepared.push({part,documentId,label,progress});
+        }
+      }
+      documentTasks.push(...prepared);coverage.push(...prepared.map(t=>t.progress));
+      documentProgress();await processDocumentTasks(version);
+    }catch(e){if(!contextValid(version))return;setStatus('Nenhuma página dos novos arquivos foi enviada. '+(Receipt.prepFailMsg?Receipt.prepFailMsg(e):'Não foi possível preparar todas as páginas.')+' Selecione os arquivos novamente.','err');}
+  }
+
   async function fromPhotos(files, version = generation) {
+    if (Receipt.documentReaderVersion === 2) return fromDocumentPages(files, version);
     const preflightFailure = (message) => {
       coverage.push(...Array.from(files, (f) => ({ label: f.name || "Imagem", status: "failed", message: "não lido: " + message })));
       setStatus(message, "err"); renderPreview();
@@ -699,6 +808,7 @@ const Batch = (() => {
         category: t.cat || $("#batch-cat").value, currency: t.currency, account: t.account,
         groupId: t.serie || t.groupId || null, installment: t.installment || null,
         totalValue: t.totalValue, fixed: t.fixed === true,
+        ...(t.cashback ? {cashback:t.cashback} : {}),
         ...(t.referenceId ? { referenceId: t.referenceId } : {}),
         ...(t.sourceEvidence ? { sourceEvidence: t.sourceEvidence } : {}),
         ...(t.sourcePage ? { sourcePage: t.sourcePage } : {}),
@@ -770,7 +880,7 @@ const Batch = (() => {
   }
 
   function save() {
-    if (reading || committing) { toast("Aguarde a leitura terminar antes de adicionar."); return; }
+    if (reading || committing || documentFailure) { toast("Conclua a leitura e a comparação antes de adicionar."); return; }
     if (!contextValid()) { toast("A pasta ou conta mudou. Reabra a importação na pasta desejada."); return; }
     if (pendingConfirmation && !$("#modal-confirm").classList.contains("hidden")) return;
     const plan = selectionPlan();
@@ -806,6 +916,7 @@ const Batch = (() => {
     });
     $("#btn-batch-cancel").addEventListener("click", close);
     $("#btn-batch-save").addEventListener("click", save);
+    $("#btn-batch-retry").addEventListener("click",()=>runImport((_,version)=>processDocumentTasks(version),[]));
     ["pending", "all"].forEach((filter) => $("#batch-filter-" + filter).addEventListener("click", () => { viewFilter = filter; renderPreview(); $("#batch-details").open = true; }));
     // Trocar a moeda do lote reformata os valores das linhas e o total
     $("#batch-cur").addEventListener("change", renderPreview);
@@ -825,6 +936,7 @@ const Batch = (() => {
     // Edição inline da lista
     const tbody = $("#batch-tbody");
     tbody.addEventListener("input", (ev) => {
+      if(reading)return;
       const el = ev.target;
       const i = Number(el.dataset.i);
       if (isNaN(i) || !rows[i]) return;
@@ -844,9 +956,11 @@ const Batch = (() => {
       else if (f === "amount") { maskMoneyEl(el); rows[i].amount = Math.abs(moneyInputValue(el) || 0); }
       else if (f === "cat") rows[i].cat = el.value;
       else if (f === "type") rows[i].type = el.value;
+      else if (f === "currency") rows[i].currency = el.value;
       updateCount();
     });
     tbody.addEventListener("change", (ev) => {
+      if(reading)return;
       const el = ev.target;
       if (el.dataset.f) { renderPreview(); return; }
       if (!el.classList.contains("batch-check")) return;
