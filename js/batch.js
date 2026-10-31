@@ -666,7 +666,7 @@ const Batch = (() => {
           await ReceiptJobs.submit(prepared,rows.map(r=>({...r,documentTask:false})),msg=>{if(contextValid(version))setStatus(msg);});
           if(!contextValid(version))return;
           close();toast('Enviado! Pode apagar a tela. O resultado aparecerá em Documentos, nesta pasta.');
-        }catch(e){if(contextValid(version))setStatus(ReceiptJobs.message(e)+' Veja o envio em Documentos.','err');}
+        }catch(e){if(contextValid(version))setStatus(ReceiptJobs.uploadMessage(e),'err');}
         return;
       }
       documentTasks.push(...prepared);coverage.push(...prepared.map(t=>t.progress));

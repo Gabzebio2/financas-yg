@@ -7,6 +7,7 @@ const ReceiptJobs=(()=>{
  const folder=()=>typeof Dashboard!=='undefined'?Dashboard.getImportTargetId():null;
  const messages={login_required:'Entre na sua conta para enviar e recuperar documentos.',folder_not_linked:'Sincronize esta pasta com sua conta antes de enviar documentos.',active_job_limit:'Há muitos documentos guardados. Conclua ou descarte os envios anteriores.',job_not_found:'Este documento expirou ou pertence a outra conta.',job_not_ready:'A leitura ainda não terminou. Aguarde o resultado.',retry_unavailable:'Não foi possível retomar. Envie o documento novamente.',upload_incomplete:'O envio não terminou. Mantenha o app aberto durante o envio.',job_too_large:'O lote ultrapassa 100 MB após a preparação. Divida os arquivos.',invalid_transaction:'Confira os campos destacados antes de incluir.',saldo_ia:'A leitura aguarda créditos no serviço de IA.'};
  function message(e){return messages[e?.message]||'Não foi possível conectar agora. Seus documentos já enviados continuam guardados; tente novamente.';}
+ function uploadMessage(e){return message(e)+(e?.receiptJobCreated?' Confira o andamento em Documentos antes de reenviar.':' O arquivo não foi enviado para leitura.');}
  async function request(body,context={owner:owner(),folder:folder()}){
   if(!context.owner||owner()!==context.owner)throw Error('login_required');
   let token=await Cloud.getToken();if(!token)throw Error('login_required');
@@ -19,6 +20,7 @@ const ReceiptJobs=(()=>{
  async function submit(tasks,extraRows,onProgress){
   if(uploading)throw Error('upload_in_progress');uploading=true;
   const context={owner:owner(),folder:folder()},id=crypto.randomUUID();
+  let created=false;
   try{
    if(!context.owner||!context.folder)throw Error('login_required');
    const pages=[];
@@ -28,6 +30,7 @@ const ReceiptJobs=(()=>{
     pages.push({mediaType:t.part.mediaType,bytes:bytes.length,sha256:hash,label:t.label,documentId:t.documentId,context:t.part.documentContext});
    }
    await request({action:'create',id,folder:context.folder,pages,categories:Dashboard.getCats(),cards:CARDS,extraRows},context);
+   created=true;
    for(let i=0;i<tasks.length;i++){
     onProgress?.(`Enviando com privacidade · ${i+1}/${tasks.length} páginas. Mantenha o app aberto até terminar o envio.`);
     // Uploads are immutable and idempotent, so a lost response can be retried safely.
@@ -38,7 +41,7 @@ const ReceiptJobs=(()=>{
     if(error)throw error;
    }
    await request({action:'submit',id},context);await refresh();return id;
-  }finally{uploading=false;}
+  }catch(e){e.receiptJobCreated=created;throw e;}finally{uploading=false;}
  }
  function render(jobs){
   const panel=document.querySelector('#receipt-jobs');if(!panel)return;
@@ -77,5 +80,5 @@ const ReceiptJobs=(()=>{
  document.addEventListener('visibilitychange',refresh);
  document.addEventListener('fyg:cloudstate',refresh);
  window.addEventListener('focus',refresh);window.addEventListener('online',refresh);
- return {submit,refresh,commit,message};
+ return {submit,refresh,commit,message,uploadMessage};
 })();

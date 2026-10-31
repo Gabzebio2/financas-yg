@@ -133,6 +133,56 @@ test("SDK recebe opt-in experimental e consulta somente settings público do pro
   assert.equal(h.server.passkeyCalls.length, 0);
 });
 
+function receiptJobsWithRealCloud(h){
+  const calls=[];
+  h.context.crypto=require('node:crypto').webcrypto;h.context.atob=atob;
+  Object.assign(h.context.Dashboard,{getImportTargetId:()=> 'local0001',getCats:()=>['Outros']});
+  const querySelector=h.context.document.querySelector;
+  h.context.document.querySelector=s=>s.startsWith('#receipt-jobs')?null:querySelector(s);
+  h.context.fetch=async(url,options)=>{const body=JSON.parse(options.body);calls.push({url,body,headers:options.headers});return {ok:true,status:200,json:async()=>body.action==='create'?{id:body.id}:body.action==='list'?{jobs:[]}:{uploaded:true,status:'queued'}};};
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../js/receipt-jobs.js'),'utf8')+'\nthis.receipts=ReceiptJobs;',h.context);
+  return {receipts:h.context.receipts,calls};
+}
+const uploadTask=()=>[{part:{data:'YWJj',mediaType:'image/png',documentContext:{pageStart:1,pageEnd:1,totalPages:1}},label:'Extrato fictício',documentId:'doc1'}];
+test('documentos usa a sessão restaurada pelo Cloud real, sem exigir novo login',async()=>{
+  const h=harness();h.server.initialSession=sessionFor('user-a');await h.cloud.init();
+  assert.equal(h.cloud.getSyncState().connected,true);
+  assert.equal(h.cloud.getSyncState().owner,'https://mhgagjhwsjjjwwvopjgu.supabase.co|user-a');
+  const {receipts,calls}=receiptJobsWithRealCloud(h);
+  const job=await receipts.submit(uploadTask(),[]);
+  assert.equal(job,calls[0].body.id);
+  assert.deepEqual(calls.map(x=>x.body.action),['create','upload','submit','list']);
+  assert(calls.every(x=>x.headers.Authorization==='Bearer synthetic-user-a'));
+  assert(!calls.some(x=>x.body.action==='commit'));
+  assert(h.events.filter(x=>x.type==='fyg:cloudstate').every(x=>!JSON.stringify(x.detail).includes('synthetic-user-a')));
+});
+test('identificação da conta acompanha troca, logout e mudança de projeto',async()=>{
+  const h=harness();await h.ready();assert.equal(h.cloud.getSyncState().owner,null);
+  h.login('user-a');const before=h.cloud.getSyncState().owner;assert(before.endsWith('|user-a'));
+  h.login('user-b');assert(h.cloud.getSyncState().owner.endsWith('|user-b'));assert.notEqual(h.cloud.getSyncState().owner,before);
+  await h.cloud.logout();assert.equal(h.cloud.getSyncState().owner,null);
+  h.login('user-a');h.config();assert.equal(h.cloud.getSyncState().owner,null);
+});
+test('sem sessão o upload não faz requisição e não promete resultado em Documentos',async()=>{
+  const h=harness();await h.ready();const {receipts,calls}=receiptJobsWithRealCloud(h);
+  let error;try{await receipts.submit(uploadTask(),[]);}catch(e){error=e;}
+  assert.equal(error.message,'login_required');assert.equal(calls.length,0);
+  assert.match(receipts.uploadMessage(error),/não foi enviado/);assert.doesNotMatch(receipts.uploadMessage(error),/em Documentos/);
+});
+test('erro após criar envio encaminha só então para Documentos',async()=>{
+ const h=harness();await h.ready();h.login();const {receipts}=receiptJobsWithRealCloud(h);
+ h.context.fetch=async(_,opt)=>({ok:JSON.parse(opt.body).action==='create',status:JSON.parse(opt.body).action==='create'?200:503,json:async()=>({error:'service_unavailable'})});
+ let error;try{await receipts.submit(uploadTask(),[]);}catch(e){error=e;}
+ assert.equal(error.receiptJobCreated,true);assert.match(receipts.uploadMessage(error),/em Documentos/);
+});
+test('trocar de conta durante a criação impede enviar o arquivo na sessão seguinte',async()=>{
+ const h=harness();await h.ready();h.login('user-a');const {receipts}=receiptJobsWithRealCloud(h),gate=deferred(),calls=[];
+ h.context.fetch=async(_,opt)=>{calls.push(JSON.parse(opt.body).action);await gate.promise;return {ok:true,status:200,json:async()=>({id:'created'})};};
+ const pending=receipts.submit(uploadTask(),[]);
+ for(let i=0;i<30&&!calls.length;i++)await settle();assert.deepEqual(calls,['create']);
+ h.login('user-b');gate.resolve();await assert.rejects(pending,/context_changed/);assert.deepEqual(calls,['create']);
+});
+
 test("settings antigo não habilita passkeys no novo projeto e falha preserva estado desconhecido", async () => {
   const h = harness(), gate = deferred(); h.server.settingsGate = gate;
   h.cloud.ensureClient(); h.config(); h.server.enabled = false;

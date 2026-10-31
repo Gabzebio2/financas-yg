@@ -281,7 +281,9 @@ const Cloud = (() => {
     else if (error || accountConflictCount) status = "error";
     else if (unlinkedCount) status = "unlinked";
     else if (connected && q?.lastSyncedAt) status = "synced";
-    return { status, connected, autoSync, pendingUploads, pendingDeletes, pendingCount, otherAccountPending, unlinkedCount,
+    // Shared account identity for document uploads and stale-response guards.
+    // Never expose access/refresh tokens through UI state events.
+    return { status, connected, owner: connected ? activeOwner : null, autoSync, pendingUploads, pendingDeletes, pendingCount, otherAccountPending, unlinkedCount,
       lastSyncedAt: q?.lastSyncedAt || null, nextRetryAt, error, conflictCount: q?.conflicts.length || 0,
       accountConflictCount, invalidRemoteCount, blockedPendingCount, mergeConflictCount: mergeConflictIds.size, queueDurable,
       repairableRemoteCount, repairableDateCount, repairDatePreview: repairDatePreview.map((pair) => ({ ...pair })),
