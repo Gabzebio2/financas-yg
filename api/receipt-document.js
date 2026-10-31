@@ -19,7 +19,9 @@ module.exports=async(req,res)=>{
   const key=process.env.OPENAI_API_KEY||process.env.OPENAI_KEYZAO;
   if(!key)return res.status(503).json({error:'configuracao_ia'});
   const pageContext={pageStart:context.pageStart,pageEnd:context.pageEnd,totalPages:context.totalPages};
+  const sourceHeader=body.sourceHeader;
+  if(sourceHeader!==undefined&&(image.media_type!=='application/pdf'||context.pageStart<=1||typeof sourceHeader!=='string'||!sourceHeader.length||sourceHeader.length>262144||sourceHeader.length+image.data.length>4200000||!/^[A-Za-z0-9+/]*={0,2}$/.test(sourceHeader)))return res.status(400).json({error:'invalid_header'});
   const mode=body.mode==='quick'&&image.media_type!=='application/pdf'&&!first?'quick':'full';
-  return res.status(200).json(await readPage({image,categories:names(body.categories),cards:names(body.cards),context:pageContext,first,mode},key));
+  return res.status(200).json(await readPage({image,categories:names(body.categories),cards:names(body.cards),context:pageContext,first,sourceHeader,mode},key));
  }catch(e){return res.status(502).json({error:['saldo_ia','configuracao_ia','one_page_required','page_too_dense','resposta_incompleta'].includes(e.message)?e.message:e.name==='TimeoutError'?'tempo_ia':'leitura_indisponivel'});}
 };

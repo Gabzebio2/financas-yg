@@ -69,6 +69,14 @@ function documentResult(n,extra={}) {
  return {itens:Array.from({length:n},(_,i)=>({data:'2026-10-10',valor:i+10,descricao:'Operação '+i,tipo:'despesa',moeda:'USD',categoria:'Outros',revisar:[],cashback:{valor:0.5,moeda:'USD'}})),cartao:'C6',excluded:[],avisos:[],verified:true,partial:false,ledger:{monetaryLines:n,accounted:n,missing:[],duplicates:[]},...extra};
 }
 
+test('cada PDF usa seu próprio cabeçalho na continuação, nas duas etapas',async()=>{
+ const env=documentEnv(()=>documentResult(1));
+ env.context.Receipt.prepareParts=async function*(file){for(let i=1;i<=2;i++)yield {mediaType:'application/pdf',data:file.name==='a.pdf'?'YQ==':'Yg==',label:'página '+i,documentContext:{pageStart:i,pageEnd:i,totalPages:2}};};
+ await env.batch.openWithFiles([{type:'application/pdf',name:'a.pdf'},{type:'application/pdf',name:'b.pdf'}]);
+ assert.equal(env.calls.length,8);
+ for(const call of env.calls)assert.equal(call.sourceHeader,call.documentContext.pageStart===1?undefined:call.image.data);
+});
+
 function quickEnv(reply){
  const env=documentEnv(reply);
  env.context.Receipt.prepareParts=async function*(file){yield {mediaType:'image/jpeg',data:file.name==='b.jpg'?'Yg==':'YQ==',label:'imagem',documentContext:{pageStart:1,pageEnd:1,totalPages:1}};};

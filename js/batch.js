@@ -598,7 +598,9 @@ const Batch = (() => {
     documentFailure=false;$("#btn-batch-retry").classList.add("hidden");
     const post=async(t,first)=>{
       const token=await Cloud.getToken();if(!token)throw Error('login_required');
-      const res=await fetch('/api/receipt-document',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},signal:AbortSignal.timeout(175000),body:JSON.stringify({image:{media_type:t.part.mediaType,data:t.part.data},categories:Dashboard.getCats(),cards:CARDS,documentContext:t.part.documentContext,mode:t.quick&&!first?'quick':'full',...(first?{first}: {})})});
+      const headerPart=t.part.mediaType==='application/pdf'&&t.part.documentContext.pageStart>1?documentTasks.find(x=>x.documentId===t.documentId&&x.part.documentContext.pageStart===1&&x.part.mediaType==='application/pdf')?.part:null;
+      const sourceHeader=headerPart?.data?.length<=262144&&headerPart.data.length+t.part.data.length<=4200000?headerPart.data:undefined;
+      const res=await fetch('/api/receipt-document',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},signal:AbortSignal.timeout(175000),body:JSON.stringify({image:{media_type:t.part.mediaType,data:t.part.data},categories:Dashboard.getCats(),cards:CARDS,documentContext:t.part.documentContext,...(sourceHeader?{sourceHeader}:{}),mode:t.quick&&!first?'quick':'full',...(first?{first}: {})})});
       const data=await res.json().catch(()=>({}));
       if(!res.ok&&data.error==='resposta_incompleta'&&t.quick&&!first){
         t.quick=false;setStatus('Este print é mais extenso. Continuando com a leitura completa…');

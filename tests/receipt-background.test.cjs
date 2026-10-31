@@ -58,3 +58,18 @@ test('worker endpoint refuses user tokens and missing configuration before any A
  assert.equal(await invoke('Bearer scoped-test-secret',{image:{media_type:'image/png',data:'YWJj'},documentContext:{pageStart:1,pageEnd:1,totalPages:1},mode:'quick'}),200);assert.equal(calls[0].timeoutMs,105000);
  delete env.RECEIPT_WORKER_SECRET;assert.equal(await invoke('Bearer undefined'),401);
 });
+
+test('cabeçalho da continuação fica restrito ao mesmo arquivo/tarefa e é verificado pelo hash',async()=>{
+ const {createBackend,digest}=await core(),bytes=new TextEncoder().encode('second-page'),head=new TextEncoder().encode('first-page');
+ for(const badHash of [false,true]){
+  const calls=[],p={job_id:id,document_id:'bank-file',page_index:4,object_path:'second',byte_size:bytes.length,sha256:await digest(bytes),media_type:'application/pdf',context:{pageStart:2,pageEnd:2,totalPages:2},lease_token:id};
+  const b=createBackend({url:'https://db.test',serviceKey:'private',publicKey:'public',fetcher:async(url,opt={})=>{
+   calls.push({url,opt});if(url.includes('expires_at=lte.'))return json([]);if(url.endsWith('/receipt_claim'))return json({page:p,categories:[],cards:[]});if(url.endsWith('/second'))return new Response(bytes);if(url.endsWith('/first'))return new Response(head);if(url.includes('receipt_worker_config'))return json([{token:'scoped'}]);
+   if(url.includes('receipt_job_pages?')){assert(url.includes('job_id=eq.'+id));assert(url.includes('document_id=eq.bank-file'));assert(url.includes('order=page_index.asc&limit=1'));return json([{object_path:'first',byte_size:head.length,sha256:badHash?'wrong':await digest(head),media_type:'application/pdf',context:{pageStart:1}}]);}
+   return json({itens:[]});
+  }});
+  await b.work();const ai=calls.find(c=>c.url.endsWith('/api/receipt-worker')),finish=JSON.parse(calls.find(c=>c.url.endsWith('/receipt_finish')).opt.body);
+  if(badHash){assert.equal(ai,undefined);assert.equal(finish.p_error,'arquivo_invalido');}else assert.equal(JSON.parse(ai.opt.body).sourceHeader,Buffer.from(head).toString('base64'));
+  assert(!calls.some(c=>/pastas|receipt_commit/.test(c.url)));
+ }
+});

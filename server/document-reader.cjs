@@ -5,6 +5,7 @@ const CURRENCIES = ["BRL","PYG","CLP","USD","EUR","GBP","USDT","USDC"];
 const MODEL = "gpt-6.1-terra";
 const FAST_MODEL = "gpt-6-luna";
 const { accountName, sourceAccount, platformPrompt } = require('./receipt-platforms.cjs');
+const {header,tableLines,parseTable,reconcile,STATEMENT_PROMPT}=require('./statement-table.cjs');
 const object = properties => ({type:"object",additionalProperties:false,properties,required:Object.keys(properties)});
 const string={type:"string"}, number={type:["number","null"]}, strings={type:"array",items:string}, lines={type:"array",items:{type:"integer"}};
 const rowSchema=object({data:string,descricao:string,valor:number,moeda:string,tipo:{type:"string",enum:["despesa","receita",""]},categoria:string,parcela:string,instituicao:string,referencia:string,evidencia:string,incertezas:strings,linhas:lines,cobranca:object({valor:number,moeda:string,origem:{type:'string',enum:['debito_explicito','usd_abaixo_local','unica_moeda','incerta']}}),cashback:object({valor:number,moeda:string})});
@@ -24,12 +25,13 @@ async function sourceLedger(image) {
       const y=t.transform[5],x=t.transform[4];let row=grouped.find(r=>Math.abs(r.y-y)<2.5);
       if(!row){row={y,items:[]};grouped.push(row);}row.items.push({x,text:t.str});
     }
-    const all=grouped.sort((a,b)=>b.y-a.y).map(r=>r.items.sort((a,b)=>a.x-b.x).map(x=>x.text).join(' ').replace(/\s+/g,' ').trim()).filter(Boolean);
+    const positioned=grouped.sort((a,b)=>b.y-a.y);positioned.forEach(r=>r.items.sort((a,b)=>a.x-b.x));
+    const all=positioned.map(r=>r.items.map(x=>x.text).join(' ').replace(/\s+/g,' ').trim());
     if(all.join('\n').length>100000)throw Error('page_too_dense');
     // Includes amounts in summaries and cashback columns: they too must receive
     // an explicit disposition instead of disappearing from the comparison.
     const moneyLines=all.flatMap((s,i)=>/(?:US\$|R\$|\$|₲|€|£|\b(?:USD[CT]?|USDC|USDT|BRL|PYG|Gs\.?|ARS|ETHFI)\b)\s*[+−–-]?\s*[\d.,]+|[\d.,]+\s*(?:USDC|USDT|USD|BRL|PYG|ETHFI)\b/i.test(s)?[i+1]:[]);
-    return {lines:all,moneyLines,text:all.map((s,i)=>`[${i+1}] ${s}`).join('\n'),pdf:true};
+    return {lines:all,positioned,moneyLines:[...new Set([...moneyLines,...tableLines({lines:all})])].sort((a,b)=>a-b),text:all.map((s,i)=>`[${i+1}] ${s}`).join('\n'),pdf:true};
   } finally {await doc.loadingTask.destroy();}
 }
 function prompt(categories,cards,context,review) {
@@ -46,6 +48,7 @@ valor é magnitude positiva, preservando casas decimais e moeda; tipo despesa/re
 SILÊNCIO ÚTIL: incertezas/avisos somente para dúvida material em valor, moeda, data, direção ou completude. Categoria sugerida, cartão não identificado, cashback separado, conversão local ignorada e moeda do débito resolvida pelas regras acima NÃO são avisos. Use Outros e instituição vazia sem pedir intervenção. Dúvida de uma linha fica em incertezas daquela linha, não em avisos da página inteira.
 Categorias permitidas: ${JSON.stringify(categories)}. Contas/cartões: ${JSON.stringify(cards)}. cartao/instituicao só do titular, não banco da contraparte.
 ${platformPrompt(cards)}
+${STATEMENT_PROMPT}
 ESCOPO: apenas esta página/trecho ${JSON.stringify(context)}. Outras páginas NÃO estão faltando neste envio. contagemOperacoes é contagem impressa INEQUÍVOCA do documento inteiro (se houver), incluindo recusadas/cashback conforme o documento; null se não há. Nunca use quantidade de compras como total de operações. completo só true depois de percorrer todas as linhas recebidas. Avisos devem ser específicos; não use avisos genéricos de conferir tudo.`;
 }
 function normalize(raw,ledger,first=null,cards) {
@@ -96,18 +99,21 @@ function canFinishQuick(result) {
     result.excluded.every(r=>r.motivo!=='outro') &&
     (!result.expectedCount||result.expectedCount===result.itens.length+result.excluded.filter(r=>r.operacao!==false&&r.motivo!=='resumo').length);
 }
-async function readPage({image,categories,cards,context,first,mode,timeoutMs=150000},key) {
+async function readPage({image,categories,cards,context,first,mode,sourceHeader,timeoutMs=150000},key) {
   const quick=mode==='quick'&&!first&&image.media_type!=='application/pdf';
   const model=quick?FAST_MODEL:MODEL;
   const ledger=await sourceLedger(image);
+  const reference=sourceHeader?await sourceLedger({media_type:'application/pdf',data:sourceHeader}):null;
+  const statement=parseTable(ledger,reference);
   const media=image.media_type==='application/pdf'?{type:'input_file',filename:'pagina.pdf',file_data:`data:application/pdf;base64,${image.data}`}:{type:'input_image',image_url:`data:${image.media_type};base64,${image.data}`,detail:'high'};
-  const userText=`Texto original numerado, extraído sem IA (pode conter erros de fonte/OCR; a imagem original prevalece):\n${ledger.text||'(imagem sem camada textual)'}\nLinhas monetárias para conferir: ${ledger.moneyLines.join(', ')}.\n${first?'Rascunho da etapa 1, para comparação, sem autoridade: '+JSON.stringify({itens:first.itens,excluded:first.excluded}):'Leia todas as operações.'}`;
+  const userText=`Contexto do cabeçalho da primeira página do MESMO documento: ${JSON.stringify(reference?header(reference):header(ledger))}.\nTexto original numerado, extraído sem IA (pode conter erros de fonte/OCR; a imagem original prevalece):\n${ledger.text||'(imagem sem camada textual)'}\nLinhas monetárias para conferir: ${ledger.moneyLines.join(', ')}.\n${first?'Rascunho da etapa 1, para comparação, sem autoridade: '+JSON.stringify({itens:first.itens,excluded:first.excluded}):'Leia todas as operações.'}`;
   const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+key,'content-type':'application/json'},signal:AbortSignal.timeout(timeoutMs),redirect:'error',body:JSON.stringify({model,store:false,reasoning:{effort:quick?'low':'medium'},max_output_tokens:quick?12000:24000,instructions:prompt(categories,cards,context,!!first),input:[{role:'user',content:[media,{type:'input_text',text:userText}]}],text:{format:{type:'json_schema',name:'pagina_conferida',strict:true,schema}}})});
   if(!r.ok){const e=await r.json().catch(()=>({}));throw Error(e.error?.code==='insufficient_quota'?'saldo_ia':r.status===401?'configuracao_ia':'leitura_indisponivel');}
   const response=await r.json();
   if(response.status!=='completed')throw Error('resposta_incompleta');
   const text=(response.output||[]).flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');
-  const result=normalize(JSON.parse(text),ledger,first,cards);
-  return {...result,model,readingMode:quick?'quick':'full',reviewMode:quick&&canFinishQuick(result)?'automatic':first?'compared':'pending'};
+  const result=normalize(reconcile(JSON.parse(text),statement,categories),ledger,first,cards);
+  if(statement&&!statement.complete){result.verified=false;result.avisos.push('A conferência da coluna Importe com os saldos não fechou. Confira as linhas desta página.');}
+  return {...result,...(statement?.complete?{statementCheck:{source:'ueno_importe',currency:'PYG',rows:statement.rows.length,balanceChecks:statement.balanceChecks}}:{}),model,readingMode:quick?'quick':'full',reviewMode:quick&&canFinishQuick(result)?'automatic':first?'compared':'pending'};
 }
 module.exports={readPage,sourceLedger,normalize,prompt,schema,MODEL,FAST_MODEL,canFinishQuick};

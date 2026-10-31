@@ -69,7 +69,21 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
    if(!r.ok)throw Error('arquivo_indisponivel');
    const bytes=new Uint8Array(await r.arrayBuffer());if(bytes.length!==p.byte_size||await digest(bytes)!==p.sha256)throw Error('arquivo_invalido');
    const token=await workerToken();
-   const body=JSON.stringify({image:{media_type:p.media_type,data:bytesToBase64(bytes)},documentContext:p.context,first:p.first_result,categories:task.categories,cards:task.cards,mode:p.quick?'quick':'full'});
+   let sourceHeader;
+   if(p.media_type==='application/pdf'&&p.context?.pageStart>1&&typeof p.document_id==='string'){
+    // Only the first page of this exact file in this exact private job can
+    // supply header context. It is parsed on the server, never imported again.
+    const refs=await admin('/rest/v1/receipt_job_pages?job_id=eq.'+p.job_id+'&document_id=eq.'+encodeURIComponent(p.document_id)+'&order=page_index.asc&limit=1&select=object_path,byte_size,sha256,media_type,context');
+    const ref=refs[0];
+    if(ref?.context?.pageStart===1&&ref.media_type==='application/pdf'&&ref.byte_size<=196608&&ref.byte_size+p.byte_size<=3150000){
+     const headerFile=await fetcher(url+'/storage/v1/object/'+BUCKET+'/'+ref.object_path,{headers:adminHeaders,signal:AbortSignal.timeout(15000),redirect:'error'});
+     if(!headerFile.ok)throw Error('arquivo_indisponivel');
+     const headerBytes=new Uint8Array(await headerFile.arrayBuffer());
+     if(headerBytes.length!==ref.byte_size||await digest(headerBytes)!==ref.sha256)throw Error('arquivo_invalido');
+     sourceHeader=bytesToBase64(headerBytes);
+    }
+   }
+   const body=JSON.stringify({image:{media_type:p.media_type,data:bytesToBase64(bytes)},documentContext:p.context,...(sourceHeader?{sourceHeader}:{}),first:p.first_result,categories:task.categories,cards:task.cards,mode:p.quick?'quick':'full'});
    if(body.length>4400000)throw Error('page_too_dense');
    const read=await fetcher('https://financas-yg.vercel.app/api/receipt-worker',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body,signal:AbortSignal.timeout(115000),redirect:'error'});
    const result=await read.json();if(!read.ok)throw Error(result.error||'leitura_indisponivel');

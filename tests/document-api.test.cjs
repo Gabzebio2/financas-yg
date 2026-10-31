@@ -17,3 +17,9 @@ test('modo rápido só é permitido para imagem sem rascunho; cliente não escol
   const e=setup();assert.equal((await e.invoke(body)).code,200);assert.equal(e.calls[1].value.mode,want);assert.equal(e.calls[1].value.model,undefined);
  }
 });
+
+test('contexto de cabeçalho só acompanha continuação PDF e respeita limite de tamanho',async()=>{
+ const continuation={...input(),image:{media_type:'application/pdf',data:'YWJj'},documentContext:{pageStart:2,pageEnd:2,totalPages:2},sourceHeader:'YWJj'};
+ const e=setup();assert.equal((await e.invoke(continuation)).code,200);assert.equal(e.calls[1].value.sourceHeader,'YWJj');
+ for(const b of [{...input(),sourceHeader:'YWJj'},{...continuation,sourceHeader:'not base64'},{...continuation,sourceHeader:'Y'.repeat(262145)},{...continuation,documentContext:{pageStart:1,pageEnd:1,totalPages:2}}]){const s=setup();assert.equal((await s.invoke(b)).code,400);assert.equal(s.calls.length,1);}
+});
