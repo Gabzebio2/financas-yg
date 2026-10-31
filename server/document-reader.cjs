@@ -4,6 +4,7 @@
 const CURRENCIES = ["BRL","PYG","CLP","USD","EUR","GBP","USDT","USDC"];
 const MODEL = "gpt-6.1-terra";
 const FAST_MODEL = "gpt-6-luna";
+const { accountName, sourceAccount, platformPrompt } = require('./receipt-platforms.cjs');
 const object = properties => ({type:"object",additionalProperties:false,properties,required:Object.keys(properties)});
 const string={type:"string"}, number={type:["number","null"]}, strings={type:"array",items:string}, lines={type:"array",items:{type:"integer"}};
 const rowSchema=object({data:string,descricao:string,valor:number,moeda:string,tipo:{type:"string",enum:["despesa","receita",""]},categoria:string,parcela:string,instituicao:string,referencia:string,evidencia:string,incertezas:strings,linhas:lines,cobranca:object({valor:number,moeda:string,origem:{type:'string',enum:['debito_explicito','usd_abaixo_local','unica_moeda','incerta']}}),cashback:object({valor:number,moeda:string})});
@@ -44,9 +45,10 @@ Datas: use AAAA-MM-DD da operação, herdando cabeçalho de data claramente apli
 valor é magnitude positiva, preservando casas decimais e moeda; tipo despesa/receita só com evidência. parcela "n/total" apenas se explícita. Categoria permitida, caso ambíguo Outros. Não gere meses futuros.
 SILÊNCIO ÚTIL: incertezas/avisos somente para dúvida material em valor, moeda, data, direção ou completude. Categoria sugerida, cartão não identificado, cashback separado, conversão local ignorada e moeda do débito resolvida pelas regras acima NÃO são avisos. Use Outros e instituição vazia sem pedir intervenção. Dúvida de uma linha fica em incertezas daquela linha, não em avisos da página inteira.
 Categorias permitidas: ${JSON.stringify(categories)}. Contas/cartões: ${JSON.stringify(cards)}. cartao/instituicao só do titular, não banco da contraparte.
+${platformPrompt(cards)}
 ESCOPO: apenas esta página/trecho ${JSON.stringify(context)}. Outras páginas NÃO estão faltando neste envio. contagemOperacoes é contagem impressa INEQUÍVOCA do documento inteiro (se houver), incluindo recusadas/cashback conforme o documento; null se não há. Nunca use quantidade de compras como total de operações. completo só true depois de percorrer todas as linhas recebidas. Avisos devem ser específicos; não use avisos genéricos de conferir tudo.`;
 }
-function normalize(raw,ledger,first=null) {
+function normalize(raw,ledger,first=null,cards) {
   if(!raw||!Array.isArray(raw.itens)||!Array.isArray(raw.excluidos)||raw.itens.length>500||raw.excluidos.length>500)throw Error('invalid_result');
   const warnings=Array.isArray(raw.avisos)?raw.avisos.filter(x=>typeof x==='string').slice(0,30):[];
   const covered=new Set(),used=new Map(),max=ledger.lines.length;
@@ -59,7 +61,7 @@ function normalize(raw,ledger,first=null) {
   const repeats=[...used].filter(([,v])=>v>1).map(([n])=>n);
   if(repeats.length)warnings.push(`Linhas monetárias atribuídas mais de uma vez: ${repeats.join(', ')}.`);
   const itens=raw.itens.map((r,i)=>{
-    r={...r};
+    r={...r,instituicao:sourceAccount(raw.cartao,r.instituicao,cards)};
     // A separate, evidenced debit field prevents the local display amount from
     // winning over the billed amount. Never calculate an exchange rate here.
     const charge=r.cobranca;
@@ -81,7 +83,7 @@ function normalize(raw,ledger,first=null) {
   const items=itens.filter(i=>!accidentalCash.includes(i));
   const verified=raw.completo===true&&!missing.length&&!repeats.length&&!warnings.length&&items.every(i=>!i.revisar.length);
   const firstCount=first?.itens?.length??items.length;
-  return {itens:items,cartao:typeof raw.cartao==='string'?raw.cartao:'',excluded,avisos:[...new Set(warnings)],partial:raw.completo!==true||!!missing.length||!!repeats.length,
+  return {itens:items,cartao:accountName(raw.cartao,cards),excluded,avisos:[...new Set(warnings)],partial:raw.completo!==true||!!missing.length||!!repeats.length,
     coverage:{pagesRead:[1],unreadablePages:raw.completo===true?[]:[1],complete:raw.completo===true&&!missing.length&&!repeats.length},
     verified,firstCount,finalCount:items.length,corrected:!!first&&JSON.stringify(first.itens)!==JSON.stringify(items),
     expectedCount:Number.isInteger(raw.contagemOperacoes)&&raw.contagemOperacoes>0?raw.contagemOperacoes:null,
@@ -105,7 +107,7 @@ async function readPage({image,categories,cards,context,first,mode,timeoutMs=150
   const response=await r.json();
   if(response.status!=='completed')throw Error('resposta_incompleta');
   const text=(response.output||[]).flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');
-  const result=normalize(JSON.parse(text),ledger,first);
+  const result=normalize(JSON.parse(text),ledger,first,cards);
   return {...result,model,readingMode:quick?'quick':'full',reviewMode:quick&&canFinishQuick(result)?'automatic':first?'compared':'pending'};
 }
 module.exports={readPage,sourceLedger,normalize,prompt,schema,MODEL,FAST_MODEL,canFinishQuick};

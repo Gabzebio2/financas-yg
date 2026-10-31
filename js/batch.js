@@ -279,7 +279,8 @@ const Batch = (() => {
     const accounts = [...new Set([...CARDS, ...rows.map((r) => r.account).filter(Boolean)])];
     accSel.innerHTML = '<option value="original">Manter cartão de cada item</option><option value="">(sem cartão)</option>' +
       accounts.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("");
-    accSel.value = chosenAccount != null ? chosenAccount : "original";
+    const commonAccount = rows.length && rows[0].account && rows.every((r) => r.account === rows[0].account) ? rows[0].account : "original";
+    accSel.value = chosenAccount != null ? chosenAccount : commonAccount;
     prepareSelection();
     flagDuplicates();
     renderReviewSummary();
@@ -457,7 +458,9 @@ const Batch = (() => {
   // Coincidência não prova duplicação. Todas as observadas ficam selecionadas
   // até decisão explícita; a revisão é invalidada se qualquer comparação mudar.
   function effectiveRow(r) {
-    const cur = $("#batch-cur").value, account = $("#batch-acc").value;
+    // Automatic preselection describes the rows; only an explicit user choice
+    // overrides them. A later file from another bank must keep its own account.
+    const cur = $("#batch-cur").value, account = chosenAccount == null ? "original" : chosenAccount;
     return { ...r, currency: cur && cur !== "original" ? cur : r.currency,
       account: account && account !== "original" ? account : account === "" && chosenAccount !== null ? "" : r.account };
   }
@@ -665,7 +668,7 @@ const Batch = (() => {
           setStatus('Preparando envio privado. Mantenha o app aberto até terminar o envio…');
           await ReceiptJobs.submit(prepared,rows.map(r=>({...r,documentTask:false})),msg=>{if(contextValid(version))setStatus(msg);});
           if(!contextValid(version))return;
-          close();toast('Enviado! Pode apagar a tela. O resultado aparecerá em Documentos, nesta pasta.');
+          close();toast('Enviado! Pode apagar a tela. Acompanhe o resultado no sino de notificações.');
         }catch(e){if(contextValid(version))setStatus(ReceiptJobs.uploadMessage(e),'err');}
         return;
       }
@@ -907,7 +910,7 @@ const Batch = (() => {
       close();
       toast(`${n} transaç${n === 1 ? "ão adicionada" : "ões adicionadas"} ✔`);
     } catch (error) {
-      toast(backgroundJobId?"Não foi possível confirmar a resposta. Confira Documentos ou tente Incluir novamente; este lote está protegido contra gravação repetida.":"Não foi possível gravar o lote. A prévia foi mantida para tentar novamente.");
+      toast(backgroundJobId?"Não foi possível confirmar a resposta. Confira o sino de notificações ou tente Incluir novamente; este lote está protegido contra gravação repetida.":"Não foi possível gravar o lote. A prévia foi mantida para tentar novamente.");
     } finally {
       committing = false;
       if (version === generation) updateCount();

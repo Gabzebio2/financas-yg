@@ -54,6 +54,7 @@ function harness(options = {}) {
       if (name === "node:crypto") return crypto;
       if (name === "node:async_hooks") return require("node:async_hooks");
       if (name === "../server/whatsapp-core.cjs") return load("server/whatsapp-core.cjs");
+      if (name === "../server/receipt-platforms.cjs") return load("server/receipt-platforms.cjs");
       if (name === "../api/receipt.js" && options.receiptActual) return load("api/receipt.js");
       if (name === "../api/receipt.js") return { async extractSingle(image, categories) { receiptCalls.push({ image, categories: clone(categories) }); if (options.receipt) return options.receipt(image, categories); return { item: { data: "2026-10-23", descricao: "Comprovante sintético", valor: 12.34, moeda: "BRL", direcao: "enviado", categoria: "Mercado", instituicao: "" } }; } };
       throw new Error("Unexpected require: " + name);

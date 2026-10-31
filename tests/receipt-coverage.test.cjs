@@ -18,6 +18,7 @@ function harness(payload, options = {}) {
   const text = typeof payload === "string" ? payload : JSON.stringify(payload);
   const response = (body, status = 200) => ({ status, ok: status >= 200 && status < 300, json: async () => body });
   const environment = vm.createContext({ module: { exports: {} }, console: { error() {} }, AbortSignal,
+    require: require('node:module').createRequire(path.join(__dirname, '../api/receipt.js')),
     setTimeout: callback => { callback(); return 1; },
     process: { env: provider === "gemini" ? { GEMINI_API_KEY: "synthetic-gemini-secret" } : { ANTHROPIC_API_KEY: "synthetic-anthropic-secret" } },
     fetch: async (url, init = {}) => {

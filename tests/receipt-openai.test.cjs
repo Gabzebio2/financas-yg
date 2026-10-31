@@ -25,6 +25,7 @@ function harness(providerBody = completed(), options = {}) {
   const calls = [], timers = [], logs = [];
   const reply = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
   const context = vm.createContext({
+    require: require('node:module').createRequire(path.join(__dirname, '../api/receipt.js')),
     module: { exports: {} },
     process: { env: { OPENAI_API_KEY: SECRET, GEMINI_API_KEY: "synthetic-gemini", ANTHROPIC_API_KEY: "synthetic-anthropic", ...options.env } },
     AbortSignal: { timeout: ms => { timers.push(ms); return { timeout: ms }; } },
@@ -68,6 +69,16 @@ function strictObjects(schema) {
   }
   if (schema.items) strictObjects(schema.items);
 }
+
+test('rota de comprovantes reconhece alias e não troca Ugly Cash pelo destinatário Ether.fi', async () => {
+  const env=harness(completed(document({cartao:'uglycash',itens:[line({instituicao:'Ether.fi'})]})));
+  const result=await env.request({cards:['Ugly Cash','Ether.fi']});
+  assert.equal(result.status,200); assert.equal(result.body.cartao,'Ugly Cash'); assert.equal(result.body.itens[0].instituicao,'Ugly Cash');
+  const singleEnv=harness(completed(single({instituicao:'Ueno Bank'})));
+  const singleResult=await singleEnv.request({multi:false});
+  assert.equal(singleResult.status,200); assert.equal(singleResult.body.instituicao,'Ueno');
+  assert.match(JSON.stringify(env.calls),/Actividad/);
+});
 
 test("OpenAI tem prioridade, PDF usa Responses e schema estrito com cobertura/evidência", async () => {
   const h = harness();

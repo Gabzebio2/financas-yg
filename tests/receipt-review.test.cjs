@@ -14,6 +14,7 @@ const completed = (data = second(), extra = {}) => ({ status: "completed", outpu
 function harness(data = second(), options = {}) {
   const calls = [], timers = [];
   const context = vm.createContext({
+    require: require('node:module').createRequire(path.join(__dirname, '../api/receipt.js')),
     module: { exports: {} }, console: { error() {}, warn() {} },
     process: { env: { OPENAI_API_KEY: "synthetic-secret", ...options.env } },
     AbortSignal: { timeout: ms => { timers.push(ms); return {}; } },

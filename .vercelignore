@@ -50,3 +50,5 @@
 !/api/receipt-worker.js
 !/js/receipt-jobs.js
 !/css/receipt-jobs.css
+
+!/server/receipt-platforms.cjs

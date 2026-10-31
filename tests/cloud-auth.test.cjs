@@ -173,7 +173,7 @@ test('erro após criar envio encaminha só então para Documentos',async()=>{
  const h=harness();await h.ready();h.login();const {receipts}=receiptJobsWithRealCloud(h);
  h.context.fetch=async(_,opt)=>({ok:JSON.parse(opt.body).action==='create',status:JSON.parse(opt.body).action==='create'?200:503,json:async()=>({error:'service_unavailable'})});
  let error;try{await receipts.submit(uploadTask(),[]);}catch(e){error=e;}
- assert.equal(error.receiptJobCreated,true);assert.match(receipts.uploadMessage(error),/em Documentos/);
+ assert.equal(error.receiptJobCreated,true);assert.match(receipts.uploadMessage(error),/sino de notificações/);
 });
 test('trocar de conta durante a criação impede enviar o arquivo na sessão seguinte',async()=>{
  const h=harness();await h.ready();h.login('user-a');const {receipts}=receiptJobsWithRealCloud(h),gate=deferred(),calls=[];

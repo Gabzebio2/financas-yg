@@ -15,6 +15,7 @@ function apiEnvironment(payload, options = {}) {
   const text = typeof payload === 'string' ? payload : JSON.stringify(payload);
   const provider = options.provider || 'gemini';
   const context = vm.createContext({
+    require: require('node:module').createRequire(path.join(app, 'api/receipt.js')),
     module: { exports: {} }, process: { env: provider === 'gemini' ? { GEMINI_API_KEY: 'synthetic-test-key' } : { ANTHROPIC_API_KEY: 'synthetic-test-key' } },
     console: { error() {} }, AbortSignal, setTimeout: (callback) => { callback(); return 1; },
     fetch: async (url, init) => {

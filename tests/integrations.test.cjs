@@ -393,6 +393,7 @@ test('CSV real com decimais brasileiros não multiplica valores por cem nem perd
 function apiEnv(providerReply) {
   let calls = 0;
   const env = environment({
+    require: require('node:module').createRequire(path.join(app, 'api/receipt.js')),
     module: { exports: {} }, process: { env: { GEMINI_API_KEY: 'test-key' } },
     fetch: async (url) => { calls++; return { ok: true, status: 200, json: async () => url.includes('/auth/v1/user') ? { id: 'test-user' } : providerReply }; },
   });

@@ -99,6 +99,35 @@ function select(env, index, checked) { env.node('#batch-tbody').fire('change', {
 function projections(env, on = true) { env.node('#batch-include-generated').checked = on; env.node('#batch-include-generated').fire('change'); }
 function ingest(env, items, card = 'C6', metadata = {}) { env.batch.ingestAiResult(items, card, metadata); env.batch.refreshPreview(); }
 
+test('plataforma única fica pré-selecionada e é salva; lote misto preserva conta por arquivo', () => {
+  const env = setup({CARDS:['Ether.fi','Ueno','Itaú','Ugly Cash']});
+  ingest(env, [item({valor:8.78,moeda:'USD'})], 'Ether.fi');
+  assert.equal(env.node('#batch-acc').value,'Ether.fi');
+  ingest(env, [item({valor:15000,moeda:'PYG',descricao:'Mercado'})], 'Ueno');
+  assert.equal(env.node('#batch-acc').value,'original');
+  env.batch.save(); env.confirm();
+  assert.deepEqual(env.saved().map(r=>[r.account,r.currency,r.amount]),[['Ether.fi','USD',8.78],['Ueno','PYG',15000]]);
+});
+test('conta desconhecida não herda a anterior e escolha manual permanece após nova leitura', () => {
+  const env = setup({CARDS:['Ether.fi','Ueno','Itaú','Ugly Cash']});
+  ingest(env, [item()], 'Ugly Cash');
+  ingest(env, [item({valor:30})], '');
+  assert.equal(env.node('#batch-acc').value,'original');
+  env.node('#batch-acc').value='Itaú'; env.node('#batch-acc').fire('change');
+  ingest(env, [item({valor:40})], 'Ueno');
+  assert.equal(env.node('#batch-acc').value,'Itaú');
+  env.batch.save(); env.confirm(); assert.deepEqual(env.saved().map(r=>r.account),['Itaú','Itaú','Itaú']);
+});
+test('retomar resultado privado mantém seleção da plataforma e inclusão direta após conferência automática', async () => {
+  let transactions;
+  const env = setup({CARDS:['Ugly Cash'],ReceiptJobs:{commit:async(_,txs)=>{transactions=txs;return {transactions:txs};},refresh(){}},Cloud:{getToken:()=> 'session',syncNow:async()=>true}});
+  const data={itens:[item({instituicao:'Ugly Cash'})],cartao:'Ugly Cash',excluded:[],avisos:[],partial:false,verified:true,reviewMode:'automatic',ledger:{monetaryLines:0,accounted:0,missing:[]}};
+  env.batch.open({backgroundJob:{job:{id:'job',status:'ready',extra_rows:[]},pages:[{document_id:'doc',label:'print',context:{pageStart:1,pageEnd:1,totalPages:1},quick:true,first_result:data,result:data}]}});
+  assert.equal(env.node('#batch-acc').value,'Ugly Cash'); assert.equal(env.node('#btn-batch-save').disabled,false);
+  env.batch.save(); await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(env.confirmations.length,0); assert.equal(transactions[0].account,'Ugly Cash');
+});
+
 test('duas leituras automáticas concordantes incluem de uma vez sem enviar histórico local', async () => {
   const originals = [item({ tipo: 'receita', valor: 100, moeda: 'USD' }), item({ valor: 40 })];
   const env = withDocument(originals);
