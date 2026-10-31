@@ -1,4 +1,4 @@
-import {createBackend,sameSecret} from './core.mjs';
+import {createBackend,sameSecret,verifyWake} from './core.mjs';
 const service=JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS')||'{}').default||Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 const pub=JSON.parse(Deno.env.get('SUPABASE_PUBLISHABLE_KEYS')||'{}').default||Deno.env.get('SUPABASE_ANON_KEY');
 const backend=createBackend({url:Deno.env.get('SUPABASE_URL'),serviceKey:service,publicKey:pub});
@@ -16,7 +16,7 @@ Deno.serve(async req=>{
   const body=JSON.parse(raw);
   if(body.action==='work'){
    const workerToken=await backend.workerToken();
-   if(!workerToken||!await sameSecret(req.headers.get('authorization')||'','Bearer '+workerToken))return reply({error:'unauthorized'},401);
+   if(!workerToken||!(await sameSecret(req.headers.get('authorization')||'','Bearer '+workerToken)||await verifyWake(req.headers.get('x-receipt-wake'),workerToken)))return reply({error:'unauthorized'},401);
    EdgeRuntime.waitUntil(backend.work().catch(()=>console.warn('receipt_worker_retry')));
    return reply({accepted:true},202);
   }

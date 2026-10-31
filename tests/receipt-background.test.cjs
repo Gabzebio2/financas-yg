@@ -2,6 +2,12 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const core=()=>import('../supabase/functions/receipt-jobs/core.mjs');
 const user='10000000-0000-4000-8000-000000000001',id='20000000-0000-4000-8000-000000000001';
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
+test('cron wake signatures are scoped, expire and never expose the reusable worker secret',async()=>{
+ const {verifyWake}=await core(),secret='private-secret',stamp=String(Math.floor(Date.now()/1000)),nonce=crypto.randomUUID();
+ const signature=crypto.createHmac('sha256',secret).update('receipt-wake.'+stamp+'.'+nonce).digest('hex'),value=stamp+'.'+nonce+'.'+signature;
+ assert(await verifyWake(value,secret));assert(!value.includes(secret));
+ assert(!await verifyWake(value,'wrong'));assert(!await verifyWake(value,secret,'other-scope'));assert(!await verifyWake(value,secret,'receipt-wake',Date.now()+120000));assert(!await verifyWake(value+'.extra',secret));assert(!await verifyWake(value,''));
+});
 test('background transactions preserve the debit and cashback without counting rewards as income',async()=>{
  const {cleanTransactions}=await core();const got=cleanTransactions([{date:'2026-10-24',desc:'Compra',amount:8.78,type:'despesa',currency:'USD',cashback:{amount:.08,currency:'USD'},id:'forged',user_id:'other',unexpected:'remove'}]);
  assert.equal(got.length,1);assert.equal(got[0].amount,8.78);assert.equal(got[0].currency,'USD');assert.deepEqual(got[0].cashback,{amount:.08,currency:'USD'});assert.equal(got[0].id,undefined);assert.equal(got[0].user_id,undefined);

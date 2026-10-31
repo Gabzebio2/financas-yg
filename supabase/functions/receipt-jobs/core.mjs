@@ -4,6 +4,13 @@ export const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0
 export const names=v=>Array.isArray(v)?v.filter(x=>typeof x==='string'&&x.trim()).slice(0,40).map(x=>x.slice(0,80)):[];
 export async function digest(bytes){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');}
 export async function sameSecret(a,b){if(!a||!b)return false;return await digest(new TextEncoder().encode(a))===await digest(new TextEncoder().encode(b));}
+export async function verifyWake(value,secret,scope='receipt-wake',now=Date.now()){
+ if(!secret||typeof value!=='string')return false;
+ const [stamp,nonce,signature,...extra]=value.split('.');
+ if(extra.length||!/^\d{10}$/.test(stamp)||!uuid(nonce)||!/^[a-f0-9]{64}$/.test(signature)||Math.abs(now/1000-Number(stamp))>60)return false;
+ const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['verify']);
+ return crypto.subtle.verify('HMAC',key,Uint8Array.from(signature.match(/../g),s=>parseInt(s,16)),new TextEncoder().encode(scope+'.'+stamp+'.'+nonce));
+}
 export function bytesToBase64(bytes){let s='';for(let i=0;i<bytes.length;i+=8192)s+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(s);}
 export function cleanTransactions(txs){
  if(!Array.isArray(txs)||!txs.length||txs.length>10000)throw Error('invalid_transactions');
