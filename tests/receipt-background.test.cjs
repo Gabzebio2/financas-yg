@@ -20,6 +20,32 @@ test('owner filter is required before get, commit, upload and retry; expired dra
   await assert.rejects(b.userAction(user,{action,id}),/job_not_found/);assert.equal(calls.length,1);assert(calls[0].includes('user_id=eq.'+user));assert(calls[0].includes('expires_at=gt.'));
  }
 });
+
+test('excluir resultado pronto revoga acesso antes de apagar somente os arquivos daquele envio',async()=>{
+ const {createBackend}=await core();
+ for(const status of ['ready','committed']){
+  const calls=[];const b=createBackend({url:'https://db.test',serviceKey:'private',publicKey:'public',fetcher:async(url,opt={})=>{
+   calls.push({url,opt});if(opt.method==='PATCH'){assert(url.includes('user_id=eq.'+user));assert(url.includes('status=eq.'+status));assert(url.includes('expires_at=gt.'));assert(Date.parse(JSON.parse(opt.body).expires_at)<=Date.now());return json([{id}]);}
+   if(url.includes('receipt_job_pages'))return json([{object_path:user+'/'+id+'/0'}]);
+   if(opt.method==='DELETE')return json([]);return json([{id,status}]);
+  }});
+  assert.deepEqual(await b.userAction(user,{action:'discard',id}),{discarded:true});
+  const mutations=calls.filter(c=>c.opt.method);assert.deepEqual(mutations.map(c=>c.opt.method),['PATCH','DELETE','DELETE']);
+  assert(mutations[1].url.includes('/storage/v1/'));assert.deepEqual(JSON.parse(mutations[1].opt.body).prefixes,[user+'/'+id+'/0']);assert(mutations[2].url.includes('expires_at=lte.'));
+  assert(!calls.some(c=>/pastas|receipt_commit/.test(c.url)));
+ }
+});
+
+test('mudança concorrente de status impede exclusão; falha do Storage fica para limpeza posterior',async()=>{
+ const {createBackend}=await core();
+ for(const conflict of [true,false]){
+  const calls=[];const b=createBackend({url:'https://db.test',serviceKey:'private',publicKey:'public',fetcher:async(url,opt={})=>{
+   calls.push({url,opt});if(opt.method==='PATCH')return json(conflict?[]:[{id}]);if(url.includes('receipt_job_pages'))return json([{object_path:'owner/job/file'}]);if(url.includes('/storage/'))return json({},503);return json([{id,status:'ready'}]);
+  }});
+  if(conflict){await assert.rejects(b.userAction(user,{action:'discard',id}),/job_not_ready/);assert(!calls.some(c=>c.opt.method==='DELETE'));}
+  else {assert.deepEqual(await b.userAction(user,{action:'discard',id}),{discarded:true});assert(!calls.some(c=>c.opt.method==='DELETE'&&c.url.includes('/rest/')));}
+ }
+});
 test('worker only stores drafts; it never calls the financial commit or writes pastas',async()=>{
  const {createBackend,digest}=await core(),bytes=new TextEncoder().encode('image');
  const p={job_id:id,page_index:0,object_path:user+'/'+id+'/0',byte_size:bytes.length,sha256:await digest(bytes),media_type:'image/png',context:{pageStart:1,pageEnd:1,totalPages:1},first_result:null,quick:true,lease_token:id};

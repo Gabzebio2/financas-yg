@@ -49,15 +49,16 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
   const token=await workerToken();if(!token)return;
   await fetcher(url+'/functions/v1/receipt-jobs',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:'{"action":"work"}',signal:AbortSignal.timeout(10000),redirect:'error'});
  }
+ async function removeExpiredJob(id,now){
+   const paths=await admin('/rest/v1/receipt_job_pages?job_id=eq.'+id+'&select=object_path');
+   // Storage API deletes the physical objects; deleting storage.objects via SQL would leak blobs.
+   if(paths.length)await admin('/storage/v1/object/'+BUCKET,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({prefixes:paths.map(p=>p.object_path)})});
+   await admin('/rest/v1/receipt_jobs?id=eq.'+id+'&expires_at=lte.'+now,{method:'DELETE'});
+ }
  async function cleanup(){
   const now=encodeURIComponent(new Date().toISOString());
   const expired=await admin('/rest/v1/receipt_jobs?expires_at=lte.'+now+'&select=id&limit=20');
-  for(const j of expired){
-   const paths=await admin('/rest/v1/receipt_job_pages?job_id=eq.'+j.id+'&select=object_path');
-   // Storage API deletes the physical objects; deleting storage.objects via SQL would leak blobs.
-   if(paths.length)await admin('/storage/v1/object/'+BUCKET,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({prefixes:paths.map(p=>p.object_path)})});
-   await admin('/rest/v1/receipt_jobs?id=eq.'+j.id+'&expires_at=lte.'+now,{method:'DELETE'});
-  }
+  for(const j of expired)await removeExpiredJob(j.id,now);
  }
  async function work(){
   // A cleanup outage must not stop reading; the next cron run retries deletion.
@@ -109,8 +110,15 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
    return {jobs:await rpc('receipt_list',{p_user:user,p_folder:body.folder})};
   }
   const j=await jobFor(user,body.id);
-  if(body.action==='discard'&&['uploading','error','committed'].includes(j.status)){
-   await patch('receipt_jobs','id=eq.'+j.id+'&user_id=eq.'+user,{expires_at:new Date().toISOString()});return {discarded:true};
+  if(body.action==='discard'&&['uploading','ready','error','committed'].includes(j.status)){
+   const now=new Date().toISOString();
+   // Expire atomically before removing files: stale previews cannot commit.
+   // If a concurrent confirmation changed the status, ask for a fresh view.
+   const changed=await patch('receipt_jobs','id=eq.'+j.id+'&user_id=eq.'+user+'&status=eq.'+j.status+'&expires_at=gt.'+encodeURIComponent(now),{expires_at:now});
+   if(!changed?.length)throw Error('job_not_ready');
+   // Once hidden and inaccessible, storage failures are retried by cleanup.
+   await removeExpiredJob(j.id,encodeURIComponent(now)).catch(()=>console.warn('receipt_cleanup_retry'));
+   return {discarded:true};
   }
   if(body.action==='get')return {job:j,pages:await pages(j.id)};
   if(body.action==='upload'){

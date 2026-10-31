@@ -3,7 +3,9 @@
 const ReceiptJobs=(()=>{
  const URL='https://mhgagjhwsjjjwwvopjgu.supabase.co/functions/v1/receipt-jobs';
  let timer=null,version=0,lastOwner=null,lastFolder=null,busy=false,uploading=false;
- let rendered=null;
+ let rendered=null,lastJobs=[];
+ const deleting=new Set();
+ const discardText='Excluir os arquivos deste envio e o resultado da leitura? Você poderá enviar o mesmo documento novamente. Lançamentos já incluídos na pasta serão mantidos.';
  const owner=()=>typeof Cloud!=='undefined'?Cloud.getSyncState().owner:null;
  const folder=()=>typeof Dashboard!=='undefined'?Dashboard.getImportTargetId():null;
  const messages={login_required:'Entre na sua conta para enviar e recuperar documentos.',folder_not_linked:'Sincronize esta pasta com sua conta antes de enviar documentos.',active_job_limit:'Há muitos documentos guardados. Conclua ou descarte os envios anteriores.',job_not_found:'Este documento expirou ou pertence a outra conta.',job_not_ready:'A leitura ainda não terminou. Aguarde o resultado.',retry_unavailable:'Não foi possível retomar. Envie o documento novamente.',upload_incomplete:'O envio não terminou. Mantenha o app aberto durante o envio.',job_too_large:'O lote ultrapassa 100 MB após a preparação. Divida os arquivos.',invalid_transaction:'Confira os campos destacados antes de incluir.',saldo_ia:'A leitura aguarda créditos no serviço de IA.'};
@@ -11,8 +13,10 @@ const ReceiptJobs=(()=>{
  function uploadMessage(e){return message(e)+(e?.receiptJobCreated?' Confira o andamento no sino de notificações antes de reenviar.':' O arquivo não foi enviado para leitura.');}
  async function request(body,context={owner:owner(),folder:folder()}){
   if(!context.owner||owner()!==context.owner)throw Error('login_required');
+  if(folder()!==context.folder)throw Error('context_changed');
   let token=await Cloud.getToken();if(!token)throw Error('login_required');
-  const send=()=>fetch(URL,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body),signal:AbortSignal.timeout(body.action==='upload'?65000:30000)});
+  if(owner()!==context.owner||folder()!==context.folder)throw Error('context_changed');
+  const send=()=>{if(owner()!==context.owner||folder()!==context.folder)throw Error('context_changed');return fetch(URL,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body),signal:AbortSignal.timeout(body.action==='upload'?65000:30000)});};
   let res=await send();
   if(res.status===401){await Cloud.syncNow();if(owner()!==context.owner)throw Error('login_required');const next=await Cloud.getToken();if(next&&next!==token){token=next;res=await send();}}
   const data=await res.json().catch(()=>({}));if(!res.ok)throw Error(data.error||'service_unavailable');
@@ -45,6 +49,7 @@ const ReceiptJobs=(()=>{
   }catch(e){e.receiptJobCreated=created;throw e;}finally{uploading=false;}
  }
  function render(jobs){
+  lastJobs=jobs;
   const panel=document.querySelector('#receipt-jobs');if(!panel)return;
   const pending=jobs.filter(j=>j.status!=='committed').length;
   const bell=document.querySelector('#hero-notifications'),badge=document.querySelector('#receipt-notification-count');
@@ -61,7 +66,7 @@ const ReceiptJobs=(()=>{
   list.innerHTML=jobs.map(j=>{
    const status=j.status==='ready'?'Pronto para conferir e incluir':j.status==='committed'?'Incluído na pasta':j.status==='uploading'?`Envio incompleto · ${j.uploaded}/${j.total_pages} páginas`:j.status==='error'?'Leitura interrompida — o progresso foi preservado':`Leitura ${j.first}/${j.total_pages} · conferência ${j.second}/${j.total_pages}`;
    const buttons=j.status==='ready'?`<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="open">Conferir e incluir</button>`:j.status==='error'&&j.retry_count<3?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="retry">Retomar leitura</button>`:'';
-   const discard=['uploading','error','committed'].includes(j.status)?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="discard">${j.status==='committed'?'Remover documento':'Descartar envio'}</button>`:'';
+   const discard=['uploading','ready','error','committed'].includes(j.status)?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="discard">Excluir documento</button>`:'';
    return `<article class="receipt-job"><div><strong>${escapeHtml(j.label||'Documento')}</strong><p class="${j.status==='ready'?'receipt-ready':''}">${escapeHtml(status)}</p><small>${j.status==='error'&&j.error==='saldo_ia'?'Recarregue os créditos da API e retome a leitura. ':''}Documento disponível até ${escapeHtml(new Date(j.expires_at).toLocaleDateString('pt-BR'))}.</small></div><div class="receipt-job-actions">${buttons}${discard}</div></article>`;
   }).join('')||`<div class="receipt-notifications-empty"><strong>${!owner()?'Entre na sua conta':!folder()?'Abra uma pasta':'Tudo em dia'}</strong>${!owner()?'Conecte sua conta para acompanhar seus documentos privados.':!folder()?'As notificações dos documentos aparecem na pasta em que você os enviou.':'Quando você enviar um comprovante, o andamento e o resultado aparecerão aqui.'}</div>`;
  }
@@ -78,6 +83,16 @@ const ReceiptJobs=(()=>{
   finally{busy=false;if(current===version&&document.visibilityState!=='hidden')timer=setTimeout(refresh,7000);}
  }
  async function commit(id,transactions){return request({action:'commit',id,transactions});}
+ async function discard(id,context={owner:owner(),folder:folder()}){
+  const key=context.owner+':'+id;if(deleting.has(key))throw Error('delete_in_progress');
+  deleting.add(key);
+  try{
+   const result=await request({action:'discard',id},context);if(result.discarded!==true)throw Error('service_unavailable');
+   // Invalidate any list response started before deletion so it cannot restore
+   // the removed notification while a subsequent refresh is in flight.
+   version++;render(lastJobs.filter(j=>j.id!==id));refresh();return result;
+  }finally{deleting.delete(key);}
+ }
  document.addEventListener('DOMContentLoaded',()=>{
   document.querySelector('#hero-notifications')?.addEventListener('click',openNotifications);
   document.querySelector('#receipt-notifications-close')?.addEventListener('click',closeNotifications);
@@ -87,7 +102,14 @@ const ReceiptJobs=(()=>{
    const action=button.dataset.action,id=button.dataset.job;
    try{
     if(action==='open'){const before={owner:owner(),folder:folder()};await Cloud.syncNow({fresh:true});const data=await request({action:'get',id},before);if(data.job.status!=='ready'){await refresh();return;}closeNotifications();Batch.open({title:'Conferir documentos e lançamentos',hideSources:true,backgroundJob:data});}
-    else {await request({action,id});await refresh();}
+    else if(action==='discard'){
+     const context={owner:owner(),folder:folder()};closeNotifications();
+     askConfirm('Excluir documento?',discardText,async()=>{
+      try{await discard(id,context);toast('Documento excluído. Você já pode enviá-lo novamente.');}
+      catch(err){toast(message(err));}
+     });
+    }
+    else if(action==='retry'){await request({action,id});await refresh();}
    }catch(err){toast(message(err));}finally{button.disabled=false;}
   });
   refresh();
@@ -95,5 +117,5 @@ const ReceiptJobs=(()=>{
  document.addEventListener('visibilitychange',refresh);
  document.addEventListener('fyg:cloudstate',refresh);
  window.addEventListener('focus',refresh);window.addEventListener('online',refresh);
- return {submit,refresh,commit,message,uploadMessage};
+ return {submit,refresh,commit,discard,discardText,message,uploadMessage};
 })();

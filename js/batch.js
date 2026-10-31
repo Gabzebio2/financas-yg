@@ -79,6 +79,8 @@ const Batch = (() => {
     $("#batch-preview").inert = false;
     opts = opts || {};
     backgroundJobId = null;
+    $("#btn-batch-delete").classList.add("hidden");
+    $("#btn-batch-delete").disabled = false;
     presetCat = opts.category || null;
     rows = [];
     documentTasks = []; documentExclusions = []; documentFailure = false;
@@ -119,6 +121,7 @@ const Batch = (() => {
 
   function restoreBackgroundJob(payload) {
     backgroundJobId=payload.job.id;
+    $("#btn-batch-delete").classList.remove("hidden");
     rows=Array.isArray(payload.job.extra_rows)?payload.job.extra_rows:[];
     srcSeq=rows.reduce((n,r)=>Math.max(n,Number(r.src)||0),0);
     documentTasks=payload.pages.map(p=>({documentId:p.document_id,label:p.label,part:{documentContext:p.context},quick:p.quick,first:p.first_result,result:p.result,progress:{label:p.label,status:p.result?.partial?'partial':'complete',count:p.result?.itens?.length||0,auditStatus:p.result?.verified?'verified':'attention',message:(p.result?.avisos||[]).join(' ')}}));
@@ -135,6 +138,21 @@ const Batch = (() => {
     reading = false;
     $("#modal-batch").classList.add("hidden");
     rows = [];
+  }
+
+  function discardDocument() {
+    if(!backgroundJobId||reading||committing||!contextValid())return;
+    const id=backgroundJobId,version=generation,context={owner:targetOwner,folder:targetId};
+    askConfirm('Excluir documento?',ReceiptJobs.discardText,async()=>{
+      if(!contextValid(version)||backgroundJobId!==id||committing)return;
+      committing=true;confirmationSeq++;pendingConfirmation=null;
+      $("#btn-batch-delete").disabled=true;updateCount();
+      try{
+        await ReceiptJobs.discard(id,context);
+        if(contextValid(version)){close();toast('Documento excluído. Você já pode enviá-lo novamente.');}
+      }catch(e){if(contextValid(version))setStatus(ReceiptJobs.message(e),'err');}
+      finally{if(version===generation){committing=false;$("#btn-batch-delete").disabled=false;updateCount();}}
+    });
   }
 
   // Botão "Upload do comprovante": abre a lista e processa os arquivos escolhidos
@@ -971,6 +989,7 @@ const Batch = (() => {
       runImport(fromFiles, fs);
     });
     $("#btn-batch-cancel").addEventListener("click", close);
+    $("#btn-batch-delete").addEventListener("click", discardDocument);
     $("#btn-batch-save").addEventListener("click", save);
     $("#btn-batch-retry").addEventListener("click",()=>runImport((_,version)=>processDocumentTasks(version),[]));
     ["pending", "all"].forEach((filter) => $("#batch-filter-" + filter).addEventListener("click", () => { viewFilter = filter; renderPreview(); $("#batch-details").open = true; }));

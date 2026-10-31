@@ -95,6 +95,26 @@ test('erro de confirmação mantém a prévia e permite repetir o mesmo job sem 
  assert.equal(env.node('#modal-batch').classList.contains('hidden'),false);assert.equal(env.savedCount(),0);
  env.batch.save();await new Promise(resolve=>setImmediate(resolve));assert.equal(attempts,2);
 });
+
+test('excluir na conferência exige confirmação, bloqueia inclusão concorrente e libera novo envio',async()=>{
+ let finish;const deleted=[],commits=[];
+ const env=setup({ReceiptJobs:{discardText:'Excluir arquivo e resultado, mantendo lançamentos incluídos.',discard:async id=>{deleted.push(id);await new Promise(resolve=>finish=resolve);return {discarded:true};},commit:async()=>{commits.push(true);},message:()=> 'Erro ao excluir'}});
+ const data={itens:[item()],excluded:[],avisos:[],partial:false,verified:true,reviewMode:'automatic',ledger:{monetaryLines:0,accounted:0,missing:[]}};
+ env.batch.open({backgroundJob:{job:{id:'ready-job',status:'ready',extra_rows:[]},pages:[{document_id:'doc',label:'documento',context:{pageStart:1,pageEnd:1,totalPages:1},result:data}]}});
+ assert.equal(env.node('#btn-batch-delete').classList.contains('hidden'),false);
+ env.node('#btn-batch-delete').click();assert.equal(deleted.length,0);env.cancel();assert.equal(deleted.length,0);
+ env.node('#btn-batch-delete').click();env.confirm();assert.deepEqual(deleted,['ready-job']);assert.equal(env.node('#btn-batch-save').disabled,true);env.batch.save();assert.equal(commits.length,0);
+ finish();await new Promise(resolve=>setImmediate(resolve));assert.equal(env.node('#modal-batch').classList.contains('hidden'),true);
+ env.batch.open();assert.equal(env.node('#btn-batch-delete').classList.contains('hidden'),true);assert.equal(env.savedCount(),0);
+});
+
+test('falha ao excluir mantém prévia utilizável e confirmação antiga não apaga nova leitura',async()=>{
+ let attempts=0;const env=setup({ReceiptJobs:{discardText:'Excluir?',discard:async()=>{attempts++;throw Error('network');},message:()=> 'Erro ao excluir'}});
+ const data={itens:[item()],excluded:[],avisos:[],partial:false,verified:true,reviewMode:'automatic',ledger:{monetaryLines:0,accounted:0,missing:[]}};
+ const opts={backgroundJob:{job:{id:'ready-job',status:'ready',extra_rows:[]},pages:[{document_id:'doc',label:'documento',context:{pageStart:1,pageEnd:1,totalPages:1},result:data}]}};
+ env.batch.open(opts);env.node('#btn-batch-delete').click();env.confirm();await new Promise(resolve=>setImmediate(resolve));assert.equal(env.node('#modal-batch').classList.contains('hidden'),false);assert.equal(env.node('#btn-batch-save').disabled,false);assert.match(env.node('#batch-status').textContent,/Erro ao excluir/);
+ env.node('#btn-batch-delete').click();env.batch.open();env.confirm();assert.equal(attempts,1);
+});
 function select(env, index, checked) { env.node('#batch-tbody').fire('change', { dataset: { i: String(index) }, checked, classList: { contains: () => true }, closest: () => ({ classList: { toggle() {} } }) }); }
 function projections(env, on = true) { env.node('#batch-include-generated').checked = on; env.node('#batch-include-generated').fire('change'); }
 function ingest(env, items, card = 'C6', metadata = {}) { env.batch.ingestAiResult(items, card, metadata); env.batch.refreshPreview(); }
