@@ -18,13 +18,18 @@ module.exports = async (req, res) => {
     let payload;
     try { payload = JSON.parse(raw.toString("utf8")); } catch { return res.status(400).json({ error: "invalid_json" }); }
     const events = wa.messageEvents(payload), deadline = Date.now() + 50000;
+    if (events.length) console.info("whatsapp.received_events", events.length);
     // Claims are durable before inference; Meta retries resume expired claims.
     let failed = false, cursor = 0;
     const worker = async () => {
       while (cursor < events.length) {
         if (Date.now() > deadline - 35000) { failed = true; return; }
         const event = events[cursor++];
-        try { await wa.withBudget(deadline, () => wa.handleEvent(event)); } catch { failed = true; }
+        try { await wa.withBudget(deadline, () => wa.handleEvent(event)); }
+        catch (error) {
+          console.error("whatsapp.processing_failed", error instanceof wa.Failure ? error.code : "unexpected");
+          failed = true;
+        }
       }
     };
     await Promise.all([worker(), worker()]);

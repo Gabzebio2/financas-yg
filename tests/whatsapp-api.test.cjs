@@ -18,7 +18,7 @@ const PHONE = "123456789012345", SENDER = "+15550001111";
 const clone = value => JSON.parse(JSON.stringify(value));
 const response = (data, status = 200) => ({ status, ok: status >= 200 && status < 300, json: async () => data });
 const tx = (extra = {}) => ({ date: "2026-10-23", desc: "Compra sintética", amount: 12.34, currency: "BRL", type: "despesa", category: "Mercado", account: "", ...extra });
-const claim = (extra = {}) => ({ accepted: true, claimed: true, draftId: DRAFT, leaseToken: LEASE, categories: [{ name: "Mercado" }, { name: "Outros" }], timeZone: "America/Sao_Paulo", ...extra });
+const claim = (extra = {}) => ({ accepted: true, claimed: true, revision: 1, draftId: DRAFT, leaseToken: LEASE, categories: [{ name: "Mercado" }, { name: "Outros" }], timeZone: "America/Sao_Paulo", ...extra });
 const inbox = (extra = {}) => ({ draft_id: DRAFT, folder_id: "folder123", sender_e164: SENDER, phone_number_id: PHONE, received_at: "2026-10-23T15:00:00Z", candidate: tx(), warnings: [], can_confirm: true, revision: 2, notified_revision: 0, lease_token: null, status: "draft", ...extra });
 const message = (extra = {}) => ({ from: SENDER.slice(1), id: "wamid.synthetic.1", timestamp: String(Math.floor(Date.now() / 1000)), type: "text", text: { body: "Gastei 12,34 BRL no mercado em 23/10/2026" }, ...extra });
 const payload = (messages = [message()]) => ({ object: "whatsapp_business_account", entry: [{ changes: [{ field: "messages", value: { messaging_product: "whatsapp", metadata: { phone_number_id: PHONE }, messages } }] }] });
@@ -40,7 +40,7 @@ async function requestStream(chunks, restored) {
 
 function harness(options = {}) {
   const calls = [], modules = new Map(), receiptCalls = [], env = { ...envDefaults(), ...options.env };
-  const context = vm.createContext({ Buffer, URL, AbortSignal, Intl, setTimeout: options.setTimeout || setTimeout, clearTimeout: options.clearTimeout || clearTimeout, console: { error() {} }, process: { env },
+  const context = vm.createContext({ Buffer, URL, AbortSignal, Intl, setTimeout: options.setTimeout || setTimeout, clearTimeout: options.clearTimeout || clearTimeout, console: { error() {}, info() {} }, process: { env },
     fetch: async (url, init = {}) => {
       const call = { url: String(url), ...init, json: init.body ? JSON.parse(init.body) : undefined }; calls.push(call);
       if (options.fetch) return options.fetch(call, calls);
@@ -212,7 +212,12 @@ test("mensagem válida produz rascunho revisável; nunca cria transação sem de
   assert.equal(finish.json.p_transaction.currency, "USDT"); assert.equal(finish.json.p_transaction.amount, 1.234567);
   assert(finish.json.p_warnings.some(s => s.includes("Data de envio"))); assert.equal(finish.json.p_error, null);
   assert.equal(byPath(e, "/rpc/wa_decide").length, 0); assert.equal(byPath(e, "/pastas").length, 0);
-  const notice = byPath(e, "/messages")[0].json;
+  const [ack, preview] = byPath(e, "/messages");
+  assert.equal(ack.json.to, SENDER.slice(1));
+  assert.match(ack.json.text.body, /Recebi!.*confirmar/);
+  assert(e.calls.indexOf(ack) > e.calls.indexOf(byPath(e, "/rpc/wa_ingest")[0]));
+  assert(e.calls.indexOf(ack) < e.calls.indexOf(byPath(e, "generativelanguage")[0]));
+  const notice = preview.json;
   assert.equal(notice.recipient_type, "individual"); assert.equal(notice.to, SENDER.slice(1));
   assert.equal(notice.interactive.action.buttons[0].reply.id, `confirm:${DRAFT}:2`);
   assert.equal(notice.interactive.action.buttons[1].reply.id, `reject:${DRAFT}:2`);
@@ -226,6 +231,17 @@ test("duplicata durable não repete IA nem finish; item em processamento pede re
   assert.equal(byPath(e, "/rpc/wa_ingest").length, 2); assert.equal(byPath(e, "generativelanguage").length, 0); assert.equal(byPath(e, "/rpc/wa_finish_draft").length, 0);
   const busy = harness({ fetch: coreFetch({ claim: claim({ claimed: false, reason: "processing" }) }) });
   assert.equal((await busy.request("whatsapp")).status, 503); assert.equal(busy.calls.length, 1);
+});
+
+test("falha no aviso inicial não impede a prévia, e retomada não repete o aviso", async () => {
+  for (const revision of [1, 3]) {
+    const base = coreFetch({ claim: claim({ revision }) });
+    const e = harness({ fetch: call => call.json?.type === "text" && call.url.endsWith("/messages") ? response({ error: { code: 131000 } }, 503) : base(call) });
+    assert.equal((await e.request("whatsapp")).status, 200);
+    assert.equal(byPath(e, "/messages").filter(c => c.json.type === "text").length, revision === 1 ? 1 : 0);
+    assert.equal(byPath(e, "/messages").filter(c => c.json.type === "interactive").length, 1);
+    assert.equal(byPath(e, "/rpc/wa_finish_draft").length, 1);
+  }
 });
 
 test("duplicata de outra origem não reenvia conteúdo privado do rascunho", async () => {
@@ -254,7 +270,8 @@ test("falha transitória de IA grava erro com lease antes do retry e não notifi
   const result = await e.request("whatsapp"); assert.equal(result.status, 503);
   const finished = byPath(e, "/rpc/wa_finish_draft")[0];
   assert.equal(finished.json.p_error, "processing_unavailable"); assert.equal(finished.json.p_lease_token, LEASE);
-  assert.deepEqual(finished.json.p_transaction, {}); assert.equal(byPath(e, "/messages").length, 0);
+  assert.deepEqual(finished.json.p_transaction, {}); assert.equal(byPath(e, "/messages").length, 1);
+  assert.match(byPath(e, "/messages")[0].json.text.body, /^Recebi!/);
   assert(!JSON.stringify(result).includes("synthetic-private-provider-details"));
 });
 
@@ -262,7 +279,7 @@ test("resposta IA nula vira revisão incompleta, não ciclo de retry", async () 
   const e = harness({ fetch: coreFetch({ parsed: null, rows: [inbox({ can_confirm: false, candidate: {}, warnings: ["Informe dados completos"] })] }) });
   assert.equal((await e.request("whatsapp")).status, 200);
   assert.equal(byPath(e, "/rpc/wa_finish_draft")[0].json.p_error, null);
-  assert.equal(byPath(e, "/messages")[0].json.type, "text");
+  assert.match(byPath(e, "/messages")[1].json.text.body, /Ainda não registrei/);
 });
 
 test("validação recusa campos críticos truncados, datas impossíveis e valores não monetários", () => {
@@ -305,6 +322,7 @@ test("mídia autorizada verifica bytes/hash e entrega comprovante ao parser exis
   } });
   assert.equal((await e.request("whatsapp", { payload: payload([message({ type: "image", image: { id: "987654321" } })]) })).status, 200);
   assert.equal(e.receiptCalls.length, 1); assert.equal(e.receiptCalls[0].image.data, media.toString("base64"));
+  assert(e.calls.indexOf(byPath(e, "/messages")[0]) < e.calls.indexOf(byPath(e, "https://lookaside.fbsbx.com/media")[0]));
   assert.equal(byPath(e, "/rpc/wa_finish_draft")[0].json.p_transaction.type, "despesa");
   assert.equal(e.calls.find(c => c.url === "https://lookaside.fbsbx.com/media").redirect, "error");
 });
@@ -318,7 +336,8 @@ test("mídia com hash ou quantidade de bytes divergente não chega à IA", async
       return base(c);
     } });
     assert.equal((await e.request("whatsapp", { payload: payload([message({ type: "image", image: { id: "987654321" } })]) })).status, 503);
-    assert.equal(e.receiptCalls.length, 0); assert.equal(byPath(e, "/messages").length, 0);
+    assert.equal(e.receiptCalls.length, 0); assert.equal(byPath(e, "/messages").length, 1);
+    assert.match(byPath(e, "/messages")[0].json.text.body, /^Recebi!/);
     assert.equal(byPath(e, "/rpc/wa_finish_draft")[0].json.p_error, "processing_unavailable");
   }
 });

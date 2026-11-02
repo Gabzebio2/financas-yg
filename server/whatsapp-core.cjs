@@ -148,7 +148,11 @@ async function graph(path, body) {
     ...(body ? { body: JSON.stringify(body) } : {}), signal: timeout(7000), redirect: "error",
   });
   const data = await jsonResponse(response);
-  if (!response.ok) fail("whatsapp_unavailable");
+  if (!response.ok) {
+    const code = data?.error?.code;
+    console.error("whatsapp.graph_error", response.status, Number.isSafeInteger(code) ? code : null);
+    fail("whatsapp_unavailable");
+  }
   return data;
 }
 function mediaURL(value) {
@@ -232,8 +236,22 @@ async function handleEvent(event) {
   const input = message.type === "text" ? message.text?.body : media?.caption || "";
   if (typeof input !== "string" || input.length > 10000) return;
   const claim = await rpc("wa_ingest", { p_phone_number_id: phone, p_message_id: message.id, p_sender_e164: sender, p_message_kind: message.type, p_message_text: input, p_message_at: at, p_media: media ? { id: text(media.id, 32), mime_type: text(media.mime_type, 100) } : null });
-  if (!claim?.accepted) return;
+  if (!claim?.accepted) {
+    const reason = ["sender_not_allowed","channel_disabled","daily_limit","folder_not_found","message_mismatch"].includes(claim?.reason) ? claim.reason : "not_accepted";
+    console.info("whatsapp.ingest", reason);
+    return;
+  }
   if (!claim.claimed) { if (claim.reason === "processing") fail("processing"); await notifyDraft(event, claim.draftId); return; }
+  // Revision 1 belongs only to the first durable claim. A redelivery or
+  // a worker reclaiming an expired lease must not announce the receipt again.
+  if (claim.revision === 1 && !event.selfChat && message.type !== "audio") {
+    try {
+      await sendText(event, "Recebi! Vou ler os dados e te enviar uma prévia. Quando você confirmar, salvo o lançamento na CASINHA.");
+    } catch {
+      console.error("whatsapp.receipt_notice_failed");
+      // A failed reply must not prevent the draft from reaching the app.
+    }
+  }
   const categories = (Array.isArray(claim.categories) ? claim.categories : []).map(c => typeof c === "string" ? c : c?.name).filter(c => typeof c === "string" && c.length <= 40).slice(0, 100);
   if (!categories.length) categories.push("Outros");
   let result, retry = false, errorCode = null;
