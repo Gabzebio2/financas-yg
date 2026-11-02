@@ -40,7 +40,7 @@ async function requestStream(chunks, restored) {
 
 function harness(options = {}) {
   const calls = [], modules = new Map(), receiptCalls = [], env = { ...envDefaults(), ...options.env };
-  const context = vm.createContext({ Buffer, URL, AbortSignal, Intl, setTimeout: options.setTimeout || setTimeout, clearTimeout: options.clearTimeout || clearTimeout, console: { error() {}, info() {} }, process: { env },
+  const context = vm.createContext({ Buffer, URL, AbortSignal, Intl, setTimeout: options.setTimeout || setTimeout, clearTimeout: options.clearTimeout || clearTimeout, console: options.logger || { error() {}, info() {}, warn() {} }, process: { env },
     fetch: async (url, init = {}) => {
       const call = { url: String(url), ...init, json: init.body ? JSON.parse(init.body) : undefined }; calls.push(call);
       if (options.fetch) return options.fetch(call, calls);
@@ -89,6 +89,22 @@ function coreFetch(options = {}) {
   };
 }
 const byPath = (e, match) => e.calls.filter(c => c.url.includes(match));
+
+test("diagnóstico de entrega mantém telefones, textos e identificadores fora dos logs", async () => {
+  const lines = [];
+  const record = (...args) => lines.push(clone(args));
+  const e = harness({ logger: { info: record, warn: record, error: record } });
+  const sample = payload([message({ from: undefined })]);
+  sample.entry[0].changes[0].value.statuses = [{
+    status: "failed", recipient_id: SENDER, errors: [{ code: 131000, message: "Detalhe privado" }]
+  }];
+  assert.equal((await e.request("whatsapp", { payload: sample })).status, 200);
+  assert.equal(e.calls.length, 0);
+  assert.deepEqual(lines, [
+    ["whatsapp.delivery_failed", 131000],
+    ["whatsapp.signed_delivery", { incoming: 1, statuses: 1, echoes: 0, noPhone: 1, eligible: 0 }]
+  ]);
+});
 
 test("chave exclusiva do WhatsApp basta para o backend e nunca é enviada à IA ou ao Graph", async () => {
   const actions = [], base=coreFetch();
