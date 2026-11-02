@@ -90,6 +90,23 @@ function coreFetch(options = {}) {
 }
 const byPath = (e, match) => e.calls.filter(c => c.url.includes(match));
 
+test("chave exclusiva do WhatsApp basta para o backend e nunca é enviada à IA ou ao Graph", async () => {
+  const actions = [], base=coreFetch();
+  const e=harness({env:{WHATSAPP_BRIDGE_SECRET:"synthetic-bridge",SUPABASE_SERVICE_ROLE_KEY:""},fetch:async c=>{
+    if(c.url.endsWith("/functions/v1/whatsapp-bridge")){
+      assert.equal(c.headers.authorization,"Bearer synthetic-bridge");actions.push(c.json.op);
+      if(c.json.op==="wa_ingest")return response({result:claim()});
+      if(c.json.op==="notice")return response({result:[inbox()]});
+      return response({result:null});
+    }
+    assert(!JSON.stringify(c.headers).includes("synthetic-bridge"));
+    return base(c);
+  }});
+  assert.equal((await e.request("whatsapp")).status,200);
+  assert.deepEqual(actions,["wa_ingest","wa_finish_draft","notice","notified"]);
+  assert.equal(byPath(e,"/rest/v1/").length,0);
+});
+
 test("assinatura depende dos bytes exatos; webhook nunca lê req.body", async () => {
   const e = harness({ fetch: coreFetch({ claim: { accepted: false } }) });
   const raw = Buffer.from("  " + JSON.stringify(payload()) + "\n");

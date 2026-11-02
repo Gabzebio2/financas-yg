@@ -22,7 +22,7 @@ const fail = (code, status) => { throw new Failure(code, status); };
 const plain = v => !!v && typeof v === "object" && !Array.isArray(v);
 const text = (v, max = 120) => typeof v === "string" ? v.trim().slice(0, max) : "";
 const mask = v => "•••• " + String(v || "").replace(/\D/g, "").slice(-4);
-const ready = (env = process.env) => !!(env.SUPABASE_SERVICE_ROLE_KEY && env.WHATSAPP_APP_SECRET && env.WHATSAPP_VERIFY_TOKEN && env.WHATSAPP_ACCESS_TOKEN && /^v\d{1,3}\.0$/.test(env.WHATSAPP_GRAPH_VERSION || "") && (env.GEMINI_API_KEY || env.ANTHROPIC_API_KEY));
+const ready = (env = process.env) => !!((env.WHATSAPP_BRIDGE_SECRET || env.SUPABASE_SERVICE_ROLE_KEY) && env.WHATSAPP_APP_SECRET && env.WHATSAPP_VERIFY_TOKEN && env.WHATSAPP_ACCESS_TOKEN && /^v\d{1,3}\.0$/.test(env.WHATSAPP_GRAPH_VERSION || "") && (env.GEMINI_API_KEY || env.ANTHROPIC_API_KEY));
 function same(a, b) {
   const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || ""));
   return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
@@ -73,7 +73,24 @@ async function rest(path, { token, method = "GET", body, service = false } = {})
   }
   return data;
 }
-const rpc = (name, body) => rest("/rest/v1/rpc/" + name, { method: "POST", body, service: true });
+// On hosted production the project-wide Supabase key never leaves Supabase.
+// Only the named WhatsApp operations are available to this credential.
+async function serviceCall(op, args, direct) {
+  const key = process.env.WHATSAPP_BRIDGE_SECRET;
+  if (!key) return direct();
+  const response = await fetch(SUPABASE + "/functions/v1/whatsapp-bridge", {
+    method: "POST", headers: { authorization: "Bearer " + key, "content-type": "application/json" },
+    body: JSON.stringify({ op, args }), signal: timeout(9000), redirect: "error",
+  });
+  const data = await jsonResponse(response);
+  if (!response.ok || !plain(data) || !Object.hasOwn(data, "result")) {
+    const allowed = ["draft_revision_conflict","draft_already_decided","draft_not_ready","draft_not_found","category_not_found","actor_not_allowed","sender_not_allowed","channel_disabled","folder_not_found","stale_lease"];
+    if (allowed.includes(data?.error)) fail(data.error, data.error.includes("not_allowed") ? 403 : 409);
+    fail("database_unavailable");
+  }
+  return data.result;
+}
+const rpc = (name, body) => serviceCall(name, body, () => rest("/rest/v1/rpc/" + name, { method: "POST", body, service: true }));
 async function authenticate(req) {
   const header = req.headers?.authorization;
   if (typeof header !== "string" || !/^Bearer \S+$/.test(header) || header.length > 12000) fail("login_required", 401);
@@ -170,10 +187,11 @@ async function send(event, body) {
 }
 const sendText = (event, body) => send(event, { type: "text", text: { body: body.slice(0, 4000), preview_url: false } });
 async function notifyDraft(event, id) {
-  const rows = await rest("/rest/v1/whatsapp_inbox?draft_id=eq." + encodeURIComponent(id) + "&select=draft_id,status,revision,candidate,warnings,can_confirm,phone_number_id,sender_e164,lease_token,notified_revision", { service: true });
+  const scope = { id, phone: event.phone, sender: event.sender };
+  const rows = await serviceCall("notice", scope, () => rest("/rest/v1/whatsapp_inbox?draft_id=eq." + encodeURIComponent(id) + "&select=draft_id,status,revision,candidate,warnings,can_confirm,phone_number_id,sender_e164,lease_token,notified_revision", { service: true }));
   const item = rows?.[0];
   if (!item || item.phone_number_id !== event.phone || item.sender_e164 !== event.sender || item.lease_token || !["draft", "error"].includes(item.status) || item.notified_revision >= item.revision) return;
-  const markNotified = () => rest("/rest/v1/whatsapp_inbox?draft_id=eq." + encodeURIComponent(id) + "&revision=eq." + item.revision, { service: true, method: "PATCH", body: { notified_revision: item.revision } });
+  const markNotified = () => serviceCall("notified", { ...scope, revision: item.revision }, () => rest("/rest/v1/whatsapp_inbox?draft_id=eq." + encodeURIComponent(id) + "&revision=eq." + item.revision, { service: true, method: "PATCH", body: { notified_revision: item.revision } }));
   const tx = item.candidate;
   if (!item.can_confirm || !canConfirm(tx)) { if (await sendText(event, "Ainda não registrei este item. " + (item.warnings || []).slice(0, 3).join(" ") + "\nConfira ou rejeite o rascunho no app e envie novamente com os dados completos.\n" + SITE)) await markNotified(); return; }
   const summary = `${tx.type === "receita" ? "Receita" : "Despesa"}: ${tx.amount} ${tx.currency}\n${tx.desc}\nData: ${tx.date}\nCategoria: ${tx.category}${tx.account ? "\nConta: " + tx.account : ""}\n\nConfira antes de salvar na CASINHA. ${item.warnings?.length ? item.warnings.join(" ") : ""}`;
