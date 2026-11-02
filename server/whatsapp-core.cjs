@@ -120,13 +120,22 @@ function messageEvents(payload) {
   const messages = [];
   for (const entry of Array.isArray(payload.entry) ? payload.entry : []) for (const change of Array.isArray(entry?.changes) ? entry.changes : []) {
     const value = change?.value, phone = value?.metadata?.phone_number_id;
-    if (change.field !== "messages" || value?.messaging_product !== "whatsapp" || !ID.test(phone || "")) continue;
-    for (const message of Array.isArray(value.messages) ? value.messages : []) {
+    const echo = change.field === "smb_message_echoes";
+    if ((!echo && change.field !== "messages") || value?.messaging_product !== "whatsapp" || !ID.test(phone || "")) continue;
+    const display = String(value?.metadata?.display_phone_number || "");
+    const self = /^\+?[\d ()-]+$/.test(display) ? display.replace(/\D/g, "") : "";
+    const batch = echo ? value.message_echoes : value.messages;
+    for (const message of Array.isArray(batch) ? batch : []) {
       const sender = "+" + String(message?.from || "");
       if (!E164.test(sender) || typeof message?.id !== "string" || message.id.length > 512 || !message.id || message.group_id || message.context?.group_id) continue;
+      const selfChat = !!self && message.from === self;
+      // Coexistence echoes cover outgoing conversations. Drop every echo except
+      // the phone's own self-chat BEFORE ingest, media downloads or inference.
+      if (echo && (!selfChat || message.to !== self || !["image","text","document"].includes(message.type))) continue;
+      if (selfChat && (message.to != null && message.to !== self || message.type === "interactive")) continue;
       const timestamp = Number(message.timestamp) * 1000;
       if (!Number.isFinite(timestamp) || timestamp < Date.now() - 8 * 86400000 || timestamp > Date.now() + 300000) continue;
-      messages.push({ phone, sender, message, at: new Date(timestamp).toISOString() });
+      messages.push({ phone, sender, message, at: new Date(timestamp).toISOString(), ...(selfChat ? { selfChat: true } : {}) });
     }
   }
   if (messages.length > 100) fail("batch_too_large", 413);
@@ -181,12 +190,14 @@ async function extractText(input, categories, at, timeZone) {
   try { return JSON.parse(String(raw).replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch { fail("ai_unavailable"); }
 }
 async function send(event, body) {
+  if (event.selfChat) return false; // Cloud API rejects sending to its own number (131021).
   if (Date.now() - Date.parse(event.at) > 23 * 3600000) return false;
   await graph(event.phone + "/messages", { messaging_product: "whatsapp", recipient_type: "individual", to: event.sender.slice(1), ...body });
   return true;
 }
 const sendText = (event, body) => send(event, { type: "text", text: { body: body.slice(0, 4000), preview_url: false } });
 async function notifyDraft(event, id) {
+  if (event.selfChat) return; // The owner confirms this draft inside the app.
   const scope = { id, phone: event.phone, sender: event.sender };
   const rows = await serviceCall("notice", scope, () => rest("/rest/v1/whatsapp_inbox?draft_id=eq." + encodeURIComponent(id) + "&select=draft_id,status,revision,candidate,warnings,can_confirm,phone_number_id,sender_e164,lease_token,notified_revision", { service: true }));
   const item = rows?.[0];

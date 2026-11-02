@@ -122,7 +122,7 @@ const WhatsApp = (() => {
     el("wa-feedback").classList.toggle("hidden", !feedback);
     const channel = data?.channel;
     el("wa-channel").classList.toggle("hidden", !channel);
-    el("wa-channel").innerHTML = channel ? `<dl><dt>Pasta vinculada</dt><dd>${esc(channel.folderName || "Aguardando vínculo")}</dd></dl><dl><dt>Número de teste</dt><dd>${esc(channel.testNumber || "Aguardando configuração")}</dd></dl><dl><dt>Remetentes autorizados</dt><dd>${esc(channel.senders.length ? channel.senders.join(", ") : "Aguardando autorização")}</dd></dl>` : "";
+    el("wa-channel").innerHTML = channel ? `<dl><dt>Pasta vinculada</dt><dd>${esc(channel.folderName || "Aguardando vínculo")}</dd></dl>${channel.testNumber ? `<dl><dt>Número de destino</dt><dd>${esc(channel.testNumber)}</dd></dl>` : ""}<dl><dt>Remetentes autorizados</dt><dd>${esc(channel.senders.length ? channel.senders.join(", ") : "Aguardando autorização")}</dd></dl>` : "";
     el("wa-webhook-wrap").classList.toggle("hidden", !data?.webhookUrl);
     el("wa-webhook").value = data?.webhookUrl || "";
   }

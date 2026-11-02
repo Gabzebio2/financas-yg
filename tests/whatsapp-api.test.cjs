@@ -187,6 +187,23 @@ test("grupos, mensagens antigas/futuras e payloads estranhos não chegam ao inge
   assert.equal((await e.request("whatsapp", { payload: payload(Array.from({ length: 101 }, (_, i) => message({ id: "synthetic." + i }))) })).status, 413); assert.equal(e.calls.length, 0);
 });
 
+test("conversa consigo: aceita entrada/eco apenas do próprio telefone e não responde a si mesmo", async()=>{
+  const self=SENDER.slice(1);
+  for (const field of ["messages","smb_message_echoes"]){
+    const e=harness({fetch:coreFetch()});
+    const pl=payload([]), change=pl.entry[0].changes[0];change.field=field;
+    change.value.metadata.display_phone_number=SENDER;
+    change.value[field==="messages"?"messages":"message_echoes"]=[message({to:self})];
+    assert.equal((await e.request("whatsapp",{payload:pl})).status,200);
+    assert.equal(byPath(e,"/rpc/wa_ingest").length,1);assert.equal(byPath(e,"/rpc/wa_finish_draft").length,1);
+    assert.equal(byPath(e,"/messages").length,0);assert.equal(byPath(e,"/rpc/wa_decide").length,0);
+  }
+  for(const change of [{from:self,to:"15550009999"},{from:"15550009999",to:self},{from:self},{from:self,to:self,group_id:"group"},{from:self,to:self,type:"interactive"}]){
+    const e=harness();const pl=payload([]), ch=pl.entry[0].changes[0];ch.field="smb_message_echoes";ch.value.metadata.display_phone_number=SENDER;
+    ch.value.message_echoes=[message(change)];assert.equal((await e.request("whatsapp",{payload:pl})).status,200);assert.equal(e.calls.length,0);
+  }
+});
+
 test("mensagem válida produz rascunho revisável; nunca cria transação sem decisão", async () => {
   const e = harness({ fetch: coreFetch({ parsed: tx({ currency: "USDT", amount: 1.234567, dateAssumed: true }) }) });
   assert.equal((await e.request("whatsapp")).status, 200);

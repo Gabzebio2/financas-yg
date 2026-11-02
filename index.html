@@ -147,14 +147,14 @@
         <div class="wa-status-row"><p id="wa-status" role="status" aria-live="polite">Entre na conta do app para consultar o piloto.</p><button type="button" class="btn btn-ghost btn-sm" id="wa-refresh">Atualizar</button></div>
         <div id="wa-channel" class="wa-channel hidden"></div>
         <details class="wa-guide" id="wa-guide" open>
-          <summary>Preparar o piloto com a Meta</summary>
+          <summary>Como registrar pelo WhatsApp</summary>
           <ol>
-            <li><strong>Separe o número de teste.</strong> No painel da Meta, abra o aplicativo e a configuração do WhatsApp.</li>
-            <li><strong>Autorize os dois remetentes.</strong> Cadastre os números do piloto na Meta e vincule-os à pasta CASINHA nesta integração.</li>
-            <li><strong>Aguarde a ativação.</strong> Quando o status indicar recebimento ativo, envie uma mensagem de teste de um remetente autorizado.</li>
+            <li><strong>Use um dos números autorizados.</strong> Somente as mensagens desses contatos podem gerar lançamentos na pasta vinculada.</li>
+            <li><strong>Envie uma operação por mensagem.</strong> Escreva o que pagou ou recebeu, com o valor e a moeda, ou envie uma foto do comprovante.</li>
+            <li><strong>Se enviou para si mesmo:</strong> confira aqui os rascunhos que a Meta entregar. O WhatsApp não envia uma resposta automática ao próprio número.</li>
             <li><strong>Confira antes de incluir.</strong> As mensagens recebidas aparecem para revisão. Data, valor, moeda e categoria precisam estar corretos antes da confirmação.</li>
           </ol>
-          <p id="wa-guide-note">O piloto começa com confirmação para cada lançamento. A conexão ainda precisa ser concluída antes de receber mensagens.</p>
+          <p id="wa-guide-note">Os lançamentos são salvos na pasta somente após sua confirmação.</p>
           <a class="wa-meta-link" href="https://developers.facebook.com/apps/" target="_blank" rel="noopener noreferrer">Abrir painel da Meta <span aria-hidden="true">↗</span><span class="sr-only"> (abre outra aba)</span></a>
           <div class="wa-webhook hidden" id="wa-webhook-wrap"><label for="wa-webhook">Endereço de recebimento para a configuração da Meta</label><input id="wa-webhook" type="text" readonly spellcheck="false" autocomplete="off"><p>As credenciais ficam no servidor. Não cole tokens ou chaves aqui.</p></div>
         </details>
