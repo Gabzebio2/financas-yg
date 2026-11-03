@@ -521,6 +521,24 @@ test('agenda separa vencimentos pelo dia local e deixa o histórico de pagamento
   assert.match(board,/Contas pagas \(1\)/);assert.match(board,/3 contas em aberto/);
 });
 
+test('confirmações visuais simultâneas só movem os cards e nunca repetem a baixa',()=>{
+  const ds=dataset();ds.transactions=[tx('firstpay',{paymentStatus:'pending'}),tx('nextpay1',{paymentStatus:'pending'})];saveBase(ds);
+  const original=ctx.setTimeout, timers=[];
+  ctx.setTimeout=(fn,ms)=>{if(ms===1600)timers.push(fn);return 0;};
+  try {
+    api.changeBill('firstpay','pay','agenda');api.changeBill('nextpay1','pay','agenda');api.changeBill('firstpay','pay','agenda');
+    assert.equal(timers.length,2);assert.equal(api.undoStack.length,2);
+    const stored=storage.get('fyg:ds:'+ds.id), txs=JSON.parse(stored).transactions;
+    assert(txs.every(t=>t.paymentStatus==='paid'&&t.paidOn));assert.equal(txs.length,2);
+    const board=()=>get('#dash-bills').innerHTML;
+    api.renderAll();assert.equal((board().match(/aria-disabled="true"/g)||[]).length,2);
+    timers[0]();assert.match(board(),/Contas pagas \(1\)/);assert.equal((board().match(/aria-disabled="true"/g)||[]).length,1);
+    timers[1]();assert.match(board(),/Contas pagas \(2\)/);assert.doesNotMatch(board(),/aria-disabled="true"/);
+    assert.equal(storage.get('fyg:ds:'+ds.id),stored);assert.equal(api.undoStack.length,2);
+    api.changeBill('firstpay','reopen','agenda');assert.match(board(),/1 conta em aberto/);
+  } finally {ctx.setTimeout=original;}
+});
+
 test('nova conta em aberto e suas repetições sobrevivem à sincronização e ao backup',()=>{
   saveBase(dataset());api.openTxModal(null,{pending:true});assert.equal(get('#tx-paid').checked,false);
   get('#tx-amount').value='25,00';get('#tx-date').value='2026-01-31';get('#tx-desc').value='Internet';

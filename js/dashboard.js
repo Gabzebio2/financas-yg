@@ -89,6 +89,8 @@ const Dashboard = (() => {
   function open(id) {
     const loaded = Store.loadDataset(id);
     if (!loaded) { toast("Não foi possível abrir esta pasta. Exporte um backup para preservar os dados e verificar o arquivo."); goHome(); return; }
+    billConfirmations.forEach(({timer}) => clearTimeout(timer));
+    billConfirmations.clear();
     ds = loaded;
     // Lembra a última pasta pessoal aberta (usada no menu Pessoa física/Empresa)
     if (ds.profile !== "pj") {
@@ -1305,51 +1307,56 @@ const Dashboard = (() => {
     </span>`;
   }
 
-  function billPayButton(t) {
+  function billPayButton(t, confirming = false) {
+    if (confirming) return `<button type="button" class="bill-pay is-paid" aria-disabled="true">${uiIcon("check", 15)} Pago</button>`;
     const pending = isPendingBill(t);
     const label = (pending ? "Marcar como paga" : "Reabrir conta") + " · " + t.desc;
     return `<button type="button" class="bill-pay ${pending ? "is-open" : "is-paid"}" data-bill-action="${pending ? "pay" : "reopen"}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${uiIcon("check", 15)} ${pending ? "Marcar como paga" : "Pago"}</button>`;
   }
 
-  function billRow(t, today) {
+  function billRow(t, today, confirming = false) {
     const pending = isPendingBill(t);
-    const date = pending ? t.date : accountingDate(t);
+    const date = pending || confirming ? t.date : accountingDate(t);
     const [year, month, day] = date.split("-");
     const monthLabel = MESES_ABREV[Number(month) - 1] + (year === today.slice(0,4) ? "" : "/" + year);
-    const when = (pending ? "Vencimento em " : "Pago em ") + fmtDate(date);
+    const when = (pending || confirming ? "Vencimento em " : "Pago em ") + fmtDate(date);
     const detail = [t.account, t.category, t.installment && "Parcela " + t.installment].filter(Boolean).join(" · ");
-    return `<div class="bill-row" data-id="${escapeHtml(t.id)}">
+    return `<div class="bill-row ${pending ? "bill-open" : "bill-settled"}" data-id="${escapeHtml(t.id)}"${pending ? ' title="Dois cliques ou dois toques para marcar como paga"' : ""}>
       <time class="bill-date" datetime="${date}" title="${when}" aria-label="${when}"><b>${day}</b><span>${monthLabel}</span></time>
       <div class="bill-title"><strong>${escapeHtml(t.desc)}</strong>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</div>
-      <b class="bill-amount">${escapeHtml(fmtTxAmount(t))}</b><div class="bill-actions">${billPayButton(t)}</div>
+      <b class="bill-amount">${escapeHtml(fmtTxAmount(t))}</b><div class="bill-actions">${billPayButton(t, confirming)}</div>
     </div>`;
   }
 
   let billMidnightTimer;
+  const billConfirmations = new Map(); // Só a apresentação espera. O pagamento já está salvo.
   function renderBillBoard() {
     const panel = $("#dash-bills");
     if (!ds || !panel) return;
-    const active = ds.transactions.filter(isPendingBill).sort((a,b) => a.date.localeCompare(b.date));
+    const active = ds.transactions.filter(isPendingBill);
     const settled = ds.transactions.filter(t => t.type === "despesa" && t.paymentStatus === "paid")
       .sort((a,b) => accountingDate(b).localeCompare(accountingDate(a)));
+    const confirmingInAgenda = t => billConfirmations.get(t.id)?.source === "agenda";
+    const visible = [...active, ...settled.filter(confirmingInAgenda)].sort((a,b) => a.date.localeCompare(b.date));
+    const historyItems = settled.filter(t => !confirmingInAgenda(t));
     const today = todayISO();
     const count = active.length;
     const header = `<div class="bill-head"><div class="bill-heading"><span class="bill-emblem">${uiIcon("calendar", 24)}</span><div><h2>Contas a pagar</h2>
       <p>${count ? (count === 1 ? "1 conta em aberto" : count + " contas em aberto") : "Nenhuma pendente"}</p></div></div>
       <button type="button" class="btn bill-add" data-bill-action="new" aria-label="Nova conta a pagar">${uiIcon("plus", 16)} Nova conta</button></div>`;
     const groups = [
-      ["late", "Em atraso", active.filter(t => t.date < today)],
-      ["today", "Vencem hoje", active.filter(t => t.date === today)],
-      ["upcoming", "Próximos vencimentos", active.filter(t => t.date > today)],
+      ["late", "Em atraso", visible.filter(t => t.date < today)],
+      ["today", "Vencem hoje", visible.filter(t => t.date === today)],
+      ["upcoming", "Próximos vencimentos", visible.filter(t => t.date > today)],
     ];
     const agenda = groups.filter(([, , items]) => items.length).map(([key, label, items]) =>
-      `<section class="bill-group" data-due="${key}"><h3>${label}</h3>${items.map(t => billRow(t, today)).join("")}</section>`).join("");
+      `<section class="bill-group" data-due="${key}"><h3>${label}</h3>${items.map(t => billRow(t, today, t.paymentStatus === "paid")).join("")}</section>`).join("");
     const list = agenda ? `<div class="bill-list bill-agenda">${agenda}</div>` :
       `<div class="bill-empty"><span class="bill-empty-icon">${uiIcon("check", 17)}</span>
         <p>${settled.length ? "Todas as contas acompanhadas estão pagas." : "Cadastre uma conta para acompanhar o vencimento."}</p></div>`;
     const expanded = panel.querySelector("details")?.open;
-    const history = settled.length ? `<details class="bill-history" ${expanded ? "open" : ""}><summary>${uiIcon("history", 17)} Contas pagas (${settled.length}) <span class="bill-chevron">${uiIcon("down", 16)}</span></summary>
-      <div class="bill-list">${settled.map(t => billRow(t, today)).join("")}</div></details>` : "";
+    const history = historyItems.length ? `<details class="bill-history" ${expanded ? "open" : ""}><summary>${uiIcon("history", 17)} Contas pagas (${historyItems.length}) <span class="bill-chevron">${uiIcon("down", 16)}</span></summary>
+      <div class="bill-list">${historyItems.map(t => billRow(t, today)).join("")}</div></details>` : "";
     const scroll = panel.querySelector(".bill-agenda")?.scrollTop || 0;
     const focused = document.activeElement;
     const refocus = focused && panel.contains(focused);
@@ -1370,7 +1377,7 @@ const Dashboard = (() => {
     }
   }
 
-  function changeBill(id, action) {
+  function changeBill(id, action, source) {
     if (!refreshImportTarget()) return;
     const t = ds.transactions.find(tx => tx.id === id);
     if (!t) { toast("Esta conta não está mais na pasta."); return; }
@@ -1379,7 +1386,20 @@ const Dashboard = (() => {
     t.paymentStatus = action === "pay" ? "paid" : "pending";
     if (action === "pay") t.paidOn = todayISO(); else delete t.paidOn;
     saveCur();
+    clearTimeout(billConfirmations.get(id)?.timer);
+    billConfirmations.delete(id);
+    if (action === "pay" && source) {
+      const timer = setTimeout(() => {
+        billConfirmations.delete(id);
+        if (source === "agenda") renderBillBoard(); else renderTable();
+      }, 1600);
+      billConfirmations.set(id, {source, timer});
+    }
     renderAll();
+    if (action === "pay" && source) {
+      const selector = source === "agenda" ? "#dash-bills .bill-agenda .bill-row" : "#tx-tbody tr";
+      $$(selector).find(row => row.dataset.id === id)?.classList.add("bill-just-paid");
+    }
     toast(action === "pay" ? "Conta paga. Despesa contabilizada." : "Conta em aberto. O valor só entra nas despesas após o pagamento.");
   }
 
@@ -1411,7 +1431,7 @@ const Dashboard = (() => {
     tbody.innerHTML = visible.map((t) => {
       const sel = selectedTx.has(t.id);
       return `
-      <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}">
+      <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${t.paymentStatus === "paid" ? " bill-settled" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
         <td style="white-space:nowrap">${fmtDate(accountingDate(t))}${t.date !== accountingDate(t) ? '<br><small>Venc. ' + fmtDate(t.date) + '</small>' : cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}</td>
         <td><span class="tx-desc-cell">${catAvatar(t.category)}<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span></span></td>
@@ -1420,7 +1440,7 @@ const Dashboard = (() => {
         <td>${t.installment ? escapeHtml(t.installment) + (t.advance ? '<br><span class="fixa-chip">Adiantada</span>' : '') : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
         <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtTxAmount(t)}</td>
         <td class="tx-actions">
-          ${t.type === "despesa" && t.paymentStatus ? billPayButton(t) : ""}
+          ${t.type === "despesa" && t.paymentStatus ? billPayButton(t, t.paymentStatus === "paid" && billConfirmations.get(t.id)?.source === "transactions") : ""}
           <button class="btn-icon" data-action="edit" title="Editar" aria-label="Editar transação">${uiIcon("edit")}</button>
           ${installmentTotal(t) > 1 ? `<button class="btn-icon" data-action="advance" title="Adiantar parcelas" aria-label="Adiantar parcelas">${uiIcon("advance")}</button>` : ""}
           <button class="btn-icon" data-action="delete" title="Excluir" aria-label="Excluir transação">${uiIcon("trash")}</button>
@@ -2110,17 +2130,38 @@ const Dashboard = (() => {
     // Ações da tabela
     $("#tx-paid").addEventListener("change", updateTypeToggle);
     $("#tx-payable").addEventListener("change", updateTypeToggle);
-    $("#dash-bills").addEventListener("click", ev => {
+    const billPanel = $("#dash-bills");
+    let lastBillTap = null;
+    billPanel.addEventListener("click", ev => {
       const button = ev.target.closest("[data-bill-action]");
-      if (!button) return;
-      if (button.dataset.billAction === "new") openTxModal(null, {pending:true, title:"Nova conta a pagar"});
-      else changeBill(button.closest("[data-id]").dataset.id, button.dataset.billAction);
+      if (button) {
+        lastBillTap = null;
+        if (button.dataset.billAction === "new") openTxModal(null, {pending:true, title:"Nova conta a pagar"});
+        else changeBill(button.closest("[data-id]").dataset.id, button.dataset.billAction, "agenda");
+        return;
+      }
+      // Alguns celulares enviam dois cliques simples e nenhum evento dblclick.
+      const row = ev.target.closest(".bill-row.bill-open");
+      if (!row || ev.target.closest("button, a") || !(ev.pointerType === "touch" || (!ev.pointerType && window.matchMedia("(pointer: coarse)").matches))) {
+        lastBillTap = null;
+        return;
+      }
+      const previous = lastBillTap;
+      lastBillTap = {row, time:ev.timeStamp, x:ev.clientX, y:ev.clientY};
+      if (previous?.row === row && ev.timeStamp - previous.time <= 400 && Math.hypot(ev.clientX-previous.x, ev.clientY-previous.y) <= 26) {
+        lastBillTap = null;
+        changeBill(row.dataset.id, "pay", "agenda");
+      }
+    });
+    billPanel.addEventListener("dblclick", ev => {
+      const row = ev.target.closest(".bill-row.bill-open");
+      if (row && !ev.target.closest("button, a")) changeBill(row.dataset.id, "pay", "agenda");
     });
     $("#tx-tbody").addEventListener("click", (ev) => {
       const tr = ev.target.closest("tr[data-id]");
       if (!tr) return;
       const billAction = ev.target.closest("[data-bill-action]")?.dataset.billAction;
-      if (billAction) { changeBill(tr.dataset.id, billAction); return; }
+      if (billAction) { changeBill(tr.dataset.id, billAction, "transactions"); return; }
       const action = ev.target.closest("[data-action]")?.dataset.action;
       if (action === "advance") { openAdvance(tr.dataset.id); return; }
       if (action === "delete") { requestDeleteTx(tr.dataset.id); return; }
