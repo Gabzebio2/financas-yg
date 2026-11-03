@@ -284,6 +284,7 @@ const Dashboard = (() => {
   /* ---------- Renderização geral ---------- */
   function renderAll() {
     $("#ds-name").textContent = ds.name;
+    if (typeof BusinessPanel !== "undefined") BusinessPanel.render(ds);
     renderPeriodControls();
     renderCurrencyControl();
     renderCurrencyWarning();
@@ -412,8 +413,8 @@ const Dashboard = (() => {
     "Software e assinaturas", "Outros",
   ];
 
-  function createEmpresaDataset() {
-    const nds = Store.createDataset("Empresa");
+  function createEmpresaDataset(name = "Empresa") {
+    const nds = Store.createDataset(name);
     nds.profile = "pj";
     nds.categories = [];
     EMPRESA_CATS.forEach((c) => ensureCat(nds, c));
@@ -425,7 +426,7 @@ const Dashboard = (() => {
   function renderAcctMenu() {
     const idx = Store.loadIndex();
     const isPj = (e) => e.profile === "pj";
-    const pj = idx.find(isPj);
+    const companies = idx.filter(isPj);
     const curIsPj = !!(ds && ds.profile === "pj");
     // "Pessoa física" = a pasta pessoal aberta (ou a última pessoal usada)
     let pf = null;
@@ -440,10 +441,9 @@ const Dashboard = (() => {
       html += `<button type="button" class="pop-item ${!curIsPj ? "active" : ""}" data-ds="${escapeHtml(pf.id)}">
         ${uiIcon("person")} Pessoa física${!curIsPj ? '<span class="pop-check">✓</span>' : ""}</button>`;
     }
-    html += pj
-      ? `<button type="button" class="pop-item ${curIsPj ? "active" : ""}" data-ds="${escapeHtml(pj.id)}">
-          ${uiIcon("business")} Empresa${curIsPj ? '<span class="pop-check">✓</span>' : ""}</button>`
-      : `<button type="button" class="pop-item" data-create-pj="1">${uiIcon("plus")} Criar conta Empresa</button>`;
+    html += companies.map(company => `<button type="button" class="pop-item ${ds?.id===company.id?'active':''}" data-ds="${escapeHtml(company.id)}">
+      ${uiIcon("business")} ${escapeHtml(company.name)}${ds?.id===company.id?'<span class="pop-check">✓</span>':''}</button>`).join("");
+    if(!companies.length) html += `<button type="button" class="pop-item" data-create-pj="1">${uiIcon("plus")} Criar conta Empresa</button>`;
     html += `<div class="pop-sep"></div>
       <button type="button" class="pop-item" data-acct-home="1">${uiIcon("home")} Todas as pastas</button>`;
     $("#acct-menu").innerHTML = html;
@@ -2301,5 +2301,5 @@ const Dashboard = (() => {
     return n;
   }
 
-  return { open, openTxModal, refreshFromStore, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, isEditingTransaction: () => !!editingId, refitHero: fitHeroFlow };
+  return { open, openTxModal, createEmpresaDataset, refreshFromStore, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, isEditingTransaction: () => !!editingId, refitHero: fitHeroFlow };
 })();

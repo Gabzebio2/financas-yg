@@ -48,6 +48,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (accountTitle) accountTitle.textContent = connected ? "Sua conta está conectada" : "Entre na sua conta";
     const pending = state?.pendingCount || 0;
     const invalidRemote = state?.invalidRemoteCount || 0;
+    const accountState = document.querySelector("#home-account-state");
+    if (accountState) accountState.textContent = !connected ? "Entrar na conta" : invalidRemote ? "Precisa de atenção" : pending ? "Envio pendente" : "Conta conectada";
     const repeatedInvalidNotice = invalidRemote && state?.error === `${invalidRemote} pasta(s) da nuvem têm dados inválidos e foram preservadas sem alterações. Confira essas pastas antes de sincronizá-las.`;
     const errorDetail = repeatedInvalidNotice ? "" : state?.error;
     let label = connected ? "Conta conectada" : "Modo local";

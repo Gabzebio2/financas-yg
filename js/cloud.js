@@ -736,6 +736,8 @@ const Cloud = (() => {
     const wrap = $("#cloud-newpass-wrap");
     if (!wrap) return;
     wrap.classList.remove("hidden");
+    const accountPanel = document.querySelector("#home-account");
+    if (accountPanel) accountPanel.open = true;
     setAccessStatus("Digite a nova senha abaixo para concluir a redefinição.");
     $("#cloud-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
     setTimeout(() => $("#cloud-newpass").focus(), 300);
@@ -1343,6 +1345,8 @@ const Cloud = (() => {
 
   /* ---------- Configuração (URL + chave anon) ---------- */
   function showCfgSetup() {
+    const accountPanel = document.querySelector("#home-account");
+    if (accountPanel) accountPanel.open = true;
     const cfg = getCfg();
     $("#cloud-cfg-wrap").classList.remove("hidden");
     $("#cloud-url-input").value = cfg?.url || "";

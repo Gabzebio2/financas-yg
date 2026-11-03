@@ -43,6 +43,7 @@
 !/api/receipt-document.js
 
 !/server/document-reader.cjs
+!/server/receipt-photo.cjs
 
 !/package.json
 
@@ -55,3 +56,6 @@
 !/server/receipt-platforms.cjs
 
 !/server/statement-table.cjs
+
+!/js/business.js
+!/js/weekly-revenue.js

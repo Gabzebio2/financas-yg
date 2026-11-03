@@ -1,6 +1,7 @@
 'use strict';
 const {timingSafeEqual}=require('node:crypto');
 const {readPage}=require('../server/document-reader.cjs');
+const {photoPlan}=require('../server/receipt-photo.cjs');
 module.exports=async(req,res)=>{
  res.setHeader('Cache-Control','no-store');
  if(req.method!=='POST')return res.status(405).json({error:'method'});
@@ -17,6 +18,9 @@ module.exports=async(req,res)=>{
   const sourceHeader=body.sourceHeader;
   if(sourceHeader!==undefined&&(image.media_type!=='application/pdf'||c.pageStart<=1||typeof sourceHeader!=='string'||!sourceHeader.length||sourceHeader.length>262144||sourceHeader.length+image.data.length>4200000||!/^[A-Za-z0-9+/]*={0,2}$/.test(sourceHeader)))return res.status(400).json({error:'invalid_header'});
   const names=v=>Array.isArray(v)?v.filter(x=>typeof x==='string').slice(0,40).map(x=>x.slice(0,80)):[];
-  return res.status(200).json(await readPage({image,categories:names(body.categories),cards:names(body.cards),context:c,first,sourceHeader,mode:body.mode==='quick'&&!first&&image.media_type!=='application/pdf'?'quick':'full',timeoutMs:105000},key));
+  const categories=names(body.categories);
+  const result=await readPage({image,categories,cards:names(body.cards),context:c,first,sourceHeader,mode:body.mode==='quick'&&!first&&image.media_type!=='application/pdf'?'quick':'full',timeoutMs:105000},key);
+  if (c.photoAuto === true && image.media_type.startsWith('image/')) result.photoPlan=photoPlan(result,c,categories);
+  return res.status(200).json(result);
  }catch(e){return res.status(502).json({error:['saldo_ia','configuracao_ia','resposta_incompleta','page_too_dense'].includes(e.message)?e.message:e.name==='TimeoutError'?'tempo_ia':'leitura_indisponivel'});}
 };

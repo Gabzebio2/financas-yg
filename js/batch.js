@@ -158,7 +158,7 @@ const Batch = (() => {
   // Botão "Upload do comprovante": abre a lista e processa os arquivos escolhidos
   // (fotos, PDFs e/ou Excel) no mesmo fluxo — serve para um gasto só ou para lote.
   async function openWithFiles(files) {
-    open({ title: "Conferir documentos e lançamentos" });
+    open({ title: "Enviar comprovantes" });
     const version = generation;
     const arr = Array.from(files || []);
     if (arr.length > MAX_FILES) { setStatus(`Selecione até ${MAX_FILES} arquivos por lote. Nenhum arquivo foi lido.`, "err"); return; }
@@ -686,8 +686,14 @@ const Batch = (() => {
       if(typeof ReceiptJobs!=='undefined'){
         try{
           setStatus('Preparando envio privado. Mantenha o app aberto até terminar o envio…');
-          await ReceiptJobs.submit(prepared,rows.map(r=>({...r,documentTask:false})),msg=>{if(contextValid(version))setStatus(msg);});
+          const images=prepared.filter(t=>t.part.mediaType.startsWith('image/'));
+          const documents=prepared.filter(t=>!images.includes(t));
+          const progress=msg=>{if(contextValid(version))setStatus(msg);};
+          if(images.length) await ReceiptJobs.submit(images,[],progress,{photoAuto:true,category:presetCat});
           if(!contextValid(version))return;
+          if(documents.length) await ReceiptJobs.submit(documents,rows.map(r=>({...r,documentTask:false})),progress);
+          if(!contextValid(version))return;
+          if(images.length && !documents.length && rows.length){setStatus('Fotos enviadas para inclusão automática. A planilha continua disponível abaixo.','ok');return;}
           close();toast('Enviado! Pode apagar a tela. Acompanhe o resultado no sino de notificações.');
         }catch(e){if(contextValid(version))setStatus(ReceiptJobs.uploadMessage(e),'err');}
         return;

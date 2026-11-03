@@ -509,7 +509,7 @@ function renderFolders() {
   const idx = Store.loadIndex();
   const grid = $("#folders-grid");
   if (!idx.length) {
-    grid.innerHTML = `<div class="empty-folders"><strong>Um novo começo para suas finanças.</strong><span>Crie sua primeira pasta ou importe uma planilha para começar.</span></div>`;
+    grid.innerHTML = `<div class="empty-folders"><strong>Nenhuma pasta neste aparelho</strong><span>Crie uma pasta ou abra Conta e sincronização para acessar as que já estão na nuvem.</span></div>`;
     return;
   }
   grid.innerHTML = idx.map((e) => `
@@ -517,7 +517,7 @@ function renderFolders() {
       <div class="folder-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z" stroke-linejoin="round"/><path d="M3 10h18"/></svg></div>
       <div class="folder-info">
         <div class="folder-name" data-name>${escapeHtml(e.name)}</div>
-        <div class="folder-meta">${e.txCount} transaç${e.txCount === 1 ? "ão" : "ões"} · atualizada em ${new Date(e.updatedAt).toLocaleDateString("pt-BR")}</div>
+        <div class="folder-meta">${e.profile==="pj"?"Empresa · ":""}${e.txCount} transaç${e.txCount === 1 ? "ão" : "ões"} · atualizada em ${new Date(e.updatedAt).toLocaleDateString("pt-BR")}</div>
       </div>
       <div class="folder-actions">
         <button class="btn-icon" data-action="rename" title="Renomear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7l-4-4L4 15z" stroke-linejoin="round"/></svg></button>
@@ -689,6 +689,11 @@ function sanitizeDataset(raw, opts) {
     transactions: [],
     limits: [],
     metas: [],
+    ...(raw.profile==="pj" && raw.weekly && Array.isArray(raw.weekly.accounts) ? {weekly:{
+      accounts:[...new Set(raw.weekly.accounts.filter(a=>typeof a==="string" && a.trim() && a.length<=120))].slice(0,300),
+      currency:normCur(raw.weekly.currency),year:Number.isInteger(raw.weekly.year)?raw.weekly.year:null,
+      sheetId:/^[a-zA-Z0-9_-]{15,120}$/.test(raw.weekly.sheetId || "")?raw.weekly.sheetId:""
+    }}:{}),
   };
   const usedIds = new Set([ds.id]);
   const uniqueId = (value) => {
@@ -753,6 +758,11 @@ function sanitizeDataset(raw, opts) {
       account: text(t.account, 40).trim(),
       ...(typeof t.referenceId === "string" && t.referenceId.trim() ? { referenceId: text(t.referenceId, 160).trim() } : {}),
       ...(typeof t.sourceEvidence === "string" && t.sourceEvidence.trim() ? { sourceEvidence: text(t.sourceEvidence, 300).trim() } : {}),
+      ...(raw.profile==="pj" && t.weeklyRevenue===true ? {weeklyRevenue:true,
+        ...(Number.isFinite(t.weeklyImportedAmount) ? {weeklyImportedAmount:t.weeklyImportedAmount}:{})} : {}),
+      ...(t.photoSource && /^[a-f0-9]{64}$/.test(t.photoSource.hash) && /^[a-f0-9]{32}$/.test(t.photoSource.row) &&
+        Number.isSafeInteger(t.photoSource.occurrence) && t.photoSource.occurrence > 0 ?
+        { photoSource: {hash:t.photoSource.hash, row:t.photoSource.row, occurrence:t.photoSource.occurrence} } : {}),
       ...(Number.isInteger(t.sourcePage) && t.sourcePage > 0 ? { sourcePage: t.sourcePage } : {}),
       type: t.type === "receita" ? "receita" : "despesa",
       amount,
