@@ -91,7 +91,7 @@ function harness({ enabled = true, supported = true, authHash = "", authSearch =
           return { data: await response.json(), error: null };
         },
       },
-      from() { return { select() { return this; }, eq() { return this; }, abortSignal() { return this; }, then(resolve) { server.syncReads++; return Promise.resolve({ data: [] }).then(resolve); } }; },
+      from() { return { select() { return this; }, eq() { return this; }, order() { return this; }, range() { return this; }, abortSignal() { return this; }, then(resolve) { server.syncReads++; return Promise.resolve({ data: [], count:0 }).then(resolve); } }; },
     };
     clients.push(api); return api;
   };

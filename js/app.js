@@ -395,6 +395,7 @@ const Store = {
       return { ...ds, updatedAt: opts?.preserveUpdatedAt ? cleanISO(ds.updatedAt, now) : now };
     });
     const idx = this.loadIndex();
+    const previousIds = new Set(idx.map(entry => entry.id));
     saved.forEach((ds) => {
       const position = idx.findIndex((entry) => entry.id === ds.id);
       if (position < 0) idx.unshift(this._entry(ds));
@@ -404,7 +405,10 @@ const Store = {
     changes.push({ key: "fyg:index", value: JSON.stringify(idx) });
     this._commit(changes);
     saved.forEach((ds, i) => { datasets[i].updatedAt = ds.updatedAt; });
-    if (opts?.origin !== "remote") this._notify(saved.map((ds) => ds.id));
+    if (opts?.origin !== "remote") {
+      const ids = saved.map(ds => ds.id);
+      this._notify(ids, ids.filter(id => !previousIds.has(id)));
+    }
   },
   deleteDataset(id) {
     if (typeof id !== "string" || !RE_SAFE_ID.test(id)) return;
@@ -417,8 +421,8 @@ const Store = {
   },
   // Registra as pastas alteradas somente depois da gravação local completa.
   // A nuvem mantém as pendências mesmo sem conexão ou com o envio desativado.
-  _notify(ids) {
-    try { if (typeof Cloud !== "undefined" && Cloud.onLocalChange) Cloud.onLocalChange(ids); }
+  _notify(ids, createdIds) {
+    try { if (typeof Cloud !== "undefined" && Cloud.onLocalChange) Cloud.onLocalChange(ids, createdIds); }
     catch (error) { console.error("Os dados foram salvos localmente, mas a sincronização falhou.", error); }
   },
   createDataset(name) {

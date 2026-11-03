@@ -81,7 +81,17 @@ const Cloud = (() => {
   }
   function ownsFolder(id) {
     const owner = getFolderOwner();
-    return !!owner && ledger.owners[id] === owner;
+    if (!owner || ledger.owners[id] !== owner) return false;
+    const q = loadQueue(owner);
+    return !own(q.deletes, id) && (q.base[id]?.listed === true || pendingCreation(q, id));
+  }
+
+  function visibleFolderIds() {
+    return Object.keys(ledger.owners).filter(ownsFolder).sort().join("|");
+  }
+
+  function pendingCreation(q, id) {
+    return q.dirty[id]?.create === true && !q.base[id];
   }
 
   function localDatasets() {
@@ -177,9 +187,10 @@ const Cloud = (() => {
     if (!persistMetadata()) throw Object.assign(new Error(lastError), { name: "QueueStorageError" });
   }
 
-  function markDirty(owner, id) {
+  function markDirty(owner, id, create = false) {
     const q = loadQueue(owner);
-    q.dirty[id] = { rev: revision(), queuedAt: new Date().toISOString() };
+    const newFolder = !q.base[id] && (create || pendingCreation(q, id));
+    q.dirty[id] = { rev: revision(), queuedAt: new Date().toISOString(), ...(newFolder ? {create:true} : {}) };
     delete q.deletes[id];
   }
 
@@ -718,7 +729,7 @@ const Cloud = (() => {
     for (const id of ids) {
       if (!validId(id) || own(ledger.owners, id) || !localDataset(id)) continue;
       ledger.owners[id] = activeOwner;
-      markDirty(activeOwner, id);
+      markDirty(activeOwner, id, true);
       linked++;
     }
     return linked;
@@ -804,7 +815,8 @@ const Cloud = (() => {
 
   function repairRows(rowsById, owner) {
     const rows = new Map(rowsById);
-    for (const id of Object.keys(loadQueue(owner).dirty)) if (!rows.has(id)) rows.set(id, { id });
+    const q = loadQueue(owner);
+    for (const id of Object.keys(q.dirty)) if (!rows.has(id) && pendingCreation(q, id)) rows.set(id, { id });
     return rows;
   }
 
@@ -828,10 +840,22 @@ const Cloud = (() => {
   }
 
   async function readRemoteRows(c, version, owner) {
-    const response = await request(c.from(TABLE).select("id,data,updated_at").eq("user_id", ownerParts(owner).userId));
-    assertCurrent(c, version, owner);
-    if (!Array.isArray(response.data)) throw new Error("Resposta inválida da nuvem.");
-    return new Map(response.data.map((row) => [row?.id, row]));
+    const rows = new Map(), pageSize = 200;
+    for (;;) {
+      const offset = rows.size;
+      const response = await request(c.from(TABLE).select("id,data,updated_at", {count:"exact"})
+        .eq("user_id", ownerParts(owner).userId).order("id").range(offset, offset + pageSize - 1));
+      assertCurrent(c, version, owner);
+      if (!Array.isArray(response.data) || !Number.isSafeInteger(response.count) || response.count < 0) {
+        throw new Error("O servidor não confirmou a lista completa de pastas. Sincronize novamente.");
+      }
+      for (const row of response.data) {
+        if (!validId(row?.id) || rows.has(row.id)) throw new Error("A lista de pastas mudou. Sincronize novamente.");
+        rows.set(row.id, row);
+      }
+      if (rows.size === response.count) return rows;
+      if (!response.data.length || rows.size > response.count) throw new Error("Lista de pastas incompleta. Sincronize novamente.");
+    }
   }
 
   async function repairRemoteRows(rowsById, owner, c, version) {
@@ -845,7 +869,7 @@ const Cloud = (() => {
       const localDigest = plan.localRow ? await fingerprint(plan.localText) : null;
       assertCurrent(c, version, owner);
       // Também recupera saves que terminaram antes de o hook dirty ser gravado.
-      await rescan(owner, c, version);
+      await rescan(owner, c, version, rowsById);
       assertCurrent(c, version, owner);
       if (!sameRepairLocal(row, owner, plan)) continue;
       // Ambos os originais são conferidos antes de qualquer mudança financeira.
@@ -893,11 +917,12 @@ const Cloud = (() => {
     return ticket.promise;
   }
 
-  async function rescan(owner, c, version) {
+  async function rescan(owner, c, version, rowsById) {
     mergeQueueFromDisk(owner, loadQueue(owner));
     for (const ds of localDatasets()) {
       if (ledger.owners[ds.id] !== owner) continue;
       const q = loadQueue(owner);
+      if (!rowsById.has(ds.id) && !pendingCreation(q, ds.id)) continue;
       if (own(q.deletes, ds.id) || own(q.dirty, ds.id)) continue;
       const text = canonical(ds), digest = await fingerprint(text);
       assertCurrent(c, version, owner);
@@ -914,7 +939,7 @@ const Cloud = (() => {
       entry = { sourceId, digest, copyId: uid() };
       q.conflicts.push(entry);
       ledger.owners[entry.copyId] = owner;
-      markDirty(owner, entry.copyId);
+      markDirty(owner, entry.copyId, true);
       // Reserva o ID antes de salvar: se o app fechar, a próxima tentativa reutiliza-o.
       requireDurableQueue();
     }
@@ -931,7 +956,7 @@ const Cloud = (() => {
 
   function confirmedBase(row, digest) {
     // Uma única versão por pasta e proprietário, sempre confirmada pelo servidor.
-    return { digest, version: row.updated_at, snapshot: clone(row.data) };
+    return { listed: true, digest, version: row.updated_at, snapshot: clone(row.data) };
   }
 
   async function findMergeBase(base, local, remote) {
@@ -960,9 +985,18 @@ const Cloud = (() => {
     }
     const id = row.id, q = loadQueue(owner);
     const knownOwner = ledger.owners[id];
-    const local = localDataset(id);
-    const localText = canonical(local), remoteText = canonical(row.data);
-    if (knownOwner && knownOwner !== owner || !knownOwner && local && localText !== remoteText) { accountConflictCount++; return; }
+    let local = localDataset(id);
+    const remoteText = canonical(row.data);
+    if (knownOwner && knownOwner !== owner) { accountConflictCount++; return; }
+    if (local && canonical(local) !== remoteText && !q.base[id] && !pendingCreation(q, id) && !own(q.deletes,id)) {
+      // Mesmo ID, sem base que comprove que o conteúdo antigo veio desta conta.
+      // Preserve a versão do aparelho fora da lista; a pasta visível recebe os dados do servidor.
+      let copyId;
+      do { copyId = uid(); } while (localDataset(copyId) || own(ledger.owners,copyId));
+      writeLocal([{...clone(local), id:copyId}, clone(row.data)]);
+      local = localDataset(id);
+    }
+    const localText = canonical(local);
     if (!knownOwner) {
       ledger.owners[id] = owner;
       requireDurableQueue();
@@ -1044,6 +1078,7 @@ const Cloud = (() => {
       if (mergeConflictIds.has(id)) continue;
       const entry = loadQueue(owner).dirty[id];
       if (!entry) continue;
+      if (!observed && !pendingCreation(loadQueue(owner), id)) continue;
       const saved = localDataset(id);
       if (!saved) throw new Error("Uma pasta pendente não está disponível localmente. A fila foi mantida para recuperação.");
       if (!validRemote({ id, data: saved })) {
@@ -1101,6 +1136,19 @@ const Cloud = (() => {
     }
   }
 
+  function retireMissingFolders(rowsById, owner, archivedIds, beforePull) {
+    const q = loadQueue(owner);
+    mergeQueueFromDisk(owner, q);
+    // A ausência em uma leitura completa invalida o índice, sem apagar os dados da pasta.
+    for (const [id, base] of Object.entries(q.base)) {
+      const previous = beforePull.base[id];
+      if (base.listed && !rowsById.has(id) && base.version === previous?.version && base.digest === previous?.digest) base.listed = false;
+    }
+    for (const id of Object.keys(q.dirty)) {
+      if (!rowsById.has(id) && !archivedIds.has(id) && !pendingCreation(q,id) && q.dirty[id].rev === beforePull.dirty[id]?.rev) delete q.dirty[id];
+    }
+  }
+
   async function syncNow(options = {}) {
     const repairContext = options.repairContext;
     const freshContext = options.fresh ? options.freshContext || { c: client, version: connectionVersion, owner: activeOwner } : null;
@@ -1116,15 +1164,20 @@ const Cloud = (() => {
     }
     cancelSchedule();
     const c = client, version = connectionVersion, owner = activeOwner;
+    const initialVisibleIds = visibleFolderIds();
     syncVersion = version;
     syncing = true;
     accountConflictCount = 0;
     mergeConflictIds.clear();
     publishState();
-    syncPromise = (async () => {
+    syncPromise = Promise.resolve().then(async () => {
       try {
-        await rescan(owner, c, version);
+        assertCurrent(c, version, owner);
+        requireDurableQueue();
+        const queue = loadQueue(owner);
+        const beforePull = {base:{...queue.base}, dirty:{...queue.dirty}};
         let rowsById = await readRemoteRows(c, version, owner);
+        await rescan(owner, c, version, rowsById);
         let repairedIds = null;
         // Classifique antes de aplicar qualquer retorno: uma pasta antiga inválida
         // não bloqueia as demais, mas seu ID permanece protegido contra escrita.
@@ -1156,8 +1209,10 @@ const Cloud = (() => {
             if (typeof Dashboard !== "undefined") Dashboard.refreshFromStore?.({ force: true });
           }
         }
-        await rescan(owner, c, version);
-        const invalidLocalCount = await pushDirty(rowsById, owner, c, version, new Set(archiveResult.archivedIds));
+        const archivedIds = new Set(archiveResult.archivedIds);
+        retireMissingFolders(rowsById, owner, archivedIds, beforePull);
+        await rescan(owner, c, version, rowsById);
+        const invalidLocalCount = await pushDirty(rowsById, owner, c, version, archivedIds);
         await flushDeletions(rowsById, owner, c, version);
         assertCurrent(c, version, owner);
         if (archiveResult.blockedIds.length) throw new Error("Há cópias antigas com alterações ou vínculo que precisam de conferência. Elas foram preservadas neste aparelho; a CASINHA unificada e as demais pastas continuam sincronizando.");
@@ -1178,6 +1233,7 @@ const Cloud = (() => {
       } finally {
         syncing = false;
         syncPromise = null;
+        if (current(c, version, owner) && visibleFolderIds() !== initialVisibleIds) renderFolders();
         publishState();
         if (current(c, version, owner)) {
           if (lastError || invalidRemoteIds.size) retryPending();
@@ -1185,7 +1241,7 @@ const Cloud = (() => {
           if (!pushTimer) schedulePull(lastError ? Math.max(PULL_MS, RETRY_MS[Math.min(retryAttempt++, RETRY_MS.length - 1)]) : PULL_MS);
         }
       }
-    })();
+    });
     return syncPromise;
   }
 
@@ -1310,7 +1366,7 @@ const Cloud = (() => {
 
   /* ---------- Ganchos chamados pelo app ---------- */
   // Mudança local -> agenda um envio (debounce)
-  function onLocalChange(ids) {
+  function onLocalChange(ids, createdIds = []) {
     if (applyingRemote) return;
     refreshLedger();
     const selected = typeof ids === "string" ? [ids] : Array.isArray(ids) ? ids : localDatasets().map((ds) => ds.id);
@@ -1318,8 +1374,9 @@ const Cloud = (() => {
       if (!validId(id) || !localDataset(id)) continue;
       let owner = ledger.owners[id];
       // Somente a notificação de uma gravação sob a sessão atual cria um vínculo novo.
-      if (!owner && activeOwner) { owner = activeOwner; ledger.owners[id] = owner; }
-      if (owner) markDirty(owner, id);
+      const created = createdIds.includes(id) && !!activeOwner;
+      if (!owner && created) { owner = activeOwner; ledger.owners[id] = owner; }
+      if (owner) markDirty(owner, id, created && owner === activeOwner);
     }
     persistMetadata();
     publishState();
@@ -1449,7 +1506,10 @@ const Cloud = (() => {
         else refreshVisible();
         publishState();
       } else if (activeOwner && event.key === queueKey(activeOwner)) {
-        loadQueue(activeOwner, true); publishState(); resumePending();
+        const before = visibleFolderIds();
+        loadQueue(activeOwner, true);
+        if (before !== visibleFolderIds()) renderFolders();
+        publishState(); resumePending();
       } else if (event.key === OWNERS_STORAGE) {
         refreshLedger(); publishState(); renderFolders();
       } else if (activeOwner && event.key?.startsWith(repairBackupPrefix(activeOwner))) {

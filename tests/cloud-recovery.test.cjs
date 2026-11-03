@@ -58,6 +58,8 @@ function harness({ values = new Map(), server = makeServer(), auto = false } = {
   class Query {
     constructor(user) { this.user = user; this.operation = "select"; this.filters = []; }
     select() { return this; }
+    order() { return this; }
+    range(start, end) { this.start = start; this.end = end; return this; }
     insert(payload) { this.operation = "insert"; this.payload = copy(payload); return this; }
     update(payload) { this.operation = "update"; this.payload = copy(payload); return this; }
     delete() { this.operation = "delete"; return this; }
@@ -72,7 +74,9 @@ function harness({ values = new Map(), server = makeServer(), auto = false } = {
       if (this.operation === "select") {
         const data = [...server.rows.values()].filter((row) => row.user_id === this.user && this.filters.every(([field, value]) => row[field] === value)).map(copy);
         if (server.holdSelect) { const gate = server.holdSelect; server.holdSelect = null; await gate.promise; }
-        return { data };
+        data.sort((a,b)=>a.id.localeCompare(b.id));
+        const start = this.start ?? 0, end = Math.min((this.end ?? data.length) + 1, start + (server.pageLimit ?? data.length));
+        return { data:data.slice(start,end), count:server.omitCount ? null : data.length };
       }
       if (server.failWrites) { server.failWrites--; return { error: { message: "Network unavailable", status: 503 } }; }
       if (server.beforeWrite) { const fn = server.beforeWrite; server.beforeWrite = null; fn(call); }
@@ -315,14 +319,52 @@ test("o catálogo visível segue a sessão, preserva o armazenamento e separa co
   assert(!other.local("folderofb")&&!other.local("localonly"));
 });
 
-test("um cache sem dono só aparece se for igual à pasta confirmada na nuvem", async () => {
+test("colisão com cache sem dono preserva a cópia local oculta e exibe a versão confirmada", async () => {
   const h=harness(), same=dataset("confirmed01"), different=dataset("conflict001");
   h.Store.saveDatasets([same,different]);
   const remoteDifferent={...copy(different),name:"Versão da nuvem"};
   for(const entry of [same,remoteDifferent])h.server.rows.set("user-a|"+entry.id,{id:entry.id,user_id:"user-a",updated_at:entry.updatedAt,data:copy(entry)});
   h.login("user-a","INITIAL_SESSION");assert(!h.cloud.ownsFolder(same.id));await h.sync();
-  assert(h.cloud.ownsFolder(same.id));assert(!h.cloud.ownsFolder(different.id));
-  assert.equal(h.remote(different.id).data.name,"Versão da nuvem");assert.equal(h.local(different.id).name,different.name);
+  assert(h.cloud.ownsFolder(same.id));assert(h.cloud.ownsFolder(different.id));
+  assert.equal(h.remote(different.id).data.name,"Versão da nuvem");assert.equal(h.local(different.id).name,remoteDifferent.name);
+  const preserved=h.Store.loadIndex().filter(e=>!h.cloud.ownsFolder(e.id));
+  assert.equal(preserved.length,1);assert.deepEqual(copy(h.local(preserved[0].id).transactions),different.transactions);
+  assert.equal(h.server.rows.size,2);
+});
+
+test("o vínculo antigo do navegador não lista nem recria pastas fora do catálogo confirmado", async () => {
+  const url="https://mhgagjhwsjjjwwvopjgu.supabase.co", owner=url+"|user-a";
+  const values=new Map(), extras=[dataset("extra0001"),dataset("extra0002")];
+  values.set("fyg:cloud-owners:v1",JSON.stringify({version:1,owners:{extra0001:owner,extra0002:owner},projects:{[url]:true}}));
+  values.set("fyg:cloud-queue:v1:"+owner,JSON.stringify({version:1,dirty:{extra0001:{rev:"old"}},base:{extra0002:{digest:"old",version:extras[1].updatedAt}},deletes:{}}));
+  const h=harness({values});h.server.pageLimit=1;
+  h.Store.saveDatasets(copy(extras),{origin:"remote"});
+  for(const [id,name] of [["house001","CASINHA"],["eleven001","Eleven"]]){
+    const data={...dataset(id),name};h.server.rows.set("user-a|"+id,{user_id:"user-a",id,data,updated_at:data.updatedAt});
+  }
+  const names=()=>Array.from(vm.runInContext("accountFolderIndex().map(e=>e.name).sort()",h.context));
+  h.login("user-a","INITIAL_SESSION");assert.deepEqual(names(),[]);
+  assert.equal(await h.sync(),true);assert.deepEqual(names(),["CASINHA","Eleven"]);
+  assert(!h.server.calls.some(call=>call.operation!=="select"));assert.equal(h.cloud.getSyncState().pendingCount,0);
+  for(const item of extras)assert.deepEqual(copy(h.local(item.id).transactions),item.transactions);
+  const restored=harness({values,server:h.server});restored.login("user-a","INITIAL_SESSION");
+  assert.deepEqual(Array.from(vm.runInContext("accountFolderIndex().map(e=>e.name).sort()",restored.context)),["CASINHA","Eleven"]);
+});
+
+test("exclusão noutro aparelho retira a pasta da tela e conserva uma edição offline sem recriar o remoto",async()=>{
+  const h=await seeded();h.add("Pagamento offline");const original=copy(h.local());
+  h.server.rows.clear();h.server.calls.length=0;
+  assert(await h.sync());assert(!h.cloud.ownsFolder("folder0001"));assert(!h.remote());
+  assert.deepEqual(copy(h.local()),original);assert.equal(h.cloud.getSyncState().pendingCount,0);
+  assert(!h.server.calls.some(c=>c.operation!=="select"));
+  h.create("newfolder");assert(h.cloud.ownsFolder("newfolder"));assert(await h.sync());assert(h.remote("newfolder"));
+});
+
+test("resposta sem contagem não remove uma pasta do último catálogo confirmado", async () => {
+  const h=await seeded();
+  h.server.rows.clear();h.server.omitCount=true;
+  assert.equal(await h.sync(),false);assert(h.cloud.ownsFolder("folder0001"));assert(h.local());
+  h.server.omitCount=false;assert(await h.sync());assert(!h.cloud.ownsFolder("folder0001"));assert(h.local());
 });
 
 test("autosync desligado continua registrando fila e interrompe uma tentativa automática ativa", async () => {

@@ -12,7 +12,6 @@ function replaceFixture(before, after) {
   fixture = fixture.replace(before, after);
 }
 replaceFixture("constructor(user) { this.user = user;", "constructor(user, table) { this.table = table; this.user = user;");
-replaceFixture("select() { return this; }", "select() { return this; }\n    order() { return this; }\n    range(start, end) { this.start = start; this.end = end; return this; }");
 replaceFixture("const call = { user: this.user,", "const call = { table: this.table, user: this.user,");
 replaceFixture("if (this.operation === \"select\") {", `if (this.operation === "select" && this.table === "pastas_arquivadas") {
         assert.ok(this.filters.some(([key, value]) => key === "user_id" && value === this.user));
