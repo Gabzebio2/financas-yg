@@ -1108,9 +1108,38 @@ body.hide-money .fx-rows { filter: blur(7px); user-select: none; }
 .weekly-dialog .weekly-input-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(90px,32%); }
 .weekly-new-account { display:flex; gap:8px; }
 .weekly-dialog [role=status]:empty { display:none; }
-#screen-dash:has(#weekly-panel:not(.hidden)) #weekly-panel { order:-2; }
+#screen-dash #weekly-panel { order: 2; }
 @media(max-width:650px) {
   .home-folder-head { flex-wrap:wrap; }
   .home-create .btn { min-height:40px; }
   .weekly-grid { grid-template-columns:minmax(0,1fr); gap:12px; }
+}
+
+.weekly-period-controls { display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px 20px; margin:18px 0 10px; }
+.weekly-mode,.weekly-presets,.weekly-period-inputs,.weekly-turn > div { display:flex; align-items:center; gap:6px; }
+.weekly-mode { border:1px solid var(--border); border-radius:10px; padding:3px; background:var(--input-bg); }
+.weekly-mode button,.weekly-presets button,.weekly-turn button { border:0; background:transparent; color:var(--text-soft); border-radius:7px; cursor:pointer; font:inherit; }
+.weekly-mode button { padding:8px 12px; font-weight:600; }
+.weekly-mode button[aria-pressed="true"],.weekly-presets button[aria-pressed="true"] { background:var(--primary-soft); color:var(--primary-text); }
+.weekly-period-inputs label { display:grid; gap:2px; color:var(--text-soft); font-size:.8rem; }
+.weekly-presets button { border:1px solid var(--border); padding:6px 10px; }
+.weekly-turn { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--text-soft); font-size:.82rem; }
+.weekly-turn button { border:1px solid var(--border); width:40px; height:38px; color:var(--text); font-size:24px; line-height:1; }
+.weekly-panel button:disabled { opacity:.38; cursor:default; }
+.weekly-rail { width:100%; display:flex; overflow-x:auto; scroll-snap-type:x mandatory; overscroll-behavior-x:contain; scrollbar-width:none; }
+.weekly-rail::-webkit-scrollbar { display:none; }
+.weekly-slide { flex:0 0 100%; min-width:0; box-sizing:border-box; scroll-snap-align:start; scroll-snap-stop:always; }
+.weekly-slide .weekly-overview { margin-top:8px; }
+.weekly-period-label { color:var(--text-soft); font-size:.82rem; }
+.weekly-period-label b { display:block; color:var(--text); font-weight:500; }
+.weekly-slide .weekly-grid { margin-bottom:10px; }
+.weekly-slide [data-week-edit] { margin:3px 3px 6px; }
+.weekly-slide .weekly-accounts:empty { display:none; }
+body.hide-money .weekly-slide .weekly-overview strong,body.hide-money .weekly-slide .weekly-accounts strong { filter:blur(7px); }
+@media(max-width:650px){
+  .weekly-period-controls { display:grid; gap:9px; }
+  .weekly-mode { justify-self:start; }
+  .weekly-period-inputs label { flex:1; min-width:0; }
+  .weekly-period-inputs { align-items:stretch; }
+  .weekly-turn button { width:44px; height:44px; }
 }

@@ -39,12 +39,14 @@ const Dashboard = (() => {
 
   /* ---------- Moeda de exibição ----------
      Cada transação guarda a moeda em que foi lançada (t.currency). O painel
-     converte os totais para ds.displayCurrency (PYG no modo Padrão).
+     converte os totais para a moeda do painel (no padrão: USD para PJ e PYG para PF).
      A lista de lançamentos sempre preserva a moeda e o valor originais. */
-  function isDefaultMode() { return normDisplayCur(ds && ds.displayCurrency) === "DEFAULT"; }
-  function dispCur() { return isDefaultMode() ? "PYG" : normCur(ds && ds.displayCurrency); }
+  function defaultPanelCurrency() { return ds?.profile === "pj" ? "USD" : "PYG"; }
+  function isDefaultMode() { return normDisplayCur(ds?.displayCurrency, ds?.profile) === "DEFAULT"; }
+  function dispCur() { return isDefaultMode() ? defaultPanelCurrency() : normCur(ds && ds.displayCurrency); }
   function entryCur() {
     if (!isDefaultMode()) return dispCur();
+    if (ds?.profile === "pj") return "USD";
     try {
       const remembered = localStorage.getItem("fyg:entry-currency:" + ds.id);
       if (CURRENCY_CODES.includes(remembered)) return remembered;
@@ -90,7 +92,7 @@ const Dashboard = (() => {
       try { localStorage.setItem("fyg:pf-last", ds.id); } catch { /* sem storage */ }
     }
     // Migração para multi-moeda: pastas antigas eram 100% em Real
-    ds.displayCurrency = normDisplayCur(ds.displayCurrency);
+    ds.displayCurrency = normDisplayCur(ds.displayCurrency, ds.profile);
     ds.transactions.forEach((t) => { if (!t.currency) t.currency = "BRL"; });
     if (!Array.isArray(ds.limits)) ds.limits = [];
     if (!Array.isArray(ds.metas)) ds.metas = [];
@@ -301,15 +303,16 @@ const Dashboard = (() => {
   function renderCurrencyControl() {
     $("#dash-hero")?.classList.toggle("precise-currency", curFrac(dispCur()) > 2);
     const code = $("#hero-cur-code");
-    if (code) code.textContent = isDefaultMode() ? "Padrão" : dispCur();
-    const caption = `Totais em ${isDefaultMode() ? "guaranis (PYG)" : dispCur()} · lançamentos na moeda original`;
+    if (code) code.textContent = isDefaultMode() ? (ds?.profile === "pj" ? "Padrão · USD" : "Padrão") : dispCur();
+    const defaultLabel = defaultPanelCurrency() === "USD" ? "dólares (USD)" : "guaranis (PYG)";
+    const caption = `Totais em ${isDefaultMode() ? defaultLabel : dispCur()} · lançamentos na moeda original`;
     for (const id of ["#currency-mode-caption", "#tx-currency-mode-caption"]) {
       const node = $(id); if (node) node.textContent = caption;
     }
-    $("#hero-cur")?.setAttribute("aria-label", "Moeda do painel: " + (isDefaultMode() ? "Padrão, totais em guaranis" : dispCur()));
+    $("#hero-cur")?.setAttribute("aria-label", "Moeda do painel: " + (isDefaultMode() ? "Padrão, totais em "+defaultLabel : dispCur()));
     const menu = $("#cur-menu");
     if (menu) {
-      menu.innerHTML = `<button type="button" class="pop-item pop-default ${isDefaultMode() ? "active" : ""}" data-cur="DEFAULT" aria-pressed="${isDefaultMode()}"><span>Padrão<small>Totais em guaranis (PYG). Cada lançamento na sua moeda.</small></span>${isDefaultMode() ? '<span class="pop-check">✓</span>' : ""}</button><div class="pop-sep"></div>` + CURRENCY_CODES.map((c) => `
+      menu.innerHTML = `<button type="button" class="pop-item pop-default ${isDefaultMode() ? "active" : ""}" data-cur="DEFAULT" aria-pressed="${isDefaultMode()}"><span>Padrão<small>Totais em ${defaultLabel}. Cada lançamento na sua moeda.</small></span>${isDefaultMode() ? '<span class="pop-check">✓</span>' : ""}</button><div class="pop-sep"></div>` + CURRENCY_CODES.map((c) => `
         <button type="button" class="pop-item ${!isDefaultMode() && c === dispCur() ? "active" : ""}" data-cur="${c}" aria-pressed="${!isDefaultMode() && c === dispCur()}">
           ${escapeHtml(CURRENCIES[c].symbol)} — ${escapeHtml(CURRENCIES[c].name)}
           ${!isDefaultMode() && c === dispCur() ? '<span class="pop-check">✓</span>' : ""}

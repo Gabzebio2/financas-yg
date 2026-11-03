@@ -29,7 +29,9 @@ const CURRENCY_CODES = Object.keys(CURRENCIES);
 function normCur(code) { return CURRENCY_CODES.includes(code) ? code : "BRL"; }
 // DEFAULT é uma preferência de exibição, nunca a moeda de uma transação.
 // Pastas legadas sem preferência continuam em BRL; novas pastas optam por DEFAULT.
-function normDisplayCur(code) { return code === "DEFAULT" ? "DEFAULT" : normCur(code); }
+function normDisplayCur(code, profile) {
+  return code === "DEFAULT" || (profile === "pj" && !CURRENCY_CODES.includes(code)) ? "DEFAULT" : normCur(code);
+}
 function curFrac(code) { return (CURRENCIES[normCur(code)]).frac; }
 
 // Formata um valor numérico na moeda indicada (padrão Real)
@@ -632,7 +634,7 @@ function normalizeStoredDataset(raw) {
     name: typeof raw.name === "string" ? raw.name : "Sem nome",
     createdAt: cleanISO(raw.createdAt, now),
     updatedAt: cleanISO(raw.updatedAt, now),
-    displayCurrency: normDisplayCur(raw.displayCurrency),
+    displayCurrency: normDisplayCur(raw.displayCurrency, raw.profile),
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: raw.transactions.map((t) => {
@@ -683,7 +685,7 @@ function sanitizeDataset(raw, opts) {
     updatedAt: cleanISO(raw.updatedAt, now),
     ...(Number.isSafeInteger(raw.whatsappRevision) && raw.whatsappRevision >= 0
       ? { whatsappRevision: raw.whatsappRevision } : {}),
-    displayCurrency: normDisplayCur(raw.displayCurrency),
+    displayCurrency: normDisplayCur(raw.displayCurrency, raw.profile),
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: [],

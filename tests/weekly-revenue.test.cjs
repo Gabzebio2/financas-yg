@@ -1,5 +1,15 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const X=require('../lib/xlsx.min.js'), weekly=require('../js/weekly-revenue.js');
+test('intervalo soma cada conta em centavos e distingue semana ausente de receita zero',()=>{
+  const row=(date,account,amount,type='receita',currency='USD')=>({date,account,amount,type,currency,weeklyRevenue:true});
+  const m=weekly.periodModel([row('2025-12-29','Estúdio',10.12),row('2026-01-12','Estúdio',0.11),
+    row('2026-01-12','Estúdio',0.02,'despesa'),row('2026-01-12','Loja',3),row('2026-01-19','Loja',0),
+    row('2026-01-12','Loja',100,'receita','BRL')],'USD');
+  assert.deepEqual(m.dates,['2025-12-29','2026-01-05','2026-01-12','2026-01-19']);
+  assert.deepEqual(weekly.periodSummary(m,0,2),{total:1321,reported:2,rows:[['Estúdio',1021],['Loja',300]]});
+  assert.equal(weekly.periodSummary(m,1,1).reported,0);
+  assert.deepEqual(weekly.periodSummary(m,3,3),{total:0,reported:1,rows:[['Loja',0]]});
+});
 function workbook(rows){return {SheetNames:['Semanal'],Sheets:{Semanal:X.utils.aoa_to_sheet(rows)}};}
 test('períodos vencem sobre acumulados, totais convertidos e abas de resumo; anos viram em dezembro',()=>{
   const p=weekly.parse(workbook([

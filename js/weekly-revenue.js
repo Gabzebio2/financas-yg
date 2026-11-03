@@ -85,6 +85,37 @@ const WeeklyRevenue = (() => {
     }
     return {added,updated,conflicts};
   }
-  return {parse,apply,normalized,key};
+  const nextWeek=date=>new Date(Date.parse(date+'T12:00:00Z')+604800000).toISOString().slice(0,10);
+  function periodModel(txs,unit){
+    const groups=new Map();
+    for(const t of txs){
+      if(!t.weeklyRevenue || t.currency!==unit)continue;
+      if(!groups.has(t.date))groups.set(t.date,{accounts:new Map(),total:0});
+      const group=groups.get(t.date),cents=Math.round(t.amount*100)*(t.type==='despesa'?-1:1);
+      group.total+=cents;group.accounts.set(t.account,(group.accounts.get(t.account)||0)+cents);
+    }
+    const dates=[];
+    for(const date of [...groups.keys()].sort()){
+      // Some sheets move a closing day by a day or two between months.
+      // Insert a missing week only when the gap is closer to two weeks than one.
+      while(dates.length && (Date.parse(date)-Date.parse(dates.at(-1)))/86400000>10){
+        dates.push(nextWeek(dates.at(-1)));
+      }
+      dates.push(date);
+    }
+    return {dates,groups,unit};
+  }
+  function periodSummary(model, start, end){
+    const {dates,groups}=model, accounts=new Map();
+    let total=0, reported=0;
+    for(const date of dates.slice(start,end+1)){
+      const week=groups.get(date);if(!week)continue;
+      reported++;total+=week.total;
+      for(const [a,v] of week.accounts)accounts.set(a,(accounts.get(a)||0)+v);
+    }
+    const rows=[...accounts].sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]));
+    return {total,reported,rows};
+  }
+  return {parse,apply,normalized,key,nextWeek,periodModel,periodSummary};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=WeeklyRevenue;

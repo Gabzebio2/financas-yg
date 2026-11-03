@@ -7,7 +7,6 @@ const BusinessPanel = (() => {
   const localeAmount=v=>new Intl.NumberFormat('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(v);
   const signed=t=>t.type==='despesa'?-t.amount:t.amount;
   const money=(v,c)=>localeAmount(v)+' '+c;
-  const nextWeek=date=>new Date(Date.parse(date+'T12:00:00Z')+604800000).toISOString().slice(0,10);
   const owner=()=>typeof Cloud!=='undefined'?Cloud.getSyncState().owner:null;
   let currentId=null, selected='', context=null, preview=null, generation=0, initial=new Map();
   function folder(){
@@ -29,24 +28,112 @@ const BusinessPanel = (() => {
     }
     return [...names.values()];
   }
+  // Each page ends on a recorded closing date. The same window size is used
+  // for swiping, arrows and shortcuts so all navigation produces the same sum.
+  let periodSize=1, multiple=false, model=null, viewKey='', resizeObserver=null;
+  const spanLabel=(start,end)=>start===end?isoLabel(end):isoLabel(start)+' a '+isoLabel(end);
+  function slideHTML(end){
+    const {dates,groups,unit}=model,from=end-periodSize+1;
+    const {total,reported,rows}=WeeklyRevenue.periodSummary(model,from,end);
+    const recent=dates.slice(multiple?Math.max(from,end-7):Math.max(0,end-7),end+1);
+    const max=Math.max(1,...recent.map(d=>Math.abs(groups.get(d)?.total||0)));
+    const bars=recent.map(d=>{
+      const value=groups.get(d)?.total,label='Ver semana de '+isoLabel(d)+' · '+(value==null?'Sem registro':money(value/100,unit));
+      return `<button type="button" data-week-date="${esc(d)}" title="${esc(label)}" aria-label="${esc(label)}"><i class="${value<0?'negative':''}" style="height:${value==null?0:Math.max(3,Math.abs(value)/max*100)}%"></i><small>${isoLabel(d).slice(0,5)}</small></button>`;
+    }).join('');
+    const title=multiple?(periodSize>8?'Últimas 8 semanas do período':'Semanas do período'):'Últimas semanas';
+    const missing=periodSize-reported;
+    const coverage=missing?' · '+missing+(missing===1?' sem registro':' sem registros'):'';
+    return `<div class="weekly-overview"><div><small>${multiple?'Ganho no período':'Ganho da semana'}</small><strong>${reported?esc(money(total/100,unit)):'Sem registro'}</strong></div>
+      <span class="weekly-period-label">${multiple?periodSize+' '+(periodSize===1?'semana':'semanas')+coverage:'Encerramento'}<b>${spanLabel(dates[from],dates[end])}</b></span></div>
+      <div class="weekly-grid"><section><h3>${title}</h3><div class="weekly-trend">${bars}</div></section>
+      <section><h3>Ganhos por conta</h3>${rows.length?`<ul class="weekly-accounts">${rows.map(([a,v])=>`<li><span>${esc(a)}</span><strong>${esc(money(v/100,unit))}</strong></li>`).join('')}</ul>`:'<p class="weekly-empty">Nenhuma conta tem ganhos anotados neste período.</p>'}</section></div>
+      ${multiple?'':`<button type="button" class="btn-link" data-week-edit>${reported?'Editar':'Anotar'} esta semana</button>`}`;
+  }
+  function selectedIndex(){return model.dates.indexOf(selected);}
+  function syncControls(){
+    const {dates}=model,end=selectedIndex(),start=end-periodSize+1;
+    el('weekly-prev').disabled=start<=0;el('weekly-next').disabled=end>=dates.length-1;
+    el('weekly-view-date').value=selected;
+    if(multiple){
+      el('weekly-from').value=dates[start];
+      for(const option of el('weekly-from').options)option.disabled=option.value>selected;
+      for(const option of el('weekly-view-date').options)option.disabled=option.value<dates[start];
+      for(const b of el('weekly-content').querySelectorAll('[data-week-size]'))b.setAttribute('aria-pressed',Number(b.dataset.weekSize)===periodSize?'true':'false');
+    }
+    const rail=el('weekly-rail');
+    for(const [i,slide] of Array.from(rail.children).entries()){
+      const ix=i+periodSize-1,active=ix===end;
+      slide.inert=!active;
+      if(Math.abs(ix-end)<=1 && !slide.hasChildNodes())slide.innerHTML=slideHTML(ix);
+      if(Math.abs(ix-end)>1 && slide.hasChildNodes())slide.replaceChildren();
+    }
+    el('weekly-announcement').textContent=(multiple?'Período de ':'Semana até ')+spanLabel(dates[start],selected);
+  }
+  function positionRail(){
+    const rail=el('weekly-rail');if(!rail)return;
+    const width=rail.getBoundingClientRect().width;
+    if(width)rail.scrollLeft=(selectedIndex()-periodSize+1)*width;
+  }
+  function goToEnd(index){
+    const last=model.dates.length-1;
+    const ix=Math.max(periodSize-1,Math.min(last,index));
+    selected=model.dates[ix];syncControls();positionRail();
+  }
+  function mount(){
+    const host=el('weekly-content'),{dates}=model;
+    const active=document.activeElement,focusId=host.contains(active)?active.id:'';
+    const options=dates.slice().reverse().map(d=>`<option value="${d}">${isoLabel(d)}</option>`).join('');
+    resizeObserver?.disconnect();
+    host.innerHTML=`<div class="weekly-period-controls">
+      <div class="weekly-mode" role="group" aria-label="Período das receitas"><button type="button" id="weekly-single" aria-pressed="${!multiple}">Uma semana</button><button type="button" id="weekly-multiple" aria-pressed="${multiple}" ${dates.length<2?'disabled':''}>Somar semanas</button></div>
+      <div class="weekly-period-inputs">${multiple?`<label>Primeira semana até<select id="weekly-from">${options}</select></label>`:''}
+      <label>${multiple?'Última semana até':'Semana até'}<select id="weekly-view-date">${options}</select></label></div>
+      ${multiple?`<div class="weekly-presets" role="group" aria-label="Quantidade de semanas">${[2,4,8].map(n=>`<button type="button" data-week-size="${n}" ${dates.length<n?'disabled':''}>${n} semanas</button>`).join('')}</div>`:''}</div>
+      <div class="weekly-turn"><span>Deslize para ver ${multiple?'outro período':'outra semana'}</span><div>
+        <button type="button" id="weekly-prev" aria-label="Voltar uma semana">‹</button><button type="button" id="weekly-next" aria-label="Avançar uma semana">›</button></div></div>
+      <div id="weekly-rail" class="weekly-rail" role="region" aria-label="Receitas semanais, use as setas para navegar" tabindex="0">
+      ${dates.slice(periodSize-1).map(d=>`<div class="weekly-slide" role="group" aria-label="Até ${isoLabel(d)}"></div>`).join('')}</div><span id="weekly-announcement" class="sr-only" aria-live="polite"></span>`;
+    syncControls();positionRail();
+    const rail=el('weekly-rail');
+    rail.addEventListener('scroll',()=>{
+      if(rail!==el('weekly-rail'))return;
+      const width=rail.getBoundingClientRect().width;
+      if(!width)return;
+      const ix=Math.min(dates.length-1,periodSize-1+Math.max(0,Math.round(rail.scrollLeft/width)));
+      if(selected!==dates[ix]){selected=dates[ix];syncControls();}
+    });
+    if(typeof ResizeObserver!=='undefined'){
+      let previousWidth=rail.clientWidth;
+      resizeObserver=new ResizeObserver(()=>{if(rail.clientWidth!==previousWidth){previousWidth=rail.clientWidth;positionRail();}});
+      resizeObserver.observe(rail);
+    }
+    if(focusId)el(focusId)?.focus({preventScroll:true});
+  }
+  function setWindow(size,end,range){
+    const {dates}=model;
+    periodSize=Math.min(dates.length,Math.max(1,size));
+    selected=dates[Math.max(periodSize-1,Math.min(end,dates.length-1))];
+    multiple=range;mount();
+  }
   function render(ds){
     const panel=el('weekly-panel');if(!panel)return;
     panel.classList.toggle('hidden',ds.profile!=='pj');
-    if(currentId!==ds.id){currentId=ds.id;selected='';}
+    if(currentId!==ds.id){
+      resizeObserver?.disconnect();currentId=ds.id;selected='';periodSize=1;multiple=false;model=null;viewKey='';
+    }
     if(ds.profile!=='pj')return;
-    const dates=weeks(ds), unit=ds.weekly?.currency||'USD';
-    if(!dates.includes(selected))selected=dates.at(-1)||'';
-    if(!selected){el('weekly-content').innerHTML='<p class="weekly-empty">Importe a aba Semanal da sua planilha ou anote a primeira semana. Aqui você vai acompanhar o ganho de cada conta.</p>';return;}
-    const all=ds.transactions.filter(t=>t.weeklyRevenue&&t.currency===unit);
-    const sums=new Map();for(const t of all)sums.set(t.date,(sums.get(t.date)||0)+signed(t));
-    const recent=dates.filter(d=>d<=selected).slice(-8), max=Math.max(1,...recent.map(d=>Math.abs(sums.get(d)||0)));
-    const current=all.filter(t=>t.date===selected);
-    const accounts=new Map();for(const t of current)accounts.set(t.account,(accounts.get(t.account)||0)+signed(t));
-    const rows=[...accounts].sort((a,b)=>b[1]-a[1]);
-    el('weekly-content').innerHTML=`<div class="weekly-overview"><div><small>Ganho da semana</small><strong>${esc(money(sums.get(selected)||0,unit))}</strong></div><label>Semana até <select id="weekly-view-date">${dates.slice().reverse().map(d=>`<option value="${esc(d)}" ${d===selected?'selected':''}>${isoLabel(d)}</option>`).join('')}</select></label></div>
-      <div class="weekly-grid"><section><h3>Últimas semanas</h3><div class="weekly-trend">${recent.map(d=>`<button type="button" data-week-date="${esc(d)}" aria-pressed="${d===selected}" title="${isoLabel(d)} · ${esc(money(sums.get(d)||0,unit))}" aria-label="${isoLabel(d)} · ${esc(money(sums.get(d)||0,unit))}"><i style="height:${Math.max(3,Math.abs(sums.get(d)||0)/max*100)}%" class="${sums.get(d)<0?'negative':''}"></i><small>${isoLabel(d).slice(0,5)}</small></button>`).join('')}</div></section>
-      <section><h3>Ganhos por conta</h3><ul class="weekly-accounts">${rows.map(([a,v])=>`<li><span>${esc(a)}</span><strong>${esc(money(v,unit))}</strong></li>`).join('')}</ul></section></div>
-      <button type="button" id="weekly-correct" class="btn-link">Editar esta semana</button>`;
+    const unit=ds.weekly?.currency||'USD', txs=ds.transactions.filter(t=>t.weeklyRevenue&&t.currency===unit);
+    const nextKey=JSON.stringify([ds.id,unit,txs.map(t=>[t.date,t.account,t.type,t.amount])]);
+    // Preserve native scrolling and keyboard focus through rate/summary refreshes.
+    if(nextKey===viewKey && model?.dates.includes(selected) && el('weekly-view-date')?.value===selected)return;
+    viewKey=nextKey;model=WeeklyRevenue.periodModel(txs,unit);
+    if(!model.dates.length){
+      resizeObserver?.disconnect();multiple=false;periodSize=1;selected='';
+      el('weekly-content').innerHTML='<p class="weekly-empty">Importe a aba Semanal da sua planilha ou anote a primeira semana. Aqui você vai acompanhar o ganho de cada conta.</p>';return;
+    }
+    const ix=model.dates.indexOf(selected);
+    setWindow(multiple?periodSize:1,ix<0?model.dates.length-1:ix,multiple&&model.dates.length>1);
   }
   function sheetId(url){
     if(!url.trim())return '';
@@ -121,7 +208,7 @@ const BusinessPanel = (() => {
   }
   function openEdit(existing){
     const ds=start(),last=weeks(ds).at(-1);
-    el('weekly-edit-date').value=existing&&selected?selected:last?nextWeek(last):todayISO();
+    el('weekly-edit-date').value=existing&&selected?selected:last?WeeklyRevenue.nextWeek(last):todayISO();
     el('weekly-edit-currency').value=ds.weekly?.currency||'USD';
     el('weekly-edit-currency').disabled=!!ds.weekly?.currency;
     el('weekly-new-name').value='';fillWeek();el('weekly-edit-dialog').showModal();
@@ -163,9 +250,32 @@ const BusinessPanel = (() => {
       if(initial.has(normalizedKey(a))){el('weekly-edit-state').textContent='Essa conta já está na lista.';return;}
       addInput(a,null);el('weekly-new-name').value='';el('weekly-account-inputs').lastElementChild.querySelector('input').focus();
     });
-    function select(date){const ds=Store.loadDataset(currentId);if(ds){selected=date;render(ds);}}
-    el('weekly-content').addEventListener('change',e=>{if(e.target.id==='weekly-view-date')select(e.target.value);});
-    el('weekly-content').addEventListener('click',e=>{const b=e.target.closest('button');if(b?.dataset.weekDate)select(b.dataset.weekDate);else if(b?.id==='weekly-correct')openEdit(true);});
+    const host=el('weekly-content');
+    host.addEventListener('change',e=>{
+      if(!model)return;
+      const end=selectedIndex(), ix=model.dates.indexOf(e.target.value);
+      if(ix<0)return;
+      if(e.target.id==='weekly-from')setWindow(end-ix+1,end,true);
+      else if(e.target.id==='weekly-view-date'){
+        if(multiple)setWindow(ix-(end-periodSize+1)+1,ix,true);else goToEnd(ix);
+      }
+    });
+    host.addEventListener('click',e=>{
+      const b=e.target.closest('button');if(!b||!model||b.disabled)return;
+      const end=selectedIndex();
+      if(b.id==='weekly-prev')goToEnd(end-1);
+      else if(b.id==='weekly-next')goToEnd(end+1);
+      else if(b.id==='weekly-single' && multiple)setWindow(1,end,false);
+      else if(b.id==='weekly-multiple' && !multiple)setWindow(Math.min(4,model.dates.length),end,true);
+      else if(b.dataset.weekSize){setWindow(Number(b.dataset.weekSize),end,true);host.querySelector('[data-week-size="'+b.dataset.weekSize+'"]')?.focus({preventScroll:true});}
+      else if(b.dataset.weekDate)setWindow(1,model.dates.indexOf(b.dataset.weekDate),false);
+      else if(b.hasAttribute('data-week-edit'))openEdit(true);
+    });
+    host.addEventListener('keydown',e=>{
+      if(e.target.id!=='weekly-rail')return;
+      const end=selectedIndex(), keys={ArrowLeft:end-1,ArrowRight:end+1,Home:periodSize-1,End:model.dates.length-1};
+      if(Object.hasOwn(keys,e.key)){e.preventDefault();goToEnd(keys[e.key]);}
+    });
   });
   return {render};
 })();

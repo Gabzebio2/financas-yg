@@ -141,6 +141,17 @@ test('Padrão soma PYG convertido e mantém a moeda original dos lançamentos', 
   assert.equal(JSON.stringify(ds),before,'Renderização não pode regravar amounts/currencies nem o dataset');
 });
 
+test('pasta empresarial usa USD no padrão, preservando origem e escolhas explícitas', () => {
+  const h=harness();
+  const ds=dataset({profile:'pj',transactions:[tx('entrada',{type:'receita',currency:'USD',amount:17}),tx('saida',{currency:'BRL',amount:10})]});
+  h.load(ds);h.api.renderAll();
+  assert.equal(h.api.dispCur(),'USD');assert.equal(h.api.entryCur(),'USD');
+  assert.equal(h.get('#hero-rec').textContent,h.money(17,'USD'));assert.match(h.get('#currency-mode-caption').textContent,/dólares \(USD\)/);
+  assert.equal(h.api.txDisplayCurrency(ds.transactions[1]),'BRL');
+  ds.displayCurrency='EUR';assert.equal(h.api.dispCur(),'EUR');assert.equal(h.api.entryCur(),'EUR');
+  delete ds.displayCurrency;assert.equal(h.api.dispCur(),'USD');
+});
+
 test('lista distingue USD e CLP em qualquer modo sem repetir códigos de stablecoins', () => {
   const h = harness();
   const ds = dataset({transactions:[

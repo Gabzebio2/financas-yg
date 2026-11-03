@@ -14,7 +14,7 @@
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261103-photo-home">
+<link rel="stylesheet" href="css/design.css?v=20261103-weekly-periods">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 <link rel="stylesheet" href="css/receipt-jobs.css?v=20261031-notifications">
 </head>
@@ -263,11 +263,6 @@
       </div>
     </div>
 
-    <section id="weekly-panel" class="weekly-panel card hidden" aria-labelledby="weekly-title">
-      <div class="weekly-heading"><div><p class="weekly-kicker">Empresa</p><h2 id="weekly-title">Receitas por conta</h2></div>
-        <div class="weekly-actions"><button type="button" class="btn btn-ghost btn-sm" id="weekly-import">Importar planilha</button><button type="button" class="btn btn-primary btn-sm" id="weekly-edit">Anotar semana</button></div></div>
-      <div id="weekly-content"></div>
-    </section>
     <p id="currency-warning" class="currency-warning hidden" role="status"></p>
     <dialog id="receipt-jobs" class="receipt-jobs" aria-labelledby="receipt-notifications-title">
       <header class="receipt-notifications-header"><div><h2 id="receipt-notifications-title">Notificações</h2><p>Leituras e lançamentos desta pasta</p></div><button type="button" class="btn-icon" id="receipt-notifications-close" aria-label="Fechar notificações"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
@@ -354,6 +349,12 @@
     </div>
 
     <p class="currency-auto-status" id="currency-auto-status" role="status">Cotações automáticas</p>
+
+    <section id="weekly-panel" class="weekly-panel card hidden" aria-labelledby="weekly-title">
+      <div class="weekly-heading"><div><p class="weekly-kicker">Empresa</p><h2 id="weekly-title">Receitas por conta</h2></div>
+        <div class="weekly-actions"><button type="button" class="btn btn-ghost btn-sm" id="weekly-import">Importar planilha</button><button type="button" class="btn btn-primary btn-sm" id="weekly-edit">Anotar semana</button></div></div>
+      <div id="weekly-content"></div>
+    </section>
 
     <details class="card fx-breakdown hidden" id="currency-breakdown" open>
       <summary><div><h3>Por moeda</h3><p id="currency-breakdown-hint">Valores originais. Barras comparadas pelo equivalente em PYG.</p></div><span class="fx-chevron" aria-hidden="true">⌄</span></summary>
@@ -818,12 +819,12 @@
 <script src="lib/supabase.min.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
 <script src="js/import-dates.js?v=20261030-background"></script>
-<script src="js/app.js?v=20261103-photo-home"></script>
+<script src="js/app.js?v=20261103-weekly-periods"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
 <script src="js/importer.js?v=20261027-import"></script>
-<script src="js/weekly-revenue.js?v=20261103-weekly"></script>
-<script src="js/business.js?v=20261103-weekly"></script>
-<script src="js/dashboard.js?v=20261103-weekly"></script>
+<script src="js/weekly-revenue.js?v=20261103-weekly-periods"></script>
+<script src="js/business.js?v=20261103-weekly-periods"></script>
+<script src="js/dashboard.js?v=20261103-weekly-periods"></script>
 <script src="js/receipt.js?v=20261030-background"></script>
 <script src="js/batch.js?v=20261103-photo-home"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
