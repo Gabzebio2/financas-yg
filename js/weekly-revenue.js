@@ -105,17 +105,17 @@ const WeeklyRevenue = (() => {
     }
     return {dates,groups,unit};
   }
-  function periodSummary(model, start, end){
-    const {dates,groups}=model, accounts=new Map();
+  function selectionSummary(model, dates){
+    const accounts=new Map();
     let total=0, reported=0;
-    for(const date of dates.slice(start,end+1)){
-      const week=groups.get(date);if(!week)continue;
+    for(const date of new Set(dates)){
+      const week=model.groups.get(date);if(!week)continue;
       reported++;total+=week.total;
       for(const [a,v] of week.accounts)accounts.set(a,(accounts.get(a)||0)+v);
     }
     const rows=[...accounts].sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]));
     return {total,reported,rows};
   }
-  return {parse,apply,normalized,key,nextWeek,periodModel,periodSummary};
+  return {parse,apply,normalized,key,nextWeek,periodModel,selectionSummary};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=WeeklyRevenue;

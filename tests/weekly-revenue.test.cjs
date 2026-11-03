@@ -6,9 +6,11 @@ test('intervalo soma cada conta em centavos e distingue semana ausente de receit
     row('2026-01-12','Estúdio',0.02,'despesa'),row('2026-01-12','Loja',3),row('2026-01-19','Loja',0),
     row('2026-01-12','Loja',100,'receita','BRL')],'USD');
   assert.deepEqual(m.dates,['2025-12-29','2026-01-05','2026-01-12','2026-01-19']);
-  assert.deepEqual(weekly.periodSummary(m,0,2),{total:1321,reported:2,rows:[['Estúdio',1021],['Loja',300]]});
-  assert.equal(weekly.periodSummary(m,1,1).reported,0);
-  assert.deepEqual(weekly.periodSummary(m,3,3),{total:0,reported:1,rows:[['Loja',0]]});
+  assert.deepEqual(weekly.selectionSummary(m,m.dates.slice(0,3)),{total:1321,reported:2,rows:[['Estúdio',1021],['Loja',300]]});
+  assert.equal(weekly.selectionSummary(m,[m.dates[1]]).reported,0);
+  assert.deepEqual(weekly.selectionSummary(m,[m.dates[3]]),{total:0,reported:1,rows:[['Loja',0]]});
+  assert.deepEqual(weekly.selectionSummary(m,[m.dates[0],m.dates[0],m.dates[3]]),{total:1012,reported:2,rows:[['Estúdio',1012],['Loja',0]]});
+  assert.deepEqual(weekly.selectionSummary(m,[]),{total:0,reported:0,rows:[]});
 });
 function workbook(rows){return {SheetNames:['Semanal'],Sheets:{Semanal:X.utils.aoa_to_sheet(rows)}};}
 test('períodos vencem sobre acumulados, totais convertidos e abas de resumo; anos viram em dezembro',()=>{
