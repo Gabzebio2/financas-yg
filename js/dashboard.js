@@ -87,6 +87,7 @@ const Dashboard = (() => {
 
   /* ---------- Abertura ---------- */
   function open(id) {
+    if (!accountFolderOwner() || !Cloud.ownsFolder(id)) { goHome(); return; }
     const loaded = Store.loadDataset(id);
     if (!loaded) { toast("Não foi possível abrir esta pasta. Exporte um backup para preservar os dados e verificar o arquivo."); goHome(); return; }
     billConfirmations.forEach(({timer}) => clearTimeout(timer));
@@ -131,6 +132,20 @@ const Dashboard = (() => {
     showScreen("screen-dash");
     renderAll();
     if(typeof ReceiptJobs!=="undefined")ReceiptJobs.refresh();
+  }
+
+  function closeFolder() {
+    ds = null;
+    editingId = null;
+    receiptRead = null;
+    txModalRevision++;
+    selectedTx.clear();
+    undoStack.length = 0;
+    pendingParcTx = pendingAdvance = null;
+    clearTimeout(billMidnightTimer);
+    billConfirmations.forEach(({timer}) => clearTimeout(timer));
+    billConfirmations.clear();
+    $("#acct-menu").innerHTML = "";
   }
 
   // Uma sincronização pode atualizar a pasta enquanto a lista ou um
@@ -443,6 +458,7 @@ const Dashboard = (() => {
   ];
 
   function createEmpresaDataset(name = "Empresa") {
+    if (!accountFolderOwner()) { goHome(); showFolderLogin(); return; }
     const nds = Store.createDataset(name);
     nds.profile = "pj";
     nds.categories = [];
@@ -453,7 +469,7 @@ const Dashboard = (() => {
   }
 
   function renderAcctMenu() {
-    const idx = Store.loadIndex();
+    const idx = accountFolderIndex();
     const isPj = (e) => e.profile === "pj";
     const companies = idx.filter(isPj);
     const curIsPj = !!(ds && ds.profile === "pj");
@@ -2509,5 +2525,5 @@ const Dashboard = (() => {
     return n;
   }
 
-  return { open, openTxModal, createEmpresaDataset, refreshFromStore, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, isEditingTransaction: () => !!editingId, refitHero: fitHeroFlow };
+  return { open, openTxModal, closeFolder, createEmpresaDataset, refreshFromStore, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, isEditingTransaction: () => !!editingId, refitHero: fitHeroFlow };
 })();

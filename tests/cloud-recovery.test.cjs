@@ -290,14 +290,39 @@ test("pendências da conta A e alterações após logout nunca são enviadas à 
   assert.equal(h.remote("folder0001", "user-a").data.transactions.length, 2);
 });
 
-test("login novo exige vínculo explícito, enquanto sessão legada preexistente migra com segurança", async () => {
+test("login novo e sessão restaurada exigem vínculo explícito de pastas sem proprietário", async () => {
   const h = harness(); h.create(); h.login("user-b");
   assert.equal(h.cloud.getSyncState().unlinkedCount, 1);
   await h.sync(); assert.equal(h.server.rows.size, 0);
   assert.equal(h.cloud.linkLocalDatasets(), 1); await h.sync(); assert.equal(h.server.rows.size, 1);
   const legacy = harness(); legacy.create(); legacy.login("user-a", "INITIAL_SESSION");
-  assert.equal(legacy.cloud.getSyncState().unlinkedCount, 0);
-  await legacy.sync(); assert.equal(legacy.server.rows.size, 1);
+  assert.equal(legacy.cloud.getSyncState().unlinkedCount, 1);
+  await legacy.sync(); assert.equal(legacy.server.rows.size, 0);
+});
+
+test("o catálogo visível segue a sessão, preserva o armazenamento e separa contas e pastas sem vínculo", async () => {
+  const h = harness();
+  const visible = () => Array.from(vm.runInContext("accountFolderIndex().map(e=>e.id)", h.context)).sort();
+  h.create("localonly");assert.deepEqual(visible(),[]);
+  h.login("user-a","INITIAL_SESSION");assert.deepEqual(visible(),[]);
+  h.create("folderofa");await h.sync();assert.deepEqual(visible(),["folderofa"]);
+  await h.cloud.logout();assert.deepEqual(visible(),[]);
+  h.login("user-b");h.create("folderofb");await h.sync();assert.deepEqual(visible(),["folderofb"]);
+  h.login("user-a");assert.deepEqual(visible(),["folderofa"]);
+  assert.deepEqual(Array.from(h.Store.loadIndex(),e=>e.id).sort(),["folderofa","folderofb","localonly"]);
+  const other=harness({server:h.server});other.login("user-a");await other.sync();
+  assert.deepEqual(Array.from(vm.runInContext("accountFolderIndex().map(e=>e.id)",other.context)),["folderofa"]);
+  assert(!other.local("folderofb")&&!other.local("localonly"));
+});
+
+test("um cache sem dono só aparece se for igual à pasta confirmada na nuvem", async () => {
+  const h=harness(), same=dataset("confirmed01"), different=dataset("conflict001");
+  h.Store.saveDatasets([same,different]);
+  const remoteDifferent={...copy(different),name:"Versão da nuvem"};
+  for(const entry of [same,remoteDifferent])h.server.rows.set("user-a|"+entry.id,{id:entry.id,user_id:"user-a",updated_at:entry.updatedAt,data:copy(entry)});
+  h.login("user-a","INITIAL_SESSION");assert(!h.cloud.ownsFolder(same.id));await h.sync();
+  assert(h.cloud.ownsFolder(same.id));assert(!h.cloud.ownsFolder(different.id));
+  assert.equal(h.remote(different.id).data.name,"Versão da nuvem");assert.equal(h.local(different.id).name,different.name);
 });
 
 test("autosync desligado continua registrando fila e interrompe uma tentativa automática ativa", async () => {

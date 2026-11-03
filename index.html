@@ -59,13 +59,13 @@
 </header>
 
 <main id="main" tabindex="-1">
-  <div class="workspace-bar"><span id="workspace-location">Visão geral / Minhas pastas</span><div class="workspace-actions"><span class="connection-status" id="connection-status" role="status"><i></i>Modo local</span><button type="button" class="theme-toggle" id="theme-toggle" data-theme-toggle aria-label="Ativar modo claro" title="Ativar modo claro" aria-pressed="true"><svg data-theme-icon="sun" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg data-theme-icon="moon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14a8 8 0 0 1-10-10 8.5 8.5 0 1 0 10 10Z"/></svg><span data-theme-label>Modo claro</span></button></div></div>
+  <div class="workspace-bar"><span id="workspace-location">Visão geral / Minhas pastas</span><div class="workspace-actions"><span class="connection-status" id="connection-status" role="status"><i></i>Verificando conta</span><button type="button" class="theme-toggle" id="theme-toggle" data-theme-toggle aria-label="Ativar modo claro" title="Ativar modo claro" aria-pressed="true"><svg data-theme-icon="sun" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg><svg data-theme-icon="moon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14a8 8 0 0 1-10-10 8.5 8.5 0 1 0 10 10Z"/></svg><span data-theme-label>Modo claro</span></button></div></div>
 
   <!-- ===================== HOME ===================== -->
   <section id="screen-home" class="screen">
     <header class="home-folder-head">
       <h1>Minhas pastas</h1>
-      <div class="home-create"><button type="button" class="btn btn-ghost" id="card-new">Pasta pessoal</button><button type="button" class="btn btn-primary" id="card-business"><span aria-hidden="true">＋</span> Pasta empresarial</button></div>
+      <div class="home-create"><button type="button" class="btn btn-ghost" id="card-new" disabled>Pasta pessoal</button><button type="button" class="btn btn-primary" id="card-business" disabled><span aria-hidden="true">＋</span> Pasta empresarial</button></div>
     </header>
     <div id="folders-grid" class="folders-grid"></div>
     <div class="home-tools">
@@ -147,10 +147,10 @@
     <details class="home-disclosure">
       <summary><span>Importação e backup</span></summary>
       <div class="home-files">
-        <button type="button" class="btn btn-ghost btn-sm" id="card-upload">Importar planilha</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="card-upload" disabled>Importar planilha</button>
       <div class="backup-btns">
-        <button class="btn btn-ghost btn-sm" id="btn-export-backup" title="Salva todas as pastas em um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Exportar backup</button>
-        <button class="btn btn-ghost btn-sm" id="btn-import-backup" title="Restaura pastas de um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg> Importar backup</button>
+        <button class="btn btn-ghost btn-sm" id="btn-export-backup" disabled title="Salva todas as pastas em um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Exportar backup</button>
+        <button class="btn btn-ghost btn-sm" id="btn-import-backup" disabled title="Restaura pastas de um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg> Importar backup</button>
       </div>
     <p class="hint" id="storage-hint">Seus dados ficam salvos neste navegador, neste computador. Exporte um backup de vez em quando por segurança.</p>
       </div>
@@ -825,21 +825,21 @@
 <script src="lib/supabase.min.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
 <script src="js/import-dates.js?v=20261103-date-groups"></script>
-<script src="js/app.js?v=20261103-payables"></script>
+<script src="js/app.js?v=20261103-account-folders"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
 <script src="js/importer.js?v=20261027-import"></script>
 <script src="js/weekly-revenue.js?v=20261103-week-cards"></script>
 <script src="js/business.js?v=20261103-bills"></script>
-<script src="js/dashboard.js?v=20261103-currency-mix"></script>
+<script src="js/dashboard.js?v=20261103-account-folders"></script>
 <script src="js/receipt.js?v=20261103-date-groups"></script>
 <script src="js/batch.js?v=20261103-date-groups"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
 <script src="js/cloud-archive.js?v=20261023-guarani"></script>
 <script src="js/cloud-merge.js?v=20261023-pilot"></script>
-<script src="js/cloud.js?v=20261103-photo-home"></script>
+<script src="js/cloud.js?v=20261103-account-folders"></script>
 <script src="js/receipt-jobs.js?v=20261103-photo-home"></script>
-<script src="js/navigation.js?v=20261103-photo-home"></script>
+<script src="js/navigation.js?v=20261103-account-folders"></script>
 <script src="js/whatsapp.js?v=20261023-pilot"></script>
 </body>
 </html>

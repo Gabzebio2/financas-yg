@@ -52,13 +52,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (accountState) accountState.textContent = !connected ? "Entrar na conta" : invalidRemote ? "Precisa de atenção" : pending ? "Envio pendente" : "Conta conectada";
     const repeatedInvalidNotice = invalidRemote && state?.error === `${invalidRemote} pasta(s) da nuvem têm dados inválidos e foram preservadas sem alterações. Confira essas pastas antes de sincronizá-las.`;
     const errorDetail = repeatedInvalidNotice ? "" : state?.error;
-    let label = connected ? "Conta conectada" : "Modo local";
-    let detail = "Dados salvos neste navegador. Exporte um backup para guardar uma cópia.";
+    let label = connected ? "Conta conectada" : "Entre na conta";
+    let detail = connected ? "Exibindo as pastas desta conta." : "Entre para ver suas pastas.";
     if (state) {
       const labels = {
-        local: "Modo local", offline: "Sem conexão · salvo aqui", pending: "Envio pendente",
+        local: connected ? "Conta conectada" : "Entre na conta", offline: "Sem conexão · salvo aqui", pending: "Envio pendente",
         syncing: "Sincronizando…", synced: "Nuvem em dia", error: "Nuvem indisponível",
-        "auth-required": "Entre para sincronizar", unlinked: "Pastas locais",
+        "auth-required": "Entre para sincronizar", unlinked: connected ? "Conta conectada" : "Entre na conta",
       };
       label = labels[state.status] || label;
       if (pending) label = state.status === "syncing" ? "Sincronizando…" : `${pending} pasta${pending === 1 ? "" : "s"} pendente${pending === 1 ? "" : "s"}`;
@@ -74,7 +74,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (state.status === "auth-required") detail += " Entre novamente na mesma conta para enviar as pendências.";
       if (!state.queueDurable) detail += " Não foi possível guardar a fila de envio. Exporte um backup e libere espaço no navegador.";
     }
-    if (offline) { label = pending ? `${pending} pendente${pending === 1 ? "" : "s"} · offline` : "Sem conexão · modo local"; detail = "Você pode continuar usando seus dados neste navegador. O envio aguarda a conexão voltar."; }
+    if (offline) { label = pending ? `${pending} pendente${pending === 1 ? "" : "s"} · offline` : "Sem conexão"; detail = connected ? "As pastas desta conta já salvas aqui continuam disponíveis." : "Conecte-se para entrar e ver suas pastas."; }
     el.classList.toggle("offline", offline || !!pending || ["error", "auth-required"].includes(state?.status));
     const dot = document.createElement("i"); dot.setAttribute("aria-hidden", "true");
     el.replaceChildren(dot, document.createTextNode(label));

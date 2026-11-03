@@ -36,7 +36,7 @@ function harness(extraCloud = {}) {
       },
     },
     setTimeout: () => 1, clearTimeout() {},
-    Cloud: { onLocalChange() { notifyCount++; }, ...extraCloud },
+    Cloud: { getFolderOwner:()=>"test-owner", ownsFolder:()=>true, onLocalChange() { notifyCount++; }, ...extraCloud },
     FileReader: class {
       readAsText(file) { this.result = file.content; this.onload(); }
     },

@@ -43,10 +43,7 @@ const Cloud = (() => {
   let passkeysEnabled = null, signupsAllowed = null, authOptionsLoading = false, authOptionsError = "";
   let authOperation = null, authSettingsRequest = null, authCooldownTimer = null, linkCooldownUntil = 0;
   let pendingCodeEmail = "", recoveryOwner = "";
-  // O SDK pode emitir INITIAL_SESSION antes de SIGNED_IN ao abrir um link novo.
-  // Esse retorno nunca autoriza vincular automaticamente pastas locais antigas.
   const authCallbackParameters = String(location.hash || "") + "&" + String(location.search || "");
-  const openedAuthLink = /(?:^|[?#&])(?:access_token|refresh_token|code|token_hash|error|error_code|error_description)=/.test(authCallbackParameters);
   const authCallbackError = /(?:^|[?#&])error_code=otp_expired(?:&|$)/.test(authCallbackParameters)
     ? "Este link de acesso expirou ou já foi usado. Peça um novo e use somente o e-mail mais recente."
     : /(?:^|[?#&])(?:error|error_code)=/.test(authCallbackParameters)
@@ -78,6 +75,14 @@ const Cloud = (() => {
     } catch { /* nenhum dado financeiro é alterado */ }
   }
   refreshLedger();
+
+  function getFolderOwner() {
+    return session && activeOwner && matchesClientCfg() ? activeOwner : null;
+  }
+  function ownsFolder(id) {
+    const owner = getFolderOwner();
+    return !!owner && ledger.owners[id] === owner;
+  }
 
   function localDatasets() {
     if (typeof Store !== "undefined") return Store.loadIndex().map((entry) => Store._rawDataset(entry.id)).filter(Boolean);
@@ -630,7 +635,7 @@ const Cloud = (() => {
     const cfg = getCfg();
     if (!cfg) return null;
     if (typeof supabase === "undefined" || typeof supabase.createClient !== "function") {
-      setStatus("A conexão com a nuvem está indisponível. Seus dados locais continuam disponíveis; tente novamente com internet.", "err");
+      setStatus("O serviço de login está indisponível. Reconecte-se para ver as pastas da sua conta.", "err");
       return null;
     }
     clientCfg = { url: cfg.url, anonKey: cfg.anonKey };
@@ -698,9 +703,7 @@ const Cloud = (() => {
     if (activeOwner) {
       loadQueue(activeOwner);
       const project = clientCfg.url;
-      // Somente uma sessão já existente pode migrar automaticamente a instalação
-      // antiga. Um login novo exige vínculo explícito para pastas sem proprietário.
-      if (event === "INITIAL_SESSION" && !openedAuthLink && !own(ledger.projects, project)) linkUnowned(localDatasets().map((ds) => ds.id));
+      // Também impede versões anteriores de adotarem pastas locais ao restaurar a sessão.
       ledger.projects[project] = true;
       persistMetadata();
     }
@@ -726,6 +729,7 @@ const Cloud = (() => {
     const selected = typeof ids === "string" ? [ids] : Array.isArray(ids) ? ids : localDatasets().map((ds) => ds.id);
     const count = linkUnowned(selected);
     persistMetadata(); publishState();
+    if (count) renderFolders();
     if (count) scheduleSync(0);
     return count;
   }
@@ -957,9 +961,13 @@ const Cloud = (() => {
     const id = row.id, q = loadQueue(owner);
     const knownOwner = ledger.owners[id];
     const local = localDataset(id);
-    if (knownOwner && knownOwner !== owner || !knownOwner && local) { accountConflictCount++; return; }
-    if (!knownOwner) { ledger.owners[id] = owner; requireDurableQueue(); }
     const localText = canonical(local), remoteText = canonical(row.data);
+    if (knownOwner && knownOwner !== owner || !knownOwner && local && localText !== remoteText) { accountConflictCount++; return; }
+    if (!knownOwner) {
+      ledger.owners[id] = owner;
+      requireDurableQueue();
+      if (local) renderFolders(); // A nuvem confirmou uma cópia idêntica da conta.
+    }
     const remoteDigest = await fingerprint(remoteText);
     const localDigest = local ? await fingerprint(localText) : null;
     assertCurrent(c, version, owner);
@@ -1228,6 +1236,7 @@ const Cloud = (() => {
     invalidRemoteIds.clear();
     mergeConflictIds.clear();
     resetRepairState();
+    publishState();
     try {
       const result = await c?.auth.signOut({ scope: "local" });
       if (result?.error) throw result.error;
@@ -1236,7 +1245,7 @@ const Cloud = (() => {
         session = previousSession; activeOwner = ownerFor(previousSession); invalidRemoteIds = previousInvalidRemoteIds; mergeConflictIds = previousMergeConflictIds;
         ({ repairableRemoteCount, repairableDateCount, repairDatePreview, lastRepairCount } = previousRepairState);
       }
-      refreshUI();
+      refreshUI(); publishState();
       setStatus("Não foi possível sair da conta. Confira a conexão e tente novamente.", "err");
       return;
     }
@@ -1442,10 +1451,11 @@ const Cloud = (() => {
       } else if (activeOwner && event.key === queueKey(activeOwner)) {
         loadQueue(activeOwner, true); publishState(); resumePending();
       } else if (event.key === OWNERS_STORAGE) {
-        refreshLedger(); publishState();
+        refreshLedger(); publishState(); renderFolders();
       } else if (activeOwner && event.key?.startsWith(repairBackupPrefix(activeOwner))) {
         publishState();
       } else if (event.key?.startsWith("fyg:ds:") && activeOwner) {
+        if (ownsFolder(event.key.slice("fyg:ds:".length))) renderFolders();
         resumePending();
       }
     });
@@ -1460,5 +1470,5 @@ const Cloud = (() => {
     return session?.access_token || null;
   }
 
-  return { onLocalChange, onLocalDelete, getToken, getSyncState, getAuthOptions, sendSignInLink, sendSignInCode, verifySignInCode, signInWithPasskey, registerPasskey, linkLocalDatasets, prepareLocalDelete, syncNow, repairLegacyDates, exportRepairBackup };
+  return { onLocalChange, onLocalDelete, getToken, getSyncState, getFolderOwner, ownsFolder, getAuthOptions, sendSignInLink, sendSignInCode, verifySignInCode, signInWithPasskey, registerPasskey, linkLocalDatasets, prepareLocalDelete, syncNow, repairLegacyDates, exportRepairBackup };
 })();

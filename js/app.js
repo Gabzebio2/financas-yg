@@ -311,7 +311,7 @@ function toast(msg) {
 
 /* ---------- Armazenamento (localStorage) ---------- */
 const Store = {
-  loadIndex() {
+  loadIndex(includeId) {
     let raw = [];
     try { raw = JSON.parse(localStorage.getItem("fyg:index")); } catch { /* recupera a partir das pastas */ }
     const ids = Array.isArray(raw) ? raw.filter((e) => e && RE_SAFE_ID.test(e.id)).map((e) => e.id) : [];
@@ -323,7 +323,7 @@ const Store = {
         if (key?.startsWith("fyg:ds:") && RE_SAFE_ID.test(key.slice(7))) ids.push(key.slice(7));
       }
     } catch { /* navegador bloqueou acesso: lista vazia até liberar */ }
-    return [...new Set(ids)].map((id) => {
+    return [...new Set(ids)].filter(id => !includeId || includeId(id)).map((id) => {
       const ds = this.loadDataset(id);
       if (ds) return this._entry(ds);
       // Uma pasta com registro inconsistente continua visível e exportável.
@@ -507,11 +507,31 @@ function closeConfirmModal() {
 }
 
 /* ---------- Home: pastas salvas ---------- */
+function accountFolderOwner() {
+  return typeof Cloud !== "undefined" ? Cloud.getFolderOwner?.() || null : null;
+}
+function accountFolderIndex() {
+  return accountFolderOwner() ? Store.loadIndex(Cloud.ownsFolder) : [];
+}
+function showFolderLogin() {
+  const panel = $("#home-account");
+  if (panel) panel.open = true;
+  $("#cloud-email")?.focus();
+}
 function renderFolders() {
-  const idx = Store.loadIndex();
+  const owner = accountFolderOwner();
+  const idx = accountFolderIndex();
   const grid = $("#folders-grid");
+  for (const selector of ["#card-new","#card-business","#card-upload","#btn-import-backup","#btn-export-backup"]) {
+    const button = $(selector);
+    if (button) button.disabled = !owner;
+  }
+  if (!owner) {
+    grid.innerHTML = '<div class="empty-folders"><strong>Entre para ver suas pastas</strong><span>Use a mesma conta no computador e no celular.</span><button type="button" class="btn btn-primary btn-sm" data-folder-login>Entrar na conta</button></div>';
+    return;
+  }
   if (!idx.length) {
-    grid.innerHTML = `<div class="empty-folders"><strong>Nenhuma pasta neste aparelho</strong><span>Crie uma pasta ou abra Conta e sincronização para acessar as que já estão na nuvem.</span></div>`;
+    grid.innerHTML = '<div class="empty-folders"><strong>Nenhuma pasta da conta para mostrar</strong><span>As pastas aparecem após a sincronização. Você também pode criar uma pasta nesta conta.</span></div>';
     return;
   }
   grid.innerHTML = idx.map((e) => `
@@ -529,8 +549,7 @@ function renderFolders() {
 }
 
 function startRenameFolder(cardEl, id) {
-  const idx = Store.loadIndex();
-  const entry = idx.find((x) => x.id === id);
+  const entry = accountFolderIndex().find((x) => x.id === id);
   if (!entry) return;
   const nameEl = cardEl.querySelector("[data-name]");
   const input = document.createElement("input");
@@ -543,10 +562,14 @@ function startRenameFolder(cardEl, id) {
   const finish = (save) => {
     if (done) return; done = true;
     const newName = input.value.trim();
-    if (save && newName && newName !== entry.name) {
+    if (save && newName && newName !== entry.name && Cloud.ownsFolder(id)) {
       const ds = Store.loadDataset(id);
       if (ds) { ds.name = newName; Store.saveDataset(ds); }
-      else { entry.name = newName; Store.saveIndex(idx); }
+      else {
+        const all = Store.loadIndex();
+        const original = all.find(e => e.id === id);
+        if (original) { original.name = newName; Store.saveIndex(all); }
+      }
       toast("Pasta renomeada ✔");
     }
     renderFolders();
@@ -867,7 +890,7 @@ function exportBackup() {
   // de reparo. A leitura da interface não deve reduzir o conteúdo exportado.
   const data = {
     app: "financas-yg", version: 1, exportedAt: new Date().toISOString(),
-    datasets: Store.loadIndex().map((e) => Store._rawDataset(e.id)).filter(Boolean),
+    datasets: accountFolderIndex().map((e) => Store._rawDataset(e.id)).filter(Boolean),
   };
   if (!data.datasets.length) { toast("Nada para exportar ainda."); return; }
   const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
@@ -883,9 +906,12 @@ function exportBackup() {
 
 function importBackup(file) {
   if (!file) return;
+  const owner = accountFolderOwner();
+  if (!owner) { showFolderLogin(); return; }
   if (file.size > 20 * 1024 * 1024) { toast("Arquivo de backup grande demais (máx. 20 MB)."); return; }
   const reader = new FileReader();
   reader.onload = () => {
+    if (owner !== accountFolderOwner()) { toast("A conta mudou. Selecione o backup novamente."); return; }
     try {
       const data = JSON.parse(reader.result);
       if (!data || data.app !== "financas-yg" || !Array.isArray(data.datasets) || (data.version != null && data.version !== 1)) throw new Error("formato");
@@ -910,37 +936,62 @@ function importBackup(file) {
 /* ---------- Eventos globais ---------- */
 document.addEventListener("DOMContentLoaded", () => {
   renderFolders();
+  let shownOwner = accountFolderOwner();
+  document.addEventListener("fyg:cloudstate", () => {
+    const owner = accountFolderOwner();
+    const opened = Dashboard.getImportTargetId();
+    if (owner === shownOwner && (!opened || (owner && Cloud.ownsFolder(opened)))) return;
+    if (shownOwner) {
+      Dashboard.closeFolder();
+      closeNameModal(); closeConfirmModal();
+      $$(".modal-backdrop").forEach(el => el.classList.add("hidden"));
+      $$("dialog[open]").forEach(el => el.close());
+      showScreen("screen-home");
+    }
+    shownOwner = owner;
+    renderFolders();
+  });
 
   $("#btn-back").addEventListener("click", goHome);
 
   // Home: ações principais
-  $("#card-upload").addEventListener("click", () => $("#file-input").click());
+  let uploadOwner, backupOwner;
+  $("#card-upload").addEventListener("click", () => {
+    uploadOwner = accountFolderOwner();
+    if (uploadOwner) $("#file-input").click(); else showFolderLogin();
+  });
   $("#file-input").addEventListener("change", (ev) => {
     const file = ev.target.files[0];
-    if (file) Importer.handleFile(file);
+    if (file && uploadOwner && uploadOwner === accountFolderOwner()) Importer.handleFile(file);
     ev.target.value = "";
   });
   $("#card-new").addEventListener("click", () => {
+    const owner = accountFolderOwner();
+    if (!owner) { showFolderLogin(); return; }
     askName("Nome da nova pasta", "Minhas finanças", (name) => {
+      if (accountFolderOwner() !== owner) return;
       const ds = Store.createDataset(name);
       Store.saveDataset(ds);
       Dashboard.open(ds.id);
       toast("Pasta criada! Adicione sua primeira transação 👇");
-      setTimeout(() => Dashboard.openTxModal(null), 350);
+      setTimeout(() => { if (Cloud.ownsFolder(ds.id) && Dashboard.getImportTargetId() === ds.id) Dashboard.openTxModal(null); }, 350);
     });
   });
 
   // Home: pastas (delegação de eventos)
   $("#folders-grid").addEventListener("click", (ev) => {
+    if (ev.target.closest("[data-folder-login]")) { showFolderLogin(); return; }
     const card = ev.target.closest(".folder-card");
     if (!card) return;
     const id = card.dataset.id;
+    if (!accountFolderOwner() || !Cloud.ownsFolder(id)) { renderFolders(); return; }
     const action = ev.target.closest("[data-action]")?.dataset.action;
     if (action === "rename") { ev.stopPropagation(); startRenameFolder(card, id); return; }
     if (action === "delete") {
       ev.stopPropagation();
-      const entry = Store.loadIndex().find((x) => x.id === id);
+      const entry = accountFolderIndex().find((x) => x.id === id);
       askConfirm("Excluir pasta?", `A pasta "${entry?.name}" e todas as suas transações serão apagadas. Essa ação não pode ser desfeita.`, () => {
+        if (!Cloud.ownsFolder(id)) return;
         Store.deleteDataset(id);
         renderFolders();
         toast("Pasta excluída.");
@@ -953,10 +1004,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Backup
   $("#btn-export-backup").addEventListener("click", exportBackup);
-  $("#btn-import-backup").addEventListener("click", () => $("#backup-input").click());
+  $("#btn-import-backup").addEventListener("click", () => {
+    backupOwner = accountFolderOwner();
+    if (backupOwner) $("#backup-input").click(); else showFolderLogin();
+  });
   $("#backup-input").addEventListener("change", (ev) => {
     const file = ev.target.files[0];
-    if (file) importBackup(file);
+    if (file && backupOwner && backupOwner === accountFolderOwner()) importBackup(file);
     ev.target.value = "";
   });
 
