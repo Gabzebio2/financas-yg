@@ -20,7 +20,9 @@ const Dashboard = (() => {
   let ratesHooked = false; // registra o ouvinte de cotação uma única vez
 
   const UI_ICON_PATHS = {
-    bill: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 8h6M9 12h4"/>',
+    calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v5m10-5v5M3 11h18m-13 5h3"/>',
+    history: '<path d="M3 11a9 9 0 1 1 2 7M3 5v6h6m3-4v5l3 2"/>',
+    down: '<path d="m6 9 6 6 6-6"/>',
     advance: '<path d="m4 5 7 7-7 7V5Zm9 0 7 7-7 7V5Z"/>',
     edit: '<path d="m15 5 4 4M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11L4 20Z"/>',
     trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/>',
@@ -1309,42 +1311,70 @@ const Dashboard = (() => {
     return `<button type="button" class="bill-pay ${pending ? "is-open" : "is-paid"}" data-bill-action="${pending ? "pay" : "reopen"}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${uiIcon("check", 15)} ${pending ? "Marcar como paga" : "Pago"}</button>`;
   }
 
-  function billTableAction(t) {
-    if (t.type !== "despesa") return "";
-    if (t.paymentStatus) return billPayButton(t);
-    const label = "Marcar como conta a pagar · " + t.desc;
-    return `<button type="button" class="bill-pay bill-select" data-bill-action="track" aria-label="${escapeHtml(label)}" title="Aguardar pagamento antes de contar nas despesas">${uiIcon("bill", 15)} Conta a pagar</button>`;
-  }
-
-  function billRow(t) {
+  function billRow(t, today) {
     const pending = isPendingBill(t);
-    const when = pending ? "Vencimento " + fmtDate(t.date) : "Pago em " + fmtDate(accountingDate(t));
+    const date = pending ? t.date : accountingDate(t);
+    const [year, month, day] = date.split("-");
+    const monthLabel = MESES_ABREV[Number(month) - 1] + (year === today.slice(0,4) ? "" : "/" + year);
+    const when = (pending ? "Vencimento em " : "Pago em ") + fmtDate(date);
+    const detail = [t.account, t.category, t.installment && "Parcela " + t.installment].filter(Boolean).join(" · ");
     return `<div class="bill-row" data-id="${escapeHtml(t.id)}">
-      <div class="bill-title"><strong>${escapeHtml(t.desc)}</strong><small>${escapeHtml([when, t.account, t.installment].filter(Boolean).join(" · "))}</small></div>
-      <b class="bill-amount">${fmtTxAmount(t)}</b><div class="bill-actions">${billPayButton(t)}</div>
+      <time class="bill-date" datetime="${date}" title="${when}" aria-label="${when}"><b>${day}</b><span>${monthLabel}</span></time>
+      <div class="bill-title"><strong>${escapeHtml(t.desc)}</strong>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</div>
+      <b class="bill-amount">${escapeHtml(fmtTxAmount(t))}</b><div class="bill-actions">${billPayButton(t)}</div>
     </div>`;
   }
 
+  let billMidnightTimer;
   function renderBillBoard() {
     const panel = $("#dash-bills");
-    if (!panel) return;
+    if (!ds || !panel) return;
     const active = ds.transactions.filter(isPendingBill).sort((a,b) => a.date.localeCompare(b.date));
     const settled = ds.transactions.filter(t => t.type === "despesa" && t.paymentStatus === "paid")
       .sort((a,b) => accountingDate(b).localeCompare(accountingDate(a)));
+    const today = todayISO();
     const count = active.length;
-    const header = `<div class="bill-head"><div><h2>Contas a pagar</h2><p>${count ? (count === 1 ? "1 conta em aberto" : count + " contas em aberto") : "Nenhuma conta em aberto"}</p></div>
-      <button type="button" class="btn btn-ghost btn-sm" data-bill-action="new">${uiIcon("plus", 15)} Nova conta a pagar</button></div>`;
-    const list = active.length ? `<div class="bill-list">${active.map(billRow).join("")}</div>` : "";
+    const header = `<div class="bill-head"><div class="bill-heading"><span class="bill-emblem">${uiIcon("calendar", 24)}</span><div><h2>Contas a pagar</h2>
+      <p>${count ? (count === 1 ? "1 conta em aberto" : count + " contas em aberto") : "Nenhuma pendente"}</p></div></div>
+      <button type="button" class="btn bill-add" data-bill-action="new" aria-label="Nova conta a pagar">${uiIcon("plus", 16)} Nova conta</button></div>`;
+    const groups = [
+      ["late", "Em atraso", active.filter(t => t.date < today)],
+      ["today", "Vencem hoje", active.filter(t => t.date === today)],
+      ["upcoming", "Próximos vencimentos", active.filter(t => t.date > today)],
+    ];
+    const agenda = groups.filter(([, , items]) => items.length).map(([key, label, items]) =>
+      `<section class="bill-group" data-due="${key}"><h3>${label}</h3>${items.map(t => billRow(t, today)).join("")}</section>`).join("");
+    const list = agenda ? `<div class="bill-list bill-agenda">${agenda}</div>` :
+      `<div class="bill-empty"><span class="bill-empty-icon">${uiIcon("check", 17)}</span>
+        <p>${settled.length ? "Todas as contas acompanhadas estão pagas." : "Cadastre uma conta para acompanhar o vencimento."}</p></div>`;
     const expanded = panel.querySelector("details")?.open;
-    const history = settled.length ? `<details class="bill-history" ${expanded ? "open" : ""}><summary>Contas pagas (${settled.length})</summary><div class="bill-list">${settled.map(billRow).join("")}</div></details>` : "";
+    const history = settled.length ? `<details class="bill-history" ${expanded ? "open" : ""}><summary>${uiIcon("history", 17)} Contas pagas (${settled.length}) <span class="bill-chevron">${uiIcon("down", 16)}</span></summary>
+      <div class="bill-list">${settled.map(t => billRow(t, today)).join("")}</div></details>` : "";
+    const scroll = panel.querySelector(".bill-agenda")?.scrollTop || 0;
+    const focused = document.activeElement;
+    const refocus = focused && panel.contains(focused);
+    const focusedRow = refocus && focused.closest(".bill-row")?.dataset.id;
     panel.innerHTML = header + list + history;
+    if (scroll && agenda) panel.querySelector(".bill-agenda").scrollTop = scroll;
+    if (refocus) {
+      const sameRow = Array.from(panel.querySelectorAll(".bill-row")).find(row => row.dataset.id === focusedRow && !row.closest("details:not([open])"));
+      const fallback = focused.matches("summary") ? "summary" : focusedRow ? ".bill-agenda button, summary" : ".bill-add";
+      const next = sameRow?.querySelector("button") || panel.querySelector(fallback);
+      (next || panel.querySelector(".bill-add")).focus({preventScroll:true});
+    }
+    clearTimeout(billMidnightTimer);
+    if (count) {
+      const midnight = new Date();
+      midnight.setHours(24, 0, 0, 0);
+      billMidnightTimer = setTimeout(renderBillBoard, Math.max(1, midnight.getTime() - Date.now()));
+    }
   }
 
   function changeBill(id, action) {
     if (!refreshImportTarget()) return;
     const t = ds.transactions.find(tx => tx.id === id);
     if (!t) { toast("Esta conta não está mais na pasta."); return; }
-    const previous = {track:undefined, pay:"pending", reopen:"paid"};
+    const previous = {pay:"pending", reopen:"paid"};
     if (t.type !== "despesa" || !Object.hasOwn(previous, action) || previous[action] !== t.paymentStatus) return;
     t.paymentStatus = action === "pay" ? "paid" : "pending";
     if (action === "pay") t.paidOn = todayISO(); else delete t.paidOn;
@@ -1390,7 +1420,7 @@ const Dashboard = (() => {
         <td>${t.installment ? escapeHtml(t.installment) + (t.advance ? '<br><span class="fixa-chip">Adiantada</span>' : '') : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
         <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtTxAmount(t)}</td>
         <td class="tx-actions">
-          ${billTableAction(t)}
+          ${t.type === "despesa" && t.paymentStatus ? billPayButton(t) : ""}
           <button class="btn-icon" data-action="edit" title="Editar" aria-label="Editar transação">${uiIcon("edit")}</button>
           ${installmentTotal(t) > 1 ? `<button class="btn-icon" data-action="advance" title="Adiantar parcelas" aria-label="Adiantar parcelas">${uiIcon("advance")}</button>` : ""}
           <button class="btn-icon" data-action="delete" title="Excluir" aria-label="Excluir transação">${uiIcon("trash")}</button>

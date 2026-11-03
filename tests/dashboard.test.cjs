@@ -502,9 +502,23 @@ test('conta de outro mês aparece no dashboard, contabiliza uma única vez no pa
   api.changeBill('billopen','reopen');api.changeBill('billopen','reopen');
   assert.equal(api.tableTxs().length,1);assert.equal(api.limitStats()[0].spent,0);assert.match(panel('#dash-bills'),/1 conta em aberto/);
   api.setFilters({month:today.slice(0,7)});assert.equal(api.limitStats()[0].spent,2);
-  api.changeBill('oldpaid1','track');api.changeBill('oldpaid1','track');assert.equal(api.limitStats()[0].spent,0);
+  api.changeBill('oldpaid1','track');assert.equal(api.limitStats()[0].spent,2);
+  api.openTxModal('oldpaid1');get('#tx-payable').checked=true;
+  assert.equal(api.limitStats()[0].spent,2);api.saveTxModal();assert.equal(api.limitStats()[0].spent,0);
   saved=JSON.parse(storage.get('fyg:ds:audit001')).transactions;
   assert.equal(saved[0].paymentStatus,'pending');assert.equal(saved[1].paidOn,undefined);assert.equal(saved.length,2);
+});
+
+test('agenda separa vencimentos pelo dia local e deixa o histórico de pagamentos recolhido',()=>{
+  const today=vm.runInContext('todayISO()',ctx),ds=dataset();
+  ds.transactions=[tx('future01',{date:'2099-01-02',paymentStatus:'pending'}),tx('paid0001',{date:today,paymentStatus:'paid'}),
+    tx('debit001',{date:today}),tx('late0001',{date:'2020-01-02',paymentStatus:'pending'}),tx('today001',{date:today,paymentStatus:'pending'})];
+  saveBase(ds);api.renderAll();const board=get('#dash-bills').innerHTML;
+  const sections=[...board.matchAll(/<section class="bill-group" data-due="([^"]+)">([\s\S]*?)<\/section>/g)];
+  assert.deepEqual(sections.map(m=>m[1]),['late','today','upcoming']);
+  for(const [i,id] of ['late0001','today001','future01'].entries())assert(sections[i][2].includes(id));
+  assert.doesNotMatch(board,/debit001|<details[^>]*\bopen\b/);
+  assert.match(board,/Contas pagas \(1\)/);assert.match(board,/3 contas em aberto/);
 });
 
 test('nova conta em aberto e suas repetições sobrevivem à sincronização e ao backup',()=>{
@@ -536,7 +550,7 @@ test('fixações antigas preservam o valor contabilizado e receitas não entram 
   const restored=vm.runInContext('Store.loadDataset("audit001")',ctx);api.setDataset(restored);api.renderAll();
   assert.equal(restored.transactions[0].paymentStatus,'paid');assert(!restored.transactions.some(t=>t.billPinned));
   assert.match(get('#dash-bills').innerHTML,/Contas pagas \(1\)/);assert.doesNotMatch(get('#dash-bills').innerHTML,/income000|plain000/);
-  assert.equal((get('#tx-tbody').innerHTML.match(/data-bill-action="track"/g)||[]).length,1);
+  assert.doesNotMatch(get('#tx-tbody').innerHTML,/data-bill-action="track"/);
   api.changeBill('income000','track');api.changeBill('wasfixed','track');
   assert.equal(api.getDataset().transactions[1].paymentStatus,undefined);assert.equal(api.getDataset().transactions[0].paymentStatus,'paid');
 });
