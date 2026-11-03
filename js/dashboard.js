@@ -1682,11 +1682,11 @@ const Dashboard = (() => {
     const expense = txType === "despesa";
     const tracked = expense && $("#tx-payable").checked;
     $("#tx-bill-options").classList.toggle("hidden", !expense);
-    $("#tx-paid-wrap").classList.toggle("hidden", !tracked);
+    $("#tx-paid-wrap").classList.toggle("hidden", !tracked || !editingId);
     $("#tx-date-label").textContent = tracked ? "Vencimento" : "Data";
     $("#tx-bill-hint").textContent = tracked
       ? "A conta aparece no dashboard. O valor entra nas despesas quando você marcar como paga."
-      : "A despesa já conta no total. Selecione para aguardar o pagamento.";
+      : "Compras no débito já entram no total ao salvar. Selecione apenas se a conta ainda precisa ser paga.";
   }
 
   function updateFixedOption(tx) {
