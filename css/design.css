@@ -1196,15 +1196,16 @@ body.hide-money .weekly-result-value,body.hide-money .weekly-card-value,body.hid
 .bill-board .bill-add { min-height:42px; background:var(--card); border:1px solid var(--border); border-radius:10px; color:var(--primary-text); padding:8px 12px; white-space:nowrap; }
 .bill-add:hover { border-color:var(--primary); }
 .bill-list { padding:0 var(--agenda-pad); max-height:30rem; overflow:auto; }
-.bill-group { --due-color:var(--primary-text); }
-.bill-group[data-due="late"] { --due-color:var(--red); }
-.bill-group[data-due="today"] { --due-color:var(--amber); }
+.bill-group { --due-color:var(--primary-text); --due-soft:var(--primary-soft); }
+.bill-group[data-due="late"] { --due-color:var(--red); --due-soft:var(--red-soft); }
+.bill-group[data-due="today"] { --due-color:var(--amber); --due-soft:var(--amber-soft); }
 .bill-group h3 { display:flex; align-items:center; gap:9px; margin:0; padding:15px 0 3px; color:var(--due-color); font-size:.8rem; font-weight:650; }
 .bill-group h3::before { content:""; width:7px; height:7px; flex:none; border-radius:50%; background:currentColor; }
 .bill-group h3::after { content:""; flex:1; height:1px; background:var(--border); }
 .bill-row { display:grid; grid-template-columns:49px minmax(0,1fr) auto auto; grid-template-areas:"date title amount action"; align-items:center; gap:16px; padding:11px 0; }
 .bill-row + .bill-row { border-top:1px solid var(--border); }
-.bill-row.bill-open { touch-action:manipulation; }
+.bill-group .bill-row + .bill-row { margin-top:5px; border-top:0; }
+.bill-open { touch-action:manipulation; border-radius:10px; padding-inline:10px; background:var(--due-soft); background:color-mix(in srgb,var(--due-color) 12%,var(--due-soft)); box-shadow:inset 4px 0 var(--due-color); }
 .bill-row.bill-settled { border-radius:10px; padding-inline:10px; background:var(--green-soft); box-shadow:inset 4px 0 var(--green); }
 .bill-row.bill-settled + .bill-row.bill-settled { margin-top:4px; }
 .bill-agenda .bill-row.bill-settled { background:color-mix(in srgb,var(--green) 18%,var(--green-soft)); }
@@ -1220,7 +1221,7 @@ body.hide-money .weekly-result-value,body.hide-money .weekly-card-value,body.hid
 .bill-date { grid-area:date; display:grid; place-content:center; justify-items:center; min-height:50px; border:1px solid var(--border); border-radius:9px; background:var(--card-2); font-variant-numeric:tabular-nums; }
 .bill-date b { color:var(--text); font-size:1.16rem; line-height:1.15; font-weight:650; }
 .bill-date span { color:var(--text-soft); font-size:.65rem; line-height:1.45; }
-.bill-group[data-due="today"] .bill-date { border-color:color-mix(in srgb,var(--amber) 50%,var(--border)); background:var(--amber-soft); }
+.bill-open .bill-date { border-color:color-mix(in srgb,var(--due-color) 45%,var(--due-soft)); background:var(--due-soft); }
 .bill-row.bill-settled .bill-date { color:var(--text); border-color:color-mix(in srgb,var(--green) 40%,var(--green-soft)); background:var(--green-soft); }
 .bill-title { grid-area:title; min-width:0; }
 .bill-title strong,.bill-title small { display:block; overflow-wrap:anywhere; }
