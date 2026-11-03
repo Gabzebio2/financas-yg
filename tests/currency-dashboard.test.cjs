@@ -212,7 +212,7 @@ test('oito moedas e Padrão preservam origem no Por moeda, lista e CSV, com resu
     equalNumber(categoryChart.data.datasets[0].data[0],expense);
     const nativeRows=breakdownValues(h.get('#currency-breakdown-rows').innerHTML);
     assert.equal(nativeRows.size,currencies.length);
-    assert.equal(h.get('#currency-breakdown-hint').textContent,`Valores originais. Barras comparadas pelo equivalente em ${totalCurrency}.`);
+    assert.match(h.get('#currency-breakdown-hint').textContent,new RegExp(`100%.*equivalente em ${totalCurrency}`));
     for (const item of ds.transactions) {
       assert.equal(h.api.txDisplayCurrency(item),item.currency,selected+' origem');
       assert.equal(h.api.txDisplayAmount(item),item.amount,selected+' valor original');
@@ -274,8 +274,9 @@ test('Por moeda usa período e categorias visíveis, sem aplicar os filtros excl
   assert(html.includes('PYG') && html.includes('USD'));
   assert(!html.includes('BRL') && !html.includes('CLP'));
   assert(!/NaN|Infinity/.test(html));
-  assert.deepEqual([...html.matchAll(/width:([\d.]+)%/g)].map(match=>Number(match[1])),[100,50,0,100],
-    'Barras usam a base PYG: PYG 25.000 é metade de USD 10 convertido para PYG 50.000');
+  assert.deepEqual([...html.matchAll(/width:([\d.]+)%/g)].map(match=>Number(match[1])),[33.3333,66.6667,100],
+    'Saídas: PYG 25.000 de 75.000 e USD equivalente a PYG 50.000 de 75.000. Entradas: 100% PYG.');
+  for(const percent of ['33,3%','66,7%','100%'])assert(html.includes(percent));
   assert(html.includes(h.money(50000,'PYG')),'A equivalência em guaranis precisa acompanhar o valor original USD');
 });
 
@@ -319,8 +320,21 @@ test('cotação ausente não vira valor nominal ou zero e preserva os originais 
     const rows=breakdownValues(h.get('#currency-breakdown-rows').innerHTML);
     assert.deepEqual(rows.get('BRL'),[{label:'Entradas',value:h.money(0,'BRL')},{label:'Saídas',value:h.money(50,'BRL')}]);
     assert.match(h.get('#currency-breakdown-rows').innerHTML,/Cotação pendente/);
+    assert.doesNotMatch(h.get('#currency-breakdown-rows').innerHTML,/class="fx-strip"/,'Sem todas as cotações, não há faixa parcial que pareça representar 100%');
     assert.equal(h.get('#hero-desp').textContent,'—','Um total sem cotação continua indisponível');
   }
+});
+
+test('Por moeda omite proporção com ajustes negativos e indica participações pequenas sem arredondar para zero',()=>{
+  const h=harness(), ds=dataset({transactions:[
+    tx('usd',{amount:1000,currency:'USD'}),tx('tiny',{amount:1,currency:'PYG'}),
+    tx('negative',{type:'receita',amount:-5,currency:'BRL'}),
+    tx('openbill',{amount:1000000,currency:'PYG',paymentStatus:'pending'})
+  ]});h.load(ds);h.api.renderCurrencyBreakdown();
+  const html=h.get('#currency-breakdown-rows').innerHTML;
+  assert.match(html,/ajustes negativos/);assert.match(html,/&lt;0,1%/);
+  assert.equal((html.match(/class="fx-strip"/g)||[]).length,1);
+  assert.equal(h.api.currencyBreakdown().find(g=>g.currency==='PYG').expense,1);
 });
 
 test('novas contas estão disponíveis para receitas e despesas e preservam contas personalizadas', () => {

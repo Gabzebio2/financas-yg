@@ -14,7 +14,7 @@
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261103-paid-card">
+<link rel="stylesheet" href="css/design.css?v=20261103-currency-mix">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 <link rel="stylesheet" href="css/receipt-jobs.css?v=20261031-notifications">
 </head>
@@ -358,9 +358,9 @@
 
     <section class="card bill-board" id="dash-bills" aria-label="Contas a pagar"></section>
     <details class="card fx-breakdown hidden" id="currency-breakdown" open>
-      <summary><div><h3>Por moeda</h3><p id="currency-breakdown-hint">Valores originais. Barras comparadas pelo equivalente em PYG.</p></div><span class="fx-chevron" aria-hidden="true">⌄</span></summary>
+      <summary><div><h3>Por moeda</h3><p id="currency-breakdown-hint">Participação de cada moeda nas saídas e nas entradas do período.</p></div><span class="fx-chevron" aria-hidden="true">⌄</span></summary>
       <div id="currency-breakdown-rows" class="fx-rows"></div>
-      <p class="fx-footnote">Entradas e saídas do período e das categorias selecionadas. Conversões de referência, sem taxas.</p>
+      <details class="fx-help"><summary>Como ler as porcentagens</summary><p>Uma moeda com 30% das saídas representa 30 de cada 100 gastos no período e nas categorias selecionadas. As entradas têm um total próprio. Contas a pagar em aberto ficam fora da soma.</p></details>
     </details>
 
     <!-- Controle de Limites (integrado ao painel) -->
@@ -830,7 +830,7 @@
 <script src="js/importer.js?v=20261027-import"></script>
 <script src="js/weekly-revenue.js?v=20261103-week-cards"></script>
 <script src="js/business.js?v=20261103-bills"></script>
-<script src="js/dashboard.js?v=20261103-paid-card"></script>
+<script src="js/dashboard.js?v=20261103-currency-mix"></script>
 <script src="js/receipt.js?v=20261103-date-groups"></script>
 <script src="js/batch.js?v=20261103-date-groups"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>

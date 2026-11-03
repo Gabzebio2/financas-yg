@@ -360,25 +360,44 @@ const Dashboard = (() => {
     })).sort((a, b) => a.currency.localeCompare(b.currency));
   }
 
+  function currencyDistribution(groups, kind, label) {
+    const converted = kind + "Converted";
+    const total = groups.reduce((sum, g) => sum + g[converted], 0);
+    let message = "";
+    if (!Number.isFinite(total)) message = "Aguardando cotação para calcular as porcentagens.";
+    else if (groups.some(g => g[converted] < 0)) message = "Há ajustes negativos. Veja os valores por moeda abaixo.";
+    else if (total === 0) message = `O total de ${label.toLowerCase()} é zero neste período.`;
+    const parts = message ? [] : groups.filter(g => g[converted] > 0).map(g => {
+      const share = g[converted] / total * 100;
+      return {currency:g.currency, width:share.toFixed(4), percent:share < 0.1 ? "<0,1%" : share.toLocaleString("pt-BR", {maximumFractionDigits:1}) + "%"};
+    });
+    const track = parts.map(p => `<span style="background:var(--fx-${p.currency});width:${p.width}%"></span>`).join("");
+    const legend = parts.map(p => `<li style="--fx-color:var(--fx-${p.currency})"><span>${p.currency}</span> <b>${escapeHtml(p.percent)}</b></li>`).join("");
+    return `<section class="fx-flow fx-${kind}"><h4><span aria-hidden="true">${kind === "expense" ? "↗" : "↙"}</span>${label}</h4>
+      <div class="fx-total">${Number.isFinite(total) ? escapeHtml(fmtD(total)) : "Cotação pendente"}</div>
+      ${message ? `<p class="fx-no-share">${message}</p>` : `<div class="fx-strip" aria-hidden="true">${track}</div><ul class="fx-legend" aria-label="Participação nas ${label.toLowerCase()}">${legend}</ul>`}
+    </section>`;
+  }
+
   function renderCurrencyBreakdown() {
     const block = $("#currency-breakdown"); if (!block) return;
     const groups = currencyBreakdown();
     block.classList.toggle("hidden", groups.length < 2);
     if (groups.length < 2) return;
     const hint = $("#currency-breakdown-hint");
-    if (hint) hint.textContent = `Valores originais. Barras comparadas pelo equivalente em ${dispCur()}.`;
-    const max = Math.max(0, ...groups.flatMap(g => [g.incomeConverted, g.expenseConverted]).filter(Number.isFinite));
+    if (hint) hint.textContent = `Cada faixa representa 100% das saídas ou das entradas do período. As porcentagens usam o equivalente em ${dispCur()}.`;
     const rows = $("#currency-breakdown-rows"); if (!rows) return;
-    rows.innerHTML = groups.map(g => {
+    const flows = currencyDistribution(groups, "expense", "Saídas") + currencyDistribution(groups, "income", "Entradas");
+    const detail = groups.map(g => {
       const metric = (kind, label, converted) => {
         const native = g[kind], valid = Number.isFinite(converted);
-        const width = valid && max > 0 ? Math.max(0, Math.min(100, converted / max * 100)) : 0;
         const value = fmtMoney(native, g.currency);
         const equivalent = g.currency !== dispCur() ? valid ? `≈ ${fmtD(converted)}` : "Cotação pendente" : !valid ? "Cotação pendente" : "";
-        return `<div class="fx-metric fx-${kind}"><div class="fx-metric-value"><span>${label}</span><strong>${escapeHtml(value)}</strong></div><div class="fx-track" aria-hidden="true"><span style="width:${width.toFixed(4)}%"></span></div>${equivalent ? `<small>${escapeHtml(equivalent)}</small>` : ""}</div>`;
+        return `<div class="fx-metric fx-${kind}"><div class="fx-metric-value"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>${equivalent ? `<small>${escapeHtml(equivalent)}</small>` : ""}</div>`;
       };
       return `<div class="fx-row"><div class="fx-code"><strong>${g.currency}</strong><span>${g.count} ${g.count === 1 ? "lançamento" : "lançamentos"}</span></div>${metric("income", "Entradas", g.incomeConverted)}${metric("expense", "Saídas", g.expenseConverted)}</div>`;
     }).join("");
+    rows.innerHTML = `<div class="fx-flows">${flows}</div><h4 class="fx-detail-title">Valores na moeda original</h4>${detail}`;
   }
 
   function renderPeriodControls() {
@@ -1430,17 +1449,21 @@ const Dashboard = (() => {
     const visible = list.slice(0, rowLimit);
     tbody.innerHTML = visible.map((t) => {
       const sel = selectedTx.has(t.id);
+      const paid = t.type === "despesa" && t.paymentStatus === "paid";
+      const title = `<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span>`;
       return `
       <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${t.paymentStatus === "paid" ? " bill-settled" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
         <td style="white-space:nowrap">${fmtDate(accountingDate(t))}${t.date !== accountingDate(t) ? '<br><small>Venc. ' + fmtDate(t.date) + '</small>' : cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}</td>
-        <td><span class="tx-desc-cell">${catAvatar(t.category)}<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span></span></td>
+        <td><span class="tx-desc-cell">${catAvatar(t.category)}${paid
+          ? `<span class="tx-paid-caption">${title}${billPayButton(t, billConfirmations.get(t.id)?.source === "transactions")}</span>`
+          : title}</span></td>
         <td><span class="cat-chip" style="background:color-mix(in srgb, ${catColor(ds, t.category)} 16%, var(--card,#24212e));color:var(--chip-text,var(--text,#f1eff5));border:1px solid color-mix(in srgb, ${catColor(ds, t.category)} 28%, var(--card,#24212e))">${escapeHtml(t.category)}</span></td>
         <td>${escapeHtml(t.account || "—")}</td>
         <td>${t.installment ? escapeHtml(t.installment) + (t.advance ? '<br><span class="fixa-chip">Adiantada</span>' : '') : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
         <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtTxAmount(t)}</td>
         <td class="tx-actions">
-          ${t.type === "despesa" && t.paymentStatus ? billPayButton(t, t.paymentStatus === "paid" && billConfirmations.get(t.id)?.source === "transactions") : ""}
+          ${isPendingBill(t) ? billPayButton(t) : ""}
           <button class="btn-icon" data-action="edit" title="Editar" aria-label="Editar transação">${uiIcon("edit")}</button>
           ${installmentTotal(t) > 1 ? `<button class="btn-icon" data-action="advance" title="Adiantar parcelas" aria-label="Adiantar parcelas">${uiIcon("advance")}</button>` : ""}
           <button class="btn-icon" data-action="delete" title="Excluir" aria-label="Excluir transação">${uiIcon("trash")}</button>
