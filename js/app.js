@@ -596,14 +596,15 @@ function isPendingBill(t) {
   return t.type === "despesa" && t.paymentStatus === "pending";
 }
 function accountingDate(t) {
-  return t.type === "despesa" && t.paymentStatus === "paid" && isValidISODate(t.paidOn) ? t.paidOn : t.date;
+  return t.type === "despesa" && !isPendingBill(t) && isValidISODate(t.paidOn) ? t.paidOn : t.date;
 }
 function cleanBillFields(t) {
-  const result = t.billPinned === true ? { billPinned:true } : {};
-  if (t.type === "despesa" && ["pending", "paid"].includes(t.paymentStatus)) {
-    result.paymentStatus = t.paymentStatus;
-    if (t.paymentStatus === "paid" && isValidISODate(t.paidOn)) result.paidOn = t.paidOn;
-  }
+  const result = {};
+  if (t.type !== "despesa") return result;
+  if (["pending", "paid"].includes(t.paymentStatus)) result.paymentStatus = t.paymentStatus;
+  // As despesas antigas só fixadas já tinham sido contabilizadas.
+  else if (t.billPinned === true) result.paymentStatus = "paid";
+  if (!isPendingBill(t) && isValidISODate(t.paidOn)) result.paidOn = t.paidOn;
   return result;
 }
 function cleanCashback(t) {

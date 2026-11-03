@@ -1181,10 +1181,11 @@ body.hide-money .weekly-result-value,body.hide-money .weekly-card-value,body.hid
 .bill-title strong,.bill-title small { display:block; overflow-wrap:anywhere; }
 .bill-amount { font-variant-numeric:tabular-nums; }
 body.hide-money .bill-amount { filter:blur(7px); }
-.bill-pin[aria-pressed="true"] { color:var(--primary-text); background:var(--card-2); }
-.bill-actions .bill-pin,.bill-pay { min-width:36px; min-height:36px; }
+.bill-pay { min-width:36px; min-height:36px; }
 .bill-pay { display:inline-flex; align-items:center; justify-content:center; gap:4px; border:1px solid var(--border); border-radius:8px; padding:4px 9px; font:inherit; font-size:.8rem; cursor:pointer; white-space:nowrap; }
 .bill-pay.is-open { color:var(--primary-text); background:var(--card-2); }
+.bill-pay.bill-select { color:var(--muted); background:transparent; }
+.bill-select:hover,.bill-select:focus-visible { color:var(--primary-text); border-color:var(--primary); }
 .bill-pay.is-paid { color:var(--green); background:var(--green-soft); }
 .bill-history { margin-top:12px; color:var(--muted); } .bill-history summary { cursor:pointer; font-size:.88rem; } .bill-history .bill-row { color:var(--text); }
 .bill-options { display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px; padding:12px; border:1px solid var(--border); border-radius:10px; }

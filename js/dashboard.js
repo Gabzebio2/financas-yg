@@ -20,7 +20,7 @@ const Dashboard = (() => {
   let ratesHooked = false; // registra o ouvinte de cotação uma única vez
 
   const UI_ICON_PATHS = {
-    pin: '<path d="m15 3 6 6-3 1-3 6-3-3-7 7m7-7-3-3 6-4Z"/>',
+    bill: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 8h6M9 12h4"/>',
     advance: '<path d="m4 5 7 7-7 7V5Zm9 0 7 7-7 7V5Z"/>',
     edit: '<path d="m15 5 4 4M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11L4 20Z"/>',
     trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/>',
@@ -271,8 +271,8 @@ const Dashboard = (() => {
       return '"' + s.replace(/"/g, '""') + '"';
     };
     const number = (v, currency) => Number(v).toFixed(curFrac(currency)).replace(".", ",");
-    const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição", "Pagamento", "Pago em", "Fixada"]];
-    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t), t.type === "despesa" ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", t.paidOn || "", t.billPinned ? "Sim" : "Não"]));
+    const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição", "Pagamento", "Pago em", "Conta a pagar"]];
+    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t), t.paymentStatus ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", t.paidOn || "", t.paymentStatus ? "Sim" : "Não"]));
     const csv = "\uFEFF" + rows.map((row) => row.map(cell).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
@@ -294,7 +294,7 @@ const Dashboard = (() => {
     renderCurrencyWarning();
     renderCatFilter();
     renderSummary();
-    renderBillBoards();
+    renderBillBoard();
     renderCurrencyBreakdown();
     renderLimits();
     renderMetas();
@@ -1309,53 +1309,48 @@ const Dashboard = (() => {
     return `<button type="button" class="bill-pay ${pending ? "is-open" : "is-paid"}" data-bill-action="${pending ? "pay" : "reopen"}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${uiIcon("check", 15)} ${pending ? "Marcar como paga" : "Pago"}</button>`;
   }
 
-  function billPinButton(t) {
-    const label = (t.billPinned ? "Desafixar" : "Fixar no topo") + " · " + t.desc;
-    return `<button type="button" class="btn-icon bill-pin" data-bill-action="${t.billPinned ? "unpin" : "pin"}" aria-pressed="${!!t.billPinned}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${uiIcon("pin", 16)}</button>`;
+  function billTableAction(t) {
+    if (t.type !== "despesa") return "";
+    if (t.paymentStatus) return billPayButton(t);
+    const label = "Marcar como conta a pagar · " + t.desc;
+    return `<button type="button" class="bill-pay bill-select" data-bill-action="track" aria-label="${escapeHtml(label)}" title="Aguardar pagamento antes de contar nas despesas">${uiIcon("bill", 15)} Conta a pagar</button>`;
   }
 
   function billRow(t) {
     const pending = isPendingBill(t);
-    const when = pending ? "Vencimento " + fmtDate(t.date) : (t.type === "receita" ? "Recebido em " : "Pago em ") + fmtDate(accountingDate(t));
+    const when = pending ? "Vencimento " + fmtDate(t.date) : "Pago em " + fmtDate(accountingDate(t));
     return `<div class="bill-row" data-id="${escapeHtml(t.id)}">
       <div class="bill-title"><strong>${escapeHtml(t.desc)}</strong><small>${escapeHtml([when, t.account, t.installment].filter(Boolean).join(" · "))}</small></div>
-      <b class="bill-amount">${fmtTxAmount(t)}</b><div class="bill-actions">${t.type === "despesa" ? billPayButton(t) : ""}${billPinButton(t)}</div>
+      <b class="bill-amount">${fmtTxAmount(t)}</b><div class="bill-actions">${billPayButton(t)}</div>
     </div>`;
   }
 
-  function renderBillBoards() {
-    const active = ds.transactions.filter(t => t.billPinned || isPendingBill(t));
-    active.sort((a,b) => Number(!!b.billPinned) - Number(!!a.billPinned) || Number(isPendingBill(b)) - Number(isPendingBill(a)) || a.date.localeCompare(b.date));
-    const settled = ds.transactions.filter(t => !t.billPinned && t.paymentStatus === "paid")
+  function renderBillBoard() {
+    const panel = $("#dash-bills");
+    if (!panel) return;
+    const active = ds.transactions.filter(isPendingBill).sort((a,b) => a.date.localeCompare(b.date));
+    const settled = ds.transactions.filter(t => t.type === "despesa" && t.paymentStatus === "paid")
       .sort((a,b) => accountingDate(b).localeCompare(accountingDate(a)));
-    const count = active.filter(isPendingBill).length;
+    const count = active.length;
     const header = `<div class="bill-head"><div><h2>Contas a pagar</h2><p>${count ? (count === 1 ? "1 conta em aberto" : count + " contas em aberto") : "Nenhuma conta em aberto"}</p></div>
       <button type="button" class="btn btn-ghost btn-sm" data-bill-action="new">${uiIcon("plus", 15)} Nova conta a pagar</button></div>`;
     const list = active.length ? `<div class="bill-list">${active.map(billRow).join("")}</div>` : "";
-    for (const selector of ["#dash-bills", "#tx-bills"]) {
-      const panel = $(selector);
-      if (!panel) continue;
-      const expanded = panel.querySelector("details")?.open;
-      const history = settled.length ? `<details class="bill-history" ${expanded ? "open" : ""}><summary>Contas pagas (${settled.length})</summary><div class="bill-list">${settled.map(billRow).join("")}</div></details>` : "";
-      panel.innerHTML = header + list + history;
-    }
+    const expanded = panel.querySelector("details")?.open;
+    const history = settled.length ? `<details class="bill-history" ${expanded ? "open" : ""}><summary>Contas pagas (${settled.length})</summary><div class="bill-list">${settled.map(billRow).join("")}</div></details>` : "";
+    panel.innerHTML = header + list + history;
   }
 
   function changeBill(id, action) {
     if (!refreshImportTarget()) return;
     const t = ds.transactions.find(tx => tx.id === id);
     if (!t) { toast("Esta conta não está mais na pasta."); return; }
-    if (action === "pin" || action === "unpin") {
-      if (!!t.billPinned === (action === "pin")) return;
-      if (action === "pin") t.billPinned = true; else delete t.billPinned;
-    } else {
-      if (t.type !== "despesa" || !["pay", "reopen"].includes(action) || isPendingBill(t) !== (action === "pay")) return;
-      t.paymentStatus = action === "pay" ? "paid" : "pending";
-      if (action === "pay") t.paidOn = todayISO(); else delete t.paidOn;
-    }
+    const previous = {track:undefined, pay:"pending", reopen:"paid"};
+    if (t.type !== "despesa" || !Object.hasOwn(previous, action) || previous[action] !== t.paymentStatus) return;
+    t.paymentStatus = action === "pay" ? "paid" : "pending";
+    if (action === "pay") t.paidOn = todayISO(); else delete t.paidOn;
     saveCur();
     renderAll();
-    toast({pin:"Fixada no topo.",unpin:"Conta desafixada.",pay:"Conta paga. Despesa contabilizada.",reopen:"Conta em aberto. Total atualizado."}[action]);
+    toast(action === "pay" ? "Conta paga. Despesa contabilizada." : "Conta em aberto. O valor só entra nas despesas após o pagamento.");
   }
 
   function renderTable() {
@@ -1395,8 +1390,7 @@ const Dashboard = (() => {
         <td>${t.installment ? escapeHtml(t.installment) + (t.advance ? '<br><span class="fixa-chip">Adiantada</span>' : '') : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
         <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtTxAmount(t)}</td>
         <td class="tx-actions">
-          ${t.type === "despesa" && (t.paymentStatus || t.billPinned) ? billPayButton(t) : ""}
-          ${billPinButton(t)}
+          ${billTableAction(t)}
           <button class="btn-icon" data-action="edit" title="Editar" aria-label="Editar transação">${uiIcon("edit")}</button>
           ${installmentTotal(t) > 1 ? `<button class="btn-icon" data-action="advance" title="Adiantar parcelas" aria-label="Adiantar parcelas">${uiIcon("advance")}</button>` : ""}
           <button class="btn-icon" data-action="delete" title="Excluir" aria-label="Excluir transação">${uiIcon("trash")}</button>
@@ -1584,7 +1578,8 @@ const Dashboard = (() => {
     if(!Number.isInteger(count)||count<1||count>list.length)return;
     list.slice(0,count).forEach(t=>{
       t.advance={scheduledDate:t.date,paidDate:date};t.date=date;delete t.dateEstimated;delete t.dateEstimate;
-      if(t.type==="despesa" && t.paymentStatus){t.paymentStatus="paid";t.paidOn=date;}
+      if(t.paymentStatus){t.paymentStatus="paid";t.paidOn=date;}
+      else if(t.paidOn)t.paidOn=date;
     });
     saveCur();renderAll();pendingAdvance=null;$("#modal-advance").classList.add("hidden");toast(count+" parcela(s) adiantada(s).");
   }
@@ -1631,9 +1626,9 @@ const Dashboard = (() => {
 
     $("#modal-tx-title").textContent = isEdit ? "Editar transação" : (opts.title || "Nova transação");
     txType = isEdit ? tx.type : (opts.type === "receita" ? "receita" : "despesa");
-    const paidBox = $("#tx-paid"), pinBox = $("#tx-pin");
-    paidBox.checked = paidBox.defaultChecked = isEdit ? !isPendingBill(tx) : !opts.pending;
-    pinBox.checked = pinBox.defaultChecked = !!tx?.billPinned;
+    const paidBox = $("#tx-paid"), trackBox = $("#tx-payable");
+    trackBox.checked = trackBox.defaultChecked = isEdit ? !!tx.paymentStatus : !!opts.pending;
+    paidBox.checked = paidBox.defaultChecked = tx?.paymentStatus === "paid";
     updateTypeToggle();
 
     // Reseta o leitor de comprovante
@@ -1685,10 +1680,13 @@ const Dashboard = (() => {
   function updateTypeToggle() {
     $$("#tx-type-toggle button").forEach((b) => b.classList.toggle("active", b.dataset.type === txType));
     const expense = txType === "despesa";
-    $("#tx-paid-wrap").classList.toggle("hidden", !expense);
-    $("#tx-bill-hint").classList.toggle("hidden", !expense);
-    $("#tx-date-label").textContent = expense && !$("#tx-paid").checked ? "Vencimento" : "Data";
-    $("#tx-bill-hint").textContent = $("#tx-paid").checked ? "Desmarque “Conta paga” para guardar uma conta a pagar." : "Em aberto. O valor só entra nas despesas quando você marcar como paga.";
+    const tracked = expense && $("#tx-payable").checked;
+    $("#tx-bill-options").classList.toggle("hidden", !expense);
+    $("#tx-paid-wrap").classList.toggle("hidden", !tracked);
+    $("#tx-date-label").textContent = tracked ? "Vencimento" : "Data";
+    $("#tx-bill-hint").textContent = tracked
+      ? "A conta aparece no dashboard. O valor entra nas despesas quando você marcar como paga."
+      : "A despesa já conta no total. Selecione para aguardar o pagamento.";
   }
 
   function updateFixedOption(tx) {
@@ -1804,18 +1802,19 @@ const Dashboard = (() => {
     if (startFixed && !isValidISODate(monthlyDate(FIXA_MESES-1))) { toast("Escolha uma data que permita criar a série mensal."); return; }
     ensureCat(ds, category);
     const fields = { amount: Math.abs(amount), date, desc, category, account, type: txType, currency };
-    const paidBox = $("#tx-paid"), pinBox = $("#tx-pin");
-    // Se o formulário não mudou estes controles, mantenha a última versão salva em outra tela.
-    const paid = edited && paidBox.checked === paidBox.defaultChecked ? !isPendingBill(edited) : paidBox.checked;
-    const pinned = edited && pinBox.checked === pinBox.defaultChecked ? !!edited.billPinned : pinBox.checked;
-    const bill = cleanBillFields({ type:txType, billPinned:pinned,
-      paymentStatus: !paid ? "pending" : edited?.paymentStatus ? "paid" : undefined,
-      paidOn: edited && isPendingBill(edited) && paid ? todayISO() : edited?.paidOn });
-    const nextBill = txType === "despesa" && (!paid || pinned || bill.paymentStatus)
-      ? { ...(pinned ? {billPinned:true} : {}), paymentStatus:"pending" } : bill;
+    const paidBox = $("#tx-paid"), trackBox = $("#tx-payable");
+    // Controles intocados mantêm o último pagamento salvo, inclusive por outra tela.
+    const tracked = edited && trackBox.checked === trackBox.defaultChecked ? !!edited.paymentStatus : trackBox.checked;
+    const paid = edited && paidBox.checked === paidBox.defaultChecked ? edited.paymentStatus === "paid" : paidBox.checked;
+    const paymentStatus = tracked ? (paid ? "paid" : "pending") : undefined;
+    let paidOn = edited?.paidOn;
+    if (edited && isPendingBill(edited) && paymentStatus === "paid") paidOn = todayISO();
+    if (edited && !tracked && !edited.paymentStatus && date !== edited.date) paidOn = undefined;
+    const bill = cleanBillFields({ type:txType, paymentStatus, paidOn });
+    const nextBill = bill.paymentStatus ? {paymentStatus:"pending"} : {};
     if (edited) {
       const dateChanged = txDateEdited || date !== edited.date;
-      delete edited.billPinned; delete edited.paymentStatus; delete edited.paidOn;
+      delete edited.paymentStatus; delete edited.paidOn;
       Object.assign(edited, fields, evidence, bill);
       if (dateChanged) { delete edited.dateEstimated; delete edited.dateEstimate; }
     }
@@ -2080,14 +2079,13 @@ const Dashboard = (() => {
 
     // Ações da tabela
     $("#tx-paid").addEventListener("change", updateTypeToggle);
-    for (const selector of ["#dash-bills", "#tx-bills"]) {
-      $(selector).addEventListener("click", ev => {
-        const button = ev.target.closest("[data-bill-action]");
-        if (!button) return;
-        if (button.dataset.billAction === "new") openTxModal(null, {pending:true, title:"Nova conta a pagar"});
-        else changeBill(button.closest("[data-id]").dataset.id, button.dataset.billAction);
-      });
-    }
+    $("#tx-payable").addEventListener("change", updateTypeToggle);
+    $("#dash-bills").addEventListener("click", ev => {
+      const button = ev.target.closest("[data-bill-action]");
+      if (!button) return;
+      if (button.dataset.billAction === "new") openTxModal(null, {pending:true, title:"Nova conta a pagar"});
+      else changeBill(button.closest("[data-id]").dataset.id, button.dataset.billAction);
+    });
     $("#tx-tbody").addEventListener("click", (ev) => {
       const tr = ev.target.closest("tr[data-id]");
       if (!tr) return;
