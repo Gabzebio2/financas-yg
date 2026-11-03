@@ -1601,14 +1601,14 @@ const Dashboard = (() => {
     $("#tx-newcat-wrap").classList.toggle("hidden", catSel.value !== "__new__");
     $("#tx-newcat").value = "";
 
-    // Parcelamento e fixa só para transações novas
     $("#tx-parc-wrap").classList.toggle("hidden", isEdit);
-    $("#tx-fixa-wrap").classList.toggle("hidden", isEdit);
     $("#tx-parcelado").checked = false;
-    $("#tx-fixa").checked = false;
+    $("#tx-fixa").checked = !!tx?.fixed;
+    updateFixedOption(tx);
     $("#tx-nparc-wrap").classList.add("hidden");
     $("#tx-parc-hint").classList.add("hidden");
     $("#tx-nparc").value = 2;
+    updateTxHints();
 
     $("#modal-tx").classList.remove("hidden");
     setTimeout(() => $("#tx-amount").focus(), 50);
@@ -1616,6 +1616,16 @@ const Dashboard = (() => {
 
   function updateTypeToggle() {
     $$("#tx-type-toggle button").forEach((b) => b.classList.toggle("active", b.dataset.type === txType));
+  }
+
+  function updateFixedOption(tx) {
+    const fixed = $("#tx-fixa");
+    const show = !tx || (!tx.installment && (tx.fixed || txType === "despesa"));
+    $("#tx-fixa-wrap").classList.toggle("hidden", !show);
+    fixed.disabled = !show || !!tx?.fixed;
+    if (!show) fixed.checked = false;
+    else if (tx?.fixed) fixed.checked = true;
+    $("#tx-fixa-label").textContent = (txType === "receita" ? "Receita fixa" : "Despesa fixa") + " (repete todo mês)";
   }
 
   function updateTxHints() {
@@ -1635,7 +1645,10 @@ const Dashboard = (() => {
         : "Escolha de 2 a 48 parcelas inteiras. O valor deve permitir pelo menos uma unidade mínima da moeda por parcela.";
       hint.classList.remove("hidden");
     } else if (fixaOn) {
-      hint.textContent = `Serão criados ${FIXA_MESES} lançamentos mensais${total && total > 0 ? ` de ${f(total)}` : ""}, a partir da data escolhida. Para encerrar, exclua a partir de um mês.`;
+      hint.textContent = editingId
+        ? ($("#tx-fixa").disabled ? "Este lançamento já faz parte de uma série mensal. As alterações valem só para este mês."
+          : `Este lançamento será o primeiro da série. Ao salvar, serão adicionadas ${FIXA_MESES-1} repetições mensais a partir do mês seguinte.`)
+        : `Serão criados ${FIXA_MESES} lançamentos mensais${total && total > 0 ? ` de ${f(total)}` : ""}, a partir da data escolhida. Para encerrar, exclua a partir de um mês.`;
       hint.classList.remove("hidden");
     } else {
       hint.classList.add("hidden");
@@ -1655,6 +1668,8 @@ const Dashboard = (() => {
   }
 
   function saveTxModal(approvedReceipt) {
+    if (!ds || $("#modal-tx").classList.contains("hidden")) return;
+    if (editingId && !refreshImportTarget()) return;
     const currency = normCur($("#tx-currency").value);
     const amount = moneyInputValue($("#tx-amount"), currency);
     if (!Number.isFinite(amount) || amount <= 0) { toast("Informe um valor válido 💰"); $("#tx-amount").focus(); return; }
@@ -1701,8 +1716,6 @@ const Dashboard = (() => {
         }
       }
     }
-    ensureCat(ds, category);
-
     const monthlyDate = (i) => {
       const [y0, m0, d0] = date.split("-").map(Number);
       let y = y0, m = m0 + i;
@@ -1711,13 +1724,29 @@ const Dashboard = (() => {
       return `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     };
 
+    const edited = editingId ? ds.transactions.find(t => t.id === editingId) : null;
+    if (editingId && !edited) { toast("Esta transação não está mais disponível. Abra a lista novamente."); return; }
+    const startFixed = !parts && $("#tx-fixa").checked &&
+      (!edited || (txType === "despesa" && !edited.fixed && !edited.installment));
+    if (startFixed && !isValidISODate(monthlyDate(FIXA_MESES-1))) { toast("Escolha uma data que permita criar a série mensal."); return; }
+    ensureCat(ds, category);
+    const fields = { amount: Math.abs(amount), date, desc, category, account, type: txType, currency };
+    if (edited) {
+      const dateChanged = txDateEdited || date !== edited.date;
+      Object.assign(edited, fields, evidence);
+      if (dateChanged) { delete edited.dateEstimated; delete edited.dateEstimate; }
+    }
     let message;
-    if (editingId) {
-      const tx = ds.transactions.find((t) => t.id === editingId);
-      if (!tx) { toast("Esta transação não está mais disponível. Abra a lista novamente."); return; }
-      const dateChanged = txDateEdited || date !== tx.date;
-      Object.assign(tx, { amount: Math.abs(amount), date, desc, category, account, type: txType, currency }, evidence);
-      if (dateChanged) { delete tx.dateEstimated; delete tx.dateEstimate; }
+    if (startFixed) {
+      const groupId = uid();
+      if (edited) Object.assign(edited, { groupId, fixed:true });
+      for (let i = edited ? 1 : 0; i < FIXA_MESES; i++) {
+        ds.transactions.push({ ...fields, id:uid(), groupId, fixed:true, date:monthlyDate(i),
+          installment:null, totalValue:null, ...(i === 0 ? evidence : {}) });
+      }
+      message = edited ? `Despesa fixa: este lançamento e mais ${FIXA_MESES-1} meses.`
+        : `${txType === "receita" ? "Receita" : "Despesa"} fixa criada para ${FIXA_MESES} meses.`;
+    } else if (edited) {
       message = "Transação atualizada ✔";
     } else if (parts) {
       const n = parts.length;
@@ -1735,20 +1764,6 @@ const Dashboard = (() => {
         });
       }
       message = `Parcelamento criado: ${n} lançamentos ✔`;
-    } else if ($("#tx-fixa").checked) {
-      const groupId = uid();
-      for (let i = 0; i < FIXA_MESES; i++) {
-        ds.transactions.push({
-          id: uid(), groupId, fixed: true,
-          date: monthlyDate(i),
-          desc, category, account, type: txType,
-          amount: Math.abs(amount),
-          currency,
-          installment: null, totalValue: null,
-          ...(i === 0 ? evidence : {}),
-        });
-      }
-      message = `${txType === "receita" ? "Receita" : "Despesa"} fixa criada para os próximos ${FIXA_MESES} meses ✔`;
     } else {
       ds.transactions.push({
         id: uid(), date, desc, category, account, type: txType,
@@ -1817,6 +1832,7 @@ const Dashboard = (() => {
     $("#tx-newcat").value = "";
     $("#tx-parcelado").checked = false;
     $("#tx-fixa").checked = false;
+    updateFixedOption(editingId ? ds.transactions.find(t=>t.id===editingId) : null);
     updateTxHints();
     // Cartão/conta: preenche só quando a instituição bate sem ambiguidade
     // ("Nubank" sozinho não decide entre Nubank Yara e Nubank Gab)
@@ -2083,7 +2099,10 @@ const Dashboard = (() => {
     $("#tx-date").addEventListener("input", () => { txDateEdited = true; });
     $("#tx-date").addEventListener("change", () => { txDateEdited = true; });
     $$("#tx-type-toggle button").forEach((b) => {
-      b.addEventListener("click", () => { txType = b.dataset.type; updateTypeToggle(); });
+      b.addEventListener("click", () => {
+        txType = b.dataset.type; updateTypeToggle();
+        updateFixedOption(editingId ? ds.transactions.find(t=>t.id===editingId) : null); updateTxHints();
+      });
     });
     $("#tx-cat").addEventListener("change", (ev) => {
       $("#tx-newcat-wrap").classList.toggle("hidden", ev.target.value !== "__new__");

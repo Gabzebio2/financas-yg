@@ -279,6 +279,33 @@ test('datas impossíveis e parcelas fracionárias não são salvas', () => {
   get('#tx-date').value = '2027-02-28'; get('#tx-parcelado').checked = true; get('#tx-nparc').value = '2.5';
   api.saveTxModal(); assert.equal(api.getDataset().transactions.length,0);
 });
+test('converter uma despesa usa o original e repete só os 11 meses seguintes',()=>{
+  const ds=dataset();ds.transactions=[tx('original',{date:'2027-01-31',currency:'USD',referenceId:'ref1',cashback:{amount:.25,currency:'USD'}})];
+  saveBase(ds);api.openTxModal('original');
+  assert.equal(get('#tx-fixa-wrap').classList.contains('hidden'),false);
+  assert.equal(get('#tx-fixa').checked,false);assert.equal(get('#tx-fixa').disabled,false);
+  get('#tx-fixa').checked=true;get('#tx-desc').value='Assinatura';api.saveTxModal();api.saveTxModal();
+  const rows=api.getDataset().transactions;
+  assert.equal(rows.length,12);assert.equal(new Set(rows.map(t=>t.id)).size,12);
+  assert.equal(rows[0].id,'original');assert.equal(rows[0].referenceId,'ref1');assert.equal(rows[0].cashback.amount,.25);
+  assert(rows[0].groupId&&rows.every(t=>t.fixed&&t.groupId===rows[0].groupId&&t.currency==='USD'&&t.desc==='Assinatura'&&t.amount===10));
+  assert(rows.slice(1).every(t=>!t.referenceId&&!t.cashback));
+  assert.deepEqual(Array.from(rows.slice(0,3),t=>t.date),['2027-01-31','2027-02-28','2027-03-31']);
+  assert.equal(rows[11].date,'2027-12-31');
+  api.openTxModal(rows[1].id);assert(get('#tx-fixa').checked&&get('#tx-fixa').disabled);
+  get('#tx-desc').value='Só fevereiro';api.saveTxModal();
+  assert.equal(api.getDataset().transactions.length,12);assert.equal(api.getDataset().transactions[2].desc,'Assinatura');
+});
+test('cancelar, desfazer e editar uma parcela não criam recorrências',()=>{
+  const ds=dataset();ds.transactions=[tx('one'),tx('part',{groupId:'series',installment:'1/3'})];saveBase(ds);
+  api.openTxModal('one');get('#tx-fixa').checked=true;get('#btn-tx-cancel').listeners.get('click')();
+  assert.equal(api.getDataset().transactions.length,2);
+  api.openTxModal('one');get('#tx-fixa').checked=true;api.saveTxModal();api.undo();
+  assert.equal(api.getDataset().transactions.length,2);assert(!api.getDataset().transactions[0].fixed);
+  api.openTxModal('part');assert(get('#tx-fixa-wrap').classList.contains('hidden'));
+  get('#tx-fixa').checked=true;api.saveTxModal();assert.equal(api.getDataset().transactions.length,2);
+  assert.equal(api.getDataset().transactions[1].installment,'1/3');assert(!api.getDataset().transactions[1].fixed);
+});
 test('filtros por tipo, conta, busca e categoria combinam corretamente', () => {
   const ds=dataset(); ds.transactions=[tx('trans001'),tx('trans002',{type:'receita',account:'',desc:'Salário'}),tx('trans003',{date:'2026-09-01'})]; saveBase(ds);
   api.setFilters({type:'receita', account:'account:',search:'salario'});
