@@ -66,7 +66,7 @@ test('leitura rápida exige poucos itens, datas reais, moeda legível e contagem
  for(const edit of [{itens:Array(11).fill(r.itens[0])},{itens:[{...r.itens[0],data:'2026-02-31'}]},{expectedCount:2},{verified:false},{itens:[]},{excluded:[{motivo:'outro'}]}])assert.equal(canFinishQuick({...r,...edit}),false);
 });
 test('modo rápido usa low e uma chamada; segunda leitura sempre usa medium',async(t)=>{
- const requests=[];t.mock.method(global,'fetch',async(url,init)=>{requests.push(JSON.parse(init.body));return {ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(raw({itens:[row({linhas:[]})],excluidos:[]}))}]}]})};});
+ const requests=[];t.mock.method(global,'fetch',async(url,init)=>{requests.push(JSON.parse(init.body));return {ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify(raw({itens:[row({linhas:[]})],excluidos:[],leituraVisual:{layout:'individual',cabecalhos:[],movimentosVisiveis:1,ultimaDescricao:'Compra'}}))}]}]})};});
  const args={image:{media_type:'image/png',data:'YWJj'},categories:['Outros'],cards:[],context:{pageStart:1,pageEnd:1,totalPages:1},mode:'quick'};
  const first=await readPage(args,'test-only');assert.equal(first.reviewMode,'automatic');assert.equal(requests.length,1);assert.equal(requests[0].model,FAST_MODEL);assert.equal(requests[0].reasoning.effort,'low');assert.equal(requests[0].store,false);
  const second=await readPage({...args,first},'test-only');assert.equal(second.reviewMode,'compared');assert.equal(requests[1].reasoning.effort,'medium');

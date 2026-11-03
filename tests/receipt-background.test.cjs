@@ -99,3 +99,26 @@ test('cabeçalho da continuação fica restrito ao mesmo arquivo/tarefa e é ver
   assert(!calls.some(c=>/pastas|receipt_commit/.test(c.url)));
  }
 });
+test('worker só herda cabeçalhos da sequência completa do mesmo print privado',async()=>{
+ const {createBackend,digest}=await core(),bytes=new TextEncoder().encode('synthetic image');
+ const p={job_id:id,document_id:'doc-b',page_index:7,object_path:'image',byte_size:bytes.length,sha256:await digest(bytes),media_type:'image/jpeg',context:{pageStart:3,pageEnd:3,totalPages:3,imageSlice:{height:2000,before:60,after:0}},lease_token:id};
+ for(const variant of ['complete','missing','unreadable','relative']){
+  let received;
+  const b=createBackend({url:'https://db.test',serviceKey:'private',publicKey:'public',fetcher:async(url,opt={})=>{
+   if(url.includes('expires_at=lte.'))return json([]);
+   if(url.endsWith('/receipt_claim'))return json({page:p,categories:[],cards:[]});
+   if(url.includes('/storage/'))return new Response(bytes);
+   if(url.includes('receipt_worker_config'))return json([{token:'scoped'}]);
+   if(url.includes('receipt_job_pages?')){
+    assert(url.includes('job_id=eq.'+id)&&url.includes('document_id=eq.doc-b')&&url.includes('page_index=lt.7'));
+    const earlier={context:{pageStart:1,totalPages:3},draft:{complete:true,lastHeading:'03/11/2026'}};
+    const middle={context:{pageStart:2,totalPages:3},checked:{complete:variant!=='unreadable',lastHeading:variant==='relative'?'Ayer':null}};
+    return json(variant==='missing'?[earlier]:[middle,earlier]);
+   }
+   if(url.endsWith('/api/receipt-worker')){received=JSON.parse(opt.body);return json({itens:[],ledger:{}});}
+   return json(true);
+  }});
+  await b.work();assert(received);
+  assert.equal(received.previousHeading,variant==='complete'?'03/11/2026':variant==='relative'?'Ayer':undefined);
+ }
+});

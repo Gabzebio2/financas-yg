@@ -11,9 +11,9 @@ function photoPlan(result, context, categories) {
   const excluded = result.excluded || [];
   const counted = rows.length + excluded.filter(x => x.operacao !== false && x.motivo !== 'resumo').length;
   const incomplete = result.partial || result.coverage?.complete !== true ||
-    (result.expectedCount != null && result.expectedCount !== counted);
+    (!(context.totalPages>1) && result.expectedCount != null && result.expectedCount !== counted);
   const entries = result.itens.map((item, index) => {
-    const date = rows[index];
+    const date = item.grupoSemData ? {date:''} : rows[index];
     const desc = (item.descricao || '').trim();
     const issues = (item.revisar || []).filter(msg => !(date.dateEstimated && /data/i.test(msg) && !/moeda|valor|tipo/i.test(msg)));
     const installment = (item.parcela || '').trim();

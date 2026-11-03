@@ -56,6 +56,7 @@ function promptFor(multi, categories, cards, context) {
     (multi ? `\nCartões/contas permitidos para cartao: ${JSON.stringify(cards)}. Sem identificação segura, use "".` : "") +
     '\n' + platformPrompt(multi ? cards : [...new Set([...cards, ...PLATFORMS])]) +
     '\n' + STATEMENT_PROMPT +
+    '\nDatas em uma lista de movimentos: um cabeçalho de data do extrato vale para cada linha abaixo, inclusive a última transferência, até o próximo grupo. Uma data explícita da própria operação prevalece. Nunca use o relógio do celular como data.' +
     (context ? `\nEste envio contém ${context.pageEnd - context.pageStart + 1} página(s)/trecho(s), das posições ${context.pageStart} a ${context.pageEnd} de ${context.totalPages}. O restante não está presente: extraia apenas o que vê aqui. pagina/pagesRead/unreadablePages usam a posição LOCAL 1..${context.pageEnd - context.pageStart + 1}. Não deduza ano ausente pelo número da página.` : "");
 }
 

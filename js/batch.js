@@ -400,6 +400,7 @@ const Batch = (() => {
       }
 
       return { date, desc, amount, type, currency, on: true, cat, parcNum, parcTotal, fixa, review, sourceIndex,
+        grupoSemData: it.grupoSemData===true,
         cashback: it.cashback && Number.isFinite(it.cashback.valor) && it.cashback.valor>0 ? {amount:it.cashback.valor,currency:it.cashback.moeda} : null,
         account: typeof (it.account ?? it.instituicao) === "string" ? (it.account ?? it.instituicao).trim().slice(0, 80) : "",
         referenceId: String(it.referenceId ?? it.referencia ?? "").trim().slice(0, 160),
@@ -618,7 +619,16 @@ const Batch = (() => {
       const token=await Cloud.getToken();if(!token)throw Error('login_required');
       const headerPart=t.part.mediaType==='application/pdf'&&t.part.documentContext.pageStart>1?documentTasks.find(x=>x.documentId===t.documentId&&x.part.documentContext.pageStart===1&&x.part.mediaType==='application/pdf')?.part:null;
       const sourceHeader=headerPart?.data?.length<=262144&&headerPart.data.length+t.part.data.length<=4200000?headerPart.data:undefined;
-      const res=await fetch('/api/receipt-document',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},signal:AbortSignal.timeout(175000),body:JSON.stringify({image:{media_type:t.part.mediaType,data:t.part.data},categories:Dashboard.getCats(),cards:CARDS,documentContext:t.part.documentContext,...(sourceHeader?{sourceHeader}:{}),mode:t.quick&&!first?'quick':'full',...(first?{first}: {})})});
+      let previousHeading;
+      if(t.part.documentContext.imageSlice){
+        for(let n=t.part.documentContext.pageStart-1;n>=1;n--){
+          const previous=documentTasks.find(x=>x.documentId===t.documentId&&x.part.documentContext.pageStart===n);
+          const evidence=(previous?.result||previous?.first)?.visualContext;
+          if(!evidence?.complete)break;
+          if(evidence.lastHeading){previousHeading=evidence.lastHeading;break;}
+        }
+      }
+      const res=await fetch('/api/receipt-document',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},signal:AbortSignal.timeout(175000),body:JSON.stringify({image:{media_type:t.part.mediaType,data:t.part.data},categories:Dashboard.getCats(),cards:CARDS,documentContext:t.part.documentContext,...(sourceHeader?{sourceHeader}:{}),...(previousHeading?{previousHeading}:{}),mode:t.quick&&!first?'quick':'full',...(first?{first}: {})})});
       const data=await res.json().catch(()=>({}));
       if(!res.ok&&data.error==='resposta_incompleta'&&t.quick&&!first){
         t.quick=false;setStatus('Este print é mais extenso. Continuando com a leitura completa…');

@@ -38,6 +38,7 @@ const ImportDates = (() => {
       });
       let previous = null, nextIndex = 0;
       group.forEach(({ row, index }, position) => {
+        if(row.grupoSemData && !valid(row.date))return;
         if (valid(row.date) && row.dateEstimated !== true) {
           previous = position;
           while (nextIndex < anchors.length && anchors[nextIndex] <= position) nextIndex++;

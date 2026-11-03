@@ -6,10 +6,18 @@ const MODEL = "gpt-6.1-terra";
 const FAST_MODEL = "gpt-6-luna";
 const { accountName, sourceAccount, platformPrompt } = require('./receipt-platforms.cjs');
 const {header,tableLines,parseTable,reconcile,STATEMENT_PROMPT}=require('./statement-table.cjs');
+const {imageContext,visualReading,checkFirstRows}=require('./image-groups.cjs');
 const object = properties => ({type:"object",additionalProperties:false,properties,required:Object.keys(properties)});
 const string={type:"string"}, number={type:["number","null"]}, strings={type:"array",items:string}, lines={type:"array",items:{type:"integer"}};
 const rowSchema=object({data:string,descricao:string,valor:number,moeda:string,tipo:{type:"string",enum:["despesa","receita",""]},categoria:string,parcela:string,instituicao:string,referencia:string,evidencia:string,incertezas:strings,linhas:lines,cobranca:object({valor:number,moeda:string,origem:{type:'string',enum:['debito_explicito','usd_abaixo_local','unica_moeda','incerta']}}),cashback:object({valor:number,moeda:string})});
 const schema=object({cartao:string,itens:{type:"array",items:rowSchema},excluidos:{type:"array",items:object({descricao:string,motivo:{type:"string",enum:["cashback","recusado","resumo","transferencia_propria","outro"]},operacao:{type:"boolean"},explicacao:string,linhas:lines})},contagemOperacoes:{type:["integer","null"]},avisos:strings,completo:{type:"boolean"}});
+const position={type:["integer","null"]};
+const imageSchema=object({...schema.properties,
+  itens:{type:'array',items:object({...rowSchema.properties,posicaoValor:position,origemData:{type:'string',enum:['linha','grupo','ausente']}})},
+  excluidos:{type:'array',items:object({...schema.properties.excluidos.items.properties,posicaoValor:position})},
+  leituraVisual:object({layout:{type:'string',enum:['individual','lista','indefinido']},cabecalhos:{type:'array',items:object({texto:string,y:position})},movimentosVisiveis:position,ultimaDescricao:string,
+    correcoes:{type:'array',items:object({descricaoAnterior:string,destino:{type:'string',enum:['corrigida','nao_operacao']},descricaoFinal:string,evidencia:string})}})
+});
 const summaryLine = text => /(?:gasto no cart[aã]o\s*:|^\s*(?:saldo|total|resumo)\b|cashback acumulado|compras aprovadas\s*[:·])/i.test(text);
 
 async function sourceLedger(image) {
@@ -44,6 +52,7 @@ Recusada/fracassada/cancelada/não debitada vai em excluidos motivo recusado, n�
 Multiplicidade: duas linhas iguais reais são DUAS operações, mesmo data/valor/local iguais. Não deduplique pela semelhança. Notas explicativas repetindo compras não são novas compras. Uma tentativa recusada e a aprovada são registros distintos: só a aprovada é despesa. Em excluidos, operacao=true apenas para uma operação real da tabela (recusada, cashback isolado ou transferência própria). Totais acumulados, resumos e notas explicativas têm operacao=false, inclusive resumos de cashback resgatado. Não os conte novamente. Use motivo=resumo para totais e notas repetindo lançamentos.
 EVIDÊNCIA: linhas contém os números [n] do texto original que sustentam cada operação, incluindo TODAS as linhas monetárias da operação. Cabeçalhos de data com total diário podem dar contexto a várias operações: não são valores individuais, devem também ser identificados como resumo. Cada linha monetária precisa estar representada em itens ou excluidos (resumo/cashback/recusado etc.). Use a posição real; não invente números. Para imagem sem texto numerado use []. evidencia é trecho literal curto, sem dados pessoais desnecessários. referencia é ID único impresso, nunca valor/conta/CPF.
 Datas: use AAAA-MM-DD da operação, herdando cabeçalho de data claramente aplicável. Não use data de geração nem invente ano. Se a página começa em continuação e não contém data, deixe ""; o app estima pelos vizinhos e sinaliza. Se o original disser data não visível, deixe "".
+Em listas de Movimientos/Movimentações, um cabeçalho como “Hoy, 3 de noviembre del 2026” é a data explícita de TODAS as operações abaixo, inclusive a última transferência SPI, até aparecer OUTRO cabeçalho de movimentos ou uma data própria na linha. Retenha apenas datas de grupos da lista, nunca o relógio do telefone, títulos de período de busca ou a data do comprovante de outra operação.
 valor é magnitude positiva, preservando casas decimais e moeda; tipo despesa/receita só com evidência. parcela "n/total" apenas se explícita. Categoria permitida, caso ambíguo Outros. Não gere meses futuros.
 SILÊNCIO ÚTIL: incertezas/avisos somente para dúvida material em valor, moeda, data, direção ou completude. Categoria sugerida, cartão não identificado, cashback separado, conversão local ignorada e moeda do débito resolvida pelas regras acima NÃO são avisos. Use Outros e instituição vazia sem pedir intervenção. Dúvida de uma linha fica em incertezas daquela linha, não em avisos da página inteira.
 Categorias permitidas: ${JSON.stringify(categories)}. Contas/cartões: ${JSON.stringify(cards)}. cartao/instituicao só do titular, não banco da contraparte.
@@ -94,12 +103,13 @@ function normalize(raw,ledger,first=null,cards) {
     provider:'openai',model:MODEL};
 }
 function canFinishQuick(result) {
-  return result.verified && result.itens.length>0 && result.itens.length<=10 &&
+  return result.verified && (!result.visualAudit||result.visualAudit.simple) && result.itens.length===1 &&
     result.itens.every(r=>/^\d{4}-\d{2}-\d{2}$/.test(r.data)&&!Number.isNaN(Date.parse(r.data))&&new Date(r.data).toISOString().slice(0,10)===r.data&&r.descricao?.trim()) &&
     result.excluded.every(r=>r.motivo!=='outro') &&
     (!result.expectedCount||result.expectedCount===result.itens.length+result.excluded.filter(r=>r.operacao!==false&&r.motivo!=='resumo').length);
 }
-async function readPage({image,categories,cards,context,first,mode,sourceHeader,timeoutMs=150000},key) {
+async function readPage({image,categories,cards,context,first,mode,sourceHeader,previousHeading=null,timeoutMs=150000},key) {
+  context=imageContext(image,context);
   const quick=mode==='quick'&&!first&&image.media_type!=='application/pdf';
   const model=quick?FAST_MODEL:MODEL;
   const ledger=await sourceLedger(image);
@@ -107,12 +117,26 @@ async function readPage({image,categories,cards,context,first,mode,sourceHeader,
   const statement=parseTable(ledger,reference);
   const media=image.media_type==='application/pdf'?{type:'input_file',filename:'pagina.pdf',file_data:`data:application/pdf;base64,${image.data}`}:{type:'input_image',image_url:`data:${image.media_type};base64,${image.data}`,detail:'high'};
   const userText=`Contexto do cabeçalho da primeira página do MESMO documento: ${JSON.stringify(reference?header(reference):header(ledger))}.\nTexto original numerado, extraído sem IA (pode conter erros de fonte/OCR; a imagem original prevalece):\n${ledger.text||'(imagem sem camada textual)'}\nLinhas monetárias para conferir: ${ledger.moneyLines.join(', ')}.\n${first?'Rascunho da etapa 1, para comparação, sem autoridade: '+JSON.stringify({itens:first.itens,excluded:first.excluded}):'Leia todas as operações.'}`;
-  const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+key,'content-type':'application/json'},signal:AbortSignal.timeout(timeoutMs),redirect:'error',body:JSON.stringify({model,store:false,reasoning:{effort:quick?'low':'medium'},max_output_tokens:quick?12000:24000,instructions:prompt(categories,cards,context,!!first),input:[{role:'user',content:[media,{type:'input_text',text:userText}]}],text:{format:{type:'json_schema',name:'pagina_conferida',strict:true,schema}}})});
+  const isImage=!ledger.pdf;
+  const visualPrompt=isImage?`\nIMAGEM: antes de transcrever, percorra a lista de cima a baixo, conte os movimentos visíveis (incluindo excluídos que são operações, sem saldos/resumos) e confira o último valor junto à borda inferior. Em leituraVisual registre esta contagem visual separada da contagem impressa; ultimaDescricao deve repetir a descrição da última operação visível. Transcreva em cabecalhos TODOS os títulos de data de grupos da lista em ordem, mesmo quando só dizem “Hoy” ou são incompletos. Para cada título indique y do centro do título, e para cada operação posicaoValor do centro da linha do valor. Escala vertical de 0 no alto a 1000 no pé da imagem. Use null se impossível localizar. origemData=linha só para data impressa na própria operação; grupo se segue um cabeçalho; ausente se não há evidência. Transcreva uma operação cortada com valor legível mesmo no final do recorte. Inclua também as linhas da sobreposição (o servidor separa os recortes). Na segunda leitura reconte independentemente e compare as descrições, tipos, valores e grupos do primeiro ao último. Em correcoes, explique cada linha do rascunho cuja descrição, data, direção, moeda ou valor foi corrigido ou que foi retirada, com sua descrição anterior, a descrição final e evidência no original. Use [] na primeira leitura ou se nada mudou. `:'';
+  const prior=isImage && previousHeading ? '\nCabeçalho anterior do MESMO print (contexto, não nova operação): '+JSON.stringify(previousHeading) : '';
+  const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+key,'content-type':'application/json'},signal:AbortSignal.timeout(timeoutMs),redirect:'error',body:JSON.stringify({model,store:false,reasoning:{effort:quick?'low':'medium'},max_output_tokens:quick?12000:24000,instructions:prompt(categories,cards,context,!!first)+visualPrompt,input:[{role:'user',content:[media,{type:'input_text',text:userText+prior}]}],text:{format:{type:'json_schema',name:'pagina_conferida',strict:true,schema:isImage?imageSchema:schema}}})});
   if(!r.ok){const e=await r.json().catch(()=>({}));throw Error(e.error?.code==='insufficient_quota'?'saldo_ia':r.status===401?'configuracao_ia':'leitura_indisponivel');}
   const response=await r.json();
   if(response.status!=='completed')throw Error('resposta_incompleta');
   const text=(response.output||[]).flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');
-  const result=normalize(reconcile(JSON.parse(text),statement,categories),ledger,first,cards);
+  const raw=reconcile(JSON.parse(text),statement,categories);
+  const visual=isImage?visualReading(raw,context,previousHeading):null;
+  const result=normalize(visual?visual.raw:raw,ledger,first,cards);
+  if(visual){
+    result.visualContext=visual.visualContext;result.visualAudit=visual.audit;
+    const discrepancy=first?.itens?.length && checkFirstRows(first,result,raw.leituraVisual?.correcoes);
+    if(discrepancy)visual.audit.issues.push(discrepancy);
+    if(visual.audit.issues.length){
+      result.verified=false;result.partial=true;result.coverage.complete=false;result.visualContext.complete=false;
+      result.avisos.push(...visual.audit.issues);
+    }
+  }
   if(statement&&!statement.complete){result.verified=false;result.avisos.push('A conferência da coluna Importe com os saldos não fechou. Confira as linhas desta página.');}
   return {...result,...(statement?.complete?{statementCheck:{source:'ueno_importe',currency:'PYG',rows:statement.rows.length,balanceChecks:statement.balanceChecks}}:{}),model,readingMode:quick?'quick':'full',reviewMode:quick&&canFinishQuick(result)?'automatic':first?'compared':'pending'};
 }

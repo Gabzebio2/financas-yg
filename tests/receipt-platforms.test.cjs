@@ -21,12 +21,12 @@ test('leitura rápida e segunda etapa usam referências visuais e normalizam cad
   const row = {data:'2026-10-30',descricao:'Retiro a USDC',valor:125,moeda:'USDC',tipo:'despesa',categoria:'Outros',parcela:'',instituicao:'Ether.fi',referencia:'',evidencia:'Retiro a USDC',incertezas:[],linhas:[],cashback:{valor:null,moeda:''}};
   t.mock.method(global, 'fetch', async (_, init) => {
     calls.push(JSON.parse(init.body));
-    return {ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify({cartao:bank,itens:[row,{...row}],excluidos:[],contagemOperacoes:null,avisos:[],completo:true})}]}]})};
+    return {ok:true,json:async()=>({status:'completed',output:[{content:[{type:'output_text',text:JSON.stringify({cartao:bank,itens:[{...row,posicaoValor:260},{...row,posicaoValor:700}],leituraVisual:{layout:'lista',cabecalhos:[],movimentosVisiveis:2,ultimaDescricao:row.descricao},excluidos:[],contagemOperacoes:null,avisos:[],completo:true})}]}]})};
   });
   const args = {image:{media_type:'image/png',data:'fake'},categories:['Outros'],cards:PLATFORMS,context:{pageStart:1,pageEnd:1,totalPages:1},mode:'quick'};
   const first = await readPage(args,'synthetic-key');
   assert.equal(calls.length,1); assert.equal(calls[0].model,FAST_MODEL);
-  assert.equal(first.cartao,'Ugly Cash'); assert.equal(first.reviewMode,'automatic');
+  assert.equal(first.cartao,'Ugly Cash'); assert.equal(first.reviewMode,'pending');
   assert.deepEqual(first.itens.map(r=>[r.instituicao,r.valor,r.moeda]),[['Ugly Cash',125,'USDC'],['Ugly Cash',125,'USDC']]);
   bank = 'Banco Itau';
   const second = await readPage({...args,first},'synthetic-key');

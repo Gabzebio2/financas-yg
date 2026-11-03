@@ -60,6 +60,20 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
   const expired=await admin('/rest/v1/receipt_jobs?expires_at=lte.'+now+'&select=id&limit=20');
   for(const j of expired)await removeExpiredJob(j.id,now);
  }
+ async function previousImageHeading(page){
+   if(!page.media_type?.startsWith('image/')||!page.document_id||!(page.context?.pageStart>1))return null;
+   // Fetch just the heading evidence from earlier pieces of this file in this job.
+   const path='/rest/v1/receipt_job_pages?job_id=eq.'+page.job_id+'&document_id=eq.'+encodeURIComponent(page.document_id)+
+     '&media_type=eq.'+encodeURIComponent(page.media_type)+'&page_index=lt.'+page.page_index+'&order=page_index.desc&select=context,checked:result->visualContext,draft:first_result->visualContext';
+   const parts=await admin(path);
+   let expected=page.context.pageStart-1;
+   for(const part of parts){
+     const evidence=part.checked??part.draft;
+     if(part.context?.pageStart!==expected-- || part.context?.totalPages!==page.context.totalPages || !evidence?.complete)return null;
+     if(typeof evidence.lastHeading==='string')return evidence.lastHeading.slice(0,100);
+   }
+   return null;
+ }
  async function work(){
   // A cleanup outage must not stop reading; the next cron run retries deletion.
   await cleanup().catch(()=>console.warn('receipt_cleanup_retry'));
@@ -84,7 +98,8 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
      sourceHeader=bytesToBase64(headerBytes);
     }
    }
-   const body=JSON.stringify({image:{media_type:p.media_type,data:bytesToBase64(bytes)},documentContext:p.context,...(sourceHeader?{sourceHeader}:{}),first:p.first_result,categories:task.categories,cards:task.cards,mode:p.quick?'quick':'full'});
+   const previousHeading=await previousImageHeading(p);
+   const body=JSON.stringify({image:{media_type:p.media_type,data:bytesToBase64(bytes)},documentContext:p.context,...(sourceHeader?{sourceHeader}:{}),...(previousHeading?{previousHeading}:{}),first:p.first_result,categories:task.categories,cards:task.cards,mode:p.quick?'quick':'full'});
    if(body.length>4400000)throw Error('page_too_dense');
    const read=await fetcher('https://financas-yg.vercel.app/api/receipt-worker',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body,signal:AbortSignal.timeout(115000),redirect:'error'});
    const result=await read.json();if(!read.ok)throw Error(result.error||'leitura_indisponivel');

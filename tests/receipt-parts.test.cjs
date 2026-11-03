@@ -63,11 +63,23 @@ test('captura alta preserva largura e cobre a imagem inteira com sobreposição 
   } } });
   const parts = await collect(receipt.prepareParts({ name: 'tall.png', size: 1000 }));
   assert.equal(parts.length, 6);
-  assert.ok(canvases.every((c) => c.width === 1080 && c.height <= 2200));
+  assert.equal(canvases.filter(c=>c.width===1080 && c.height<=2200).length,parts.length);
   assert.equal(draws[0][2], 0);
   for (let i = 1; i < draws.length; i++) assert.equal(draws[i - 1][2] + draws[i - 1][4] - draws[i][2], 120);
   assert.equal(draws.at(-1)[2] + draws.at(-1)[4], 12000);
   assert.deepEqual(parts.map((p) => p.documentContext.pageStart), [1,2,3,4,5,6]);
+  assert.equal(parts.reduce((n,p)=>n+p.documentContext.imageSlice.height-p.documentContext.imageSlice.before-p.documentContext.imageSlice.after,0),12000);
+});
+
+test('tela de 1080 por 2340 mantém juntos o cabeçalho e a última operação', async()=>{
+  class FileReader {readAsDataURL(){this.result='data:image/png;base64,YQ==';this.onload();}}
+  class Image {constructor(){this.width=1080;this.height=2340;}set src(_){this.onload();}}
+  const draws=[];
+  const receipt=environment({Image,FileReader,document:{addEventListener(){},createElement(){return {
+    getContext:()=>({fillRect(){},drawImage(...args){draws.push(args);}}),toDataURL:()=> 'data:image/jpeg;base64,YQ=='
+  };}}});
+  const parts=await collect(receipt.prepareParts({name:'phone.png',size:100}));
+  assert.equal(parts.length,1);assert.equal(draws[0][2],0);assert.equal(draws[0][4],2340);
 });
 
 test('imagem muito grande em pixels falha antes de criar canvases', async () => {

@@ -105,6 +105,36 @@ const Receipt = (() => {
 
   // Divisão local, sem executar conteúdo do PDF. Um trecho nunca é enviado
   // parcialmente por exceder o limite: PDFs densos recuam de duas para uma página.
+  // Move a tall image's seams into nearby blank space between text lines.
+  // Read only a narrow thumbnail strip; the crops themselves keep their resolution.
+  function imageCuts(img,height,count,overlap,scale){
+    const cuts=[0], radius=Math.min(80,Math.floor((MAX_EDGE-overlap-Math.ceil(height/count))/2));
+    for(let i=1;i<count;i++){
+      const middle=Math.round(height*i/count);let best=middle;
+      if(radius>=8){
+        const probe=document.createElement('canvas');probe.width=120;probe.height=2*radius+1;
+        const ctx=probe.getContext('2d',{willReadFrequently:true});
+        if(ctx?.getImageData){
+          ctx.drawImage(img,0,(middle-radius)/scale,img.width,probe.height/scale,0,0,probe.width,probe.height);
+          const px=ctx.getImageData(0,0,probe.width,probe.height).data;
+          let run=0,bestScore=0;
+          for(let y=0;y<probe.height;y++){
+            let edges=0;
+            for(let x=4;x<probe.width-4;x++){
+              const at=(y*probe.width+x)*4;
+              if(Math.max(...[0,1,2].map(c=>Math.abs(px[at+c]-px[at-4+c])))>16)edges++;
+            }
+            if(edges<=1){
+              run++;const offset=y-Math.floor(run/2)-radius,score=Math.min(run,48)-Math.abs(offset)/6;
+              if(run>=6&&score>bestScore){bestScore=score;best=middle+offset;}
+            }else run=0;
+          }
+        }
+      }
+      cuts.push(best);
+    }
+    return [...cuts,height];
+  }
   async function* prepareParts(file, options = {}) {
     if (!file?.size) throw new Error("leitura");
     if (isPdf(file)) {
@@ -146,20 +176,28 @@ const Receipt = (() => {
     if (!img.width || !img.height) throw new Error("imagem");
     if (img.width * img.height > 32000000) throw new Error("imagem_pixels");
     const scale = Math.min(1, 1800 / img.width), width = Math.max(1, Math.round(img.width * scale));
-    const height = Math.ceil(img.height * scale), step = MAX_EDGE - 120;
-    const totalPages = Math.max(1, Math.ceil((height - 120) / step));
+    const height = Math.ceil(img.height * scale), overlap = 120;
+    // Keep a normal phone screen (e.g. 1080 × 2340) together with its date header.
+    // For long scroll captures distribute the height evenly: no tiny trailing crop.
+    const totalPages = height <= 3000 ? 1 : Math.ceil(height / (MAX_EDGE - overlap));
     if (totalPages > 120) throw new Error("partes_demais");
+    const cuts=imageCuts(img,height,totalPages,overlap,scale);
     for (let index = 0; index < totalPages; index++) {
-      const top = index * step, partHeight = Math.min(MAX_EDGE, height - top);
+      const top = Math.max(0, cuts[index] - overlap / 2);
+      const end = Math.min(height, cuts[index+1] + overlap / 2);
+      const partHeight = end - top;
       const canvas = document.createElement("canvas");
       canvas.width = width; canvas.height = partHeight;
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("imagem");
       ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, width, partHeight);
       ctx.drawImage(img, 0, top / scale, img.width, Math.min(partHeight / scale, img.height - top / scale), 0, 0, width, partHeight);
-      const url = canvas.toDataURL("image/jpeg", 0.9), data = url.split(",")[1];
-      if (!url.startsWith("data:image/jpeg;base64,") || !data || data.length > 4.1 * 1024 * 1024) throw new Error("imagem_envio_grande");
-      yield { data, mediaType: "image/jpeg", documentContext: { pageStart: index + 1, pageEnd: index + 1, totalPages }, label: totalPages > 1 ? `trecho ${index + 1} de ${totalPages} (com sobreposição)` : "imagem 1 de 1" };
+      let url = canvas.toDataURL("image/jpeg", 0.9);
+      if (url.length > 4200023) url = canvas.toDataURL("image/jpeg", 0.75);
+      const data = url.split(",")[1];
+      if (!url.startsWith("data:image/jpeg;base64,") || !data || data.length > 4200000) throw new Error("imagem_envio_grande");
+      const imageSlice = totalPages > 1 ? {height:partHeight, before:index ? overlap / 2 : 0, after:index + 1 < totalPages ? overlap / 2 : 0} : null;
+      yield { data, mediaType: "image/jpeg", documentContext: { pageStart: index + 1, pageEnd: index + 1, totalPages, ...(imageSlice ? {imageSlice} : {}) }, label: totalPages > 1 ? `trecho ${index + 1} de ${totalPages} (com sobreposição)` : "imagem 1 de 1" };
     }
   }
 
