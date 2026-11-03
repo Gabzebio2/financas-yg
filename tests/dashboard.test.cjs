@@ -63,7 +63,7 @@ source = source.replace('  return { open, openTxModal,', `
     splitInstallments, tableTxs, sortTxs, saveTxModal, openTxModal, openMetaModal, saveMetaModal,
     openLimitModal, saveLimitModal, renderTable, renderSummary, parcSiblings, fixedSiblings,
     resolveImportDate, appendImported, addBulk, exportCSV, saveCur, undo, moneyTip, refreshFromStore,
-    existingTxKeys, existingSeriesKeys, existingTransactions, getImportTargetId, renderAll, limitStats, metaStats, addToMeta, fillTxFromReceipt,
+    existingTxKeys, existingSeriesKeys, existingTransactions, getImportTargetId, renderAll, limitStats, metaStats, addToMeta, fillTxFromReceipt, changeBill, currencyBreakdown,
     setDataset(value) { ds = value; }, getDataset() { return ds; },
     setFilters(value) { fil = {mode:'month', month:'2026-10', from:'', to:'', cats:null, search:'', type:'all', account:'all', ...value}; },
     setSort(value) { sort = value; }, selectedTx, undoStack,
@@ -482,6 +482,52 @@ test('adiantar todas não reaplica adiantadas e valor inválido não grava',()=>
 });
 test('cashback informativo sobrevive à gravação sem virar outra receita',()=>{
  saveBase(dataset());assert.equal(api.appendImported([tx('cash',{cashback:{amount:0.65,currency:'USD'}})]),1);api.refreshFromStore();const saved=api.getDataset().transactions;assert.equal(saved.length,1);assert.equal(saved[0].type,'despesa');assert.equal(saved[0].cashback.amount,0.65);assert.match(get('#tx-tbody').innerHTML,/Cashback:.*informativo/);
+});
+
+test('conta de outro mês permanece no topo, contabiliza uma única vez no pagamento e pode ser reaberta',()=>{
+  const ds=dataset(), today=vm.runInContext('todayISO()',ctx);
+  ds.transactions=[tx('oldpaid1',{date:today,amount:2}), tx('billopen',{date:'2020-02-03',amount:5,currency:'USD',billPinned:true,paymentStatus:'pending'})];
+  ds.limits=[{name:'Alimentação',amount:50,currency:'BRL',categories:['Mercado']}];
+  saveBase(ds);api.setFilters({month:today.slice(0,7)});api.renderAll();
+  assert.equal(api.limitStats()[0].spent,2);assert.equal(api.currencyBreakdown().length,1);
+  const panel=id=>get(id).innerHTML;
+  assert.match(panel('#dash-bills'),/billopen/);assert.equal(panel('#dash-bills'),panel('#tx-bills'));
+  api.changeBill('billopen','pay');api.changeBill('billopen','pay');
+  let saved=api.getDataset().transactions;assert.equal(saved.length,2);assert.equal(saved[1].paidOn,today);
+  assert.equal(saved[1].date,'2020-02-03');assert.equal(api.limitStats()[0].spent,27);
+  assert.equal(api.currencyBreakdown().find(g=>g.currency==='USD').expense,5);
+  assert.match(panel('#dash-bills'),/data-bill-action="reopen"/);assert.equal(panel('#dash-bills'),panel('#tx-bills'));
+  api.setFilters({month:'2020-02'});assert.equal(api.limitStats()[0].spent,0);assert.equal(api.tableTxs().length,0);
+  api.changeBill('billopen','unpin');assert.match(panel('#dash-bills'),/Contas pagas \(1\)/);
+  api.changeBill('billopen','reopen');api.changeBill('billopen','reopen');
+  assert.equal(api.tableTxs().length,1);assert.equal(api.limitStats()[0].spent,0);assert.match(panel('#dash-bills'),/1 conta em aberto/);
+  api.setFilters({month:today.slice(0,7)});api.changeBill('oldpaid1','pin');assert.equal(api.limitStats()[0].spent,2);
+  saved=JSON.parse(storage.get('fyg:ds:audit001')).transactions;
+  assert.equal(saved[0].paymentStatus,undefined);assert.equal(saved[1].paidOn,undefined);
+});
+
+test('nova conta em aberto e suas repetições sobrevivem à sincronização e ao backup',()=>{
+  saveBase(dataset());api.openTxModal(null,{pending:true});assert.equal(get('#tx-paid').checked,false);
+  get('#tx-amount').value='25,00';get('#tx-date').value='2026-01-31';get('#tx-desc').value='Internet';
+  get('#tx-currency').value='BRL';get('#tx-cat').value='Mercado';get('#tx-pin').checked=true;get('#tx-fixa').checked=true;
+  api.saveTxModal();const bills=api.getDataset().transactions;assert.equal(bills.length,12);
+  assert(bills.every(t=>t.paymentStatus==='pending'&&t.billPinned));assert.equal(bills[1].date,'2026-02-28');
+  api.changeBill(bills[0].id,'pay');api.refreshFromStore();
+  for(const preserveIds of [true,false]){
+    ctx.billSource=api.getDataset();
+    const clean=vm.runInContext('sanitizeDataset(billSource,{preserveContent:true,preserveIds:'+preserveIds+'})',ctx);
+    assert.equal(clean.transactions.filter(t=>t.paymentStatus==='paid'&&t.paidOn).length,1);
+    assert.equal(clean.transactions.filter(t=>t.paymentStatus==='pending'&&t.billPinned).length,11);
+  }
+});
+
+test('editar valor não desfaz um pagamento recebido após a abertura do formulário',()=>{
+  const ds=dataset();ds.transactions=[tx('existing',{paymentStatus:'pending'})];saveBase(ds);
+  api.openTxModal('existing');const newer=JSON.parse(storage.get('fyg:ds:audit001'));
+  Object.assign(newer.transactions[0],{paymentStatus:'paid',paidOn:'2026-11-01',billPinned:true});
+  storage.set('fyg:ds:audit001',JSON.stringify(newer));get('#tx-amount').value='16,00';api.saveTxModal();
+  const t=api.getDataset().transactions[0];assert.equal(t.amount,16);assert.equal(t.paymentStatus,'paid');
+  assert.equal(t.paidOn,'2026-11-01');assert.equal(t.billPinned,true);
 });
 
 (async()=>{

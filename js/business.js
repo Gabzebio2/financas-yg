@@ -163,7 +163,7 @@ const BusinessPanel = (() => {
       el('weekly-content').replaceChildren();
     }
     if(ds.profile!=='pj')return;
-    const unit=ds.weekly?.currency||'USD', txs=ds.transactions.filter(t=>t.weeklyRevenue&&t.currency===unit);
+    const unit=ds.weekly?.currency||'USD', txs=ds.transactions.filter(t=>t.weeklyRevenue&&t.currency===unit&&!isPendingBill(t));
     const nextKey=JSON.stringify([ds.id,unit,txs.map(t=>[t.date,t.account,t.type,t.amount])]);
     if(nextKey===viewKey)return;
     viewKey=nextKey;model=WeeklyRevenue.periodModel(txs,unit);

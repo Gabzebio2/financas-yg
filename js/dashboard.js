@@ -20,6 +20,7 @@ const Dashboard = (() => {
   let ratesHooked = false; // registra o ouvinte de cotação uma única vez
 
   const UI_ICON_PATHS = {
+    pin: '<path d="m15 3 6 6-3 1-3 6-3-3-7 7m7-7-3-3 6-4Z"/>',
     advance: '<path d="m4 5 7 7-7 7V5Zm9 0 7 7-7 7V5Z"/>',
     edit: '<path d="m15 5 4 4M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11L4 20Z"/>',
     trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5M14 11v5"/>',
@@ -71,7 +72,7 @@ const Dashboard = (() => {
   }
 
   function renderCurrencyWarning() {
-    const pending = ds.transactions.some((t) => !Number.isFinite(dispAmount(t))) ||
+    const pending = ds.transactions.some((t) => !isPendingBill(t) && !Number.isFinite(dispAmount(t))) ||
       ds.limits.some((l) => !Rates.ready(normCur(l.currency), dispCur())) ||
       ds.metas.some((m) => !m.category && !Rates.ready(normCur(m.currency), dispCur()));
     ["#currency-warning", "#tx-currency-warning"].forEach((id) => {
@@ -198,7 +199,7 @@ const Dashboard = (() => {
 
   /* ---------- Filtros ---------- */
   function allMonths() {
-    const set = new Set(ds.transactions.map((t) => t.date.slice(0, 7)));
+    const set = new Set(ds.transactions.map((t) => accountingDate(t).slice(0, 7)));
     return Array.from(set).sort();
   }
 
@@ -215,8 +216,9 @@ const Dashboard = (() => {
 
   function inPeriod(t, p) {
     if (!p) return true;
-    if (p.from && t.date < p.from) return false;
-    if (p.to && t.date > p.to) return false;
+    const date = accountingDate(t);
+    if (p.from && date < p.from) return false;
+    if (p.to && date > p.to) return false;
     return true;
   }
 
@@ -224,14 +226,14 @@ const Dashboard = (() => {
     return !fil.cats || fil.cats.has(stripAccents(t.category));
   }
 
-  function filteredTxs() {
+  function filteredTxs(includePending = false) {
     const p = periodRange();
-    return ds.transactions.filter((t) => inPeriod(t, p) && inCats(t));
+    return ds.transactions.filter((t) => (includePending || !isPendingBill(t)) && inPeriod(t, p) && inCats(t));
   }
 
   function tableTxs() {
     const q = stripAccents(fil.search);
-    let list = filteredTxs();
+    let list = filteredTxs(true);
     if (fil.type !== "all") list = list.filter((t) => t.type === fil.type);
     if (fil.account !== "all") list = list.filter((t) => "account:" + (t.account || "") === fil.account);
     if (q) {
@@ -269,8 +271,8 @@ const Dashboard = (() => {
       return '"' + s.replace(/"/g, '""') + '"';
     };
     const number = (v, currency) => Number(v).toFixed(curFrac(currency)).replace(".", ",");
-    const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição"]];
-    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t)]));
+    const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição", "Pagamento", "Pago em", "Fixada"]];
+    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t), t.type === "despesa" ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", t.paidOn || "", t.billPinned ? "Sim" : "Não"]));
     const csv = "\uFEFF" + rows.map((row) => row.map(cell).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
@@ -292,6 +294,7 @@ const Dashboard = (() => {
     renderCurrencyWarning();
     renderCatFilter();
     renderSummary();
+    renderBillBoards();
     renderCurrencyBreakdown();
     renderLimits();
     renderMetas();
@@ -490,7 +493,7 @@ const Dashboard = (() => {
 
     const p = periodRange();
     const acumulado = ds.transactions
-      .filter((t) => inCats(t) && (!p || !p.to || t.date <= p.to))
+      .filter((t) => !isPendingBill(t) && inCats(t) && (!p || !p.to || accountingDate(t) <= p.to))
       .reduce((s, t) => s + (t.type === "receita" ? dispAmount(t) : -dispAmount(t)), 0);
 
     const label = fil.mode === "month" ? "do mês" : fil.mode === "range" ? "do período" : "total";
@@ -629,7 +632,7 @@ const Dashboard = (() => {
 
   // Meses exibidos nos gráficos de evolução
   function chartMonths() {
-    const months = allMonths();
+    const months = [...new Set(ds.transactions.filter(t => !isPendingBill(t)).map(t => accountingDate(t).slice(0,7)))].sort();
     if (fil.mode === "range") {
       return months.filter((ym) => (!fil.from || ym >= fil.from.slice(0, 7)) && (!fil.to || ym <= fil.to.slice(0, 7)));
     }
@@ -638,7 +641,8 @@ const Dashboard = (() => {
 
   function renderCharts() {
     const palette = themePalette();
-    if (ds.transactions.filter(inCats).some((t) => !Number.isFinite(dispAmount(t)))) {
+    const posted = ds.transactions.filter(t => !isPendingBill(t) && inCats(t));
+    if (posted.some((t) => !Number.isFinite(dispAmount(t)))) {
       ["chart-cat", "chart-evo", "chart-saldo", "chart-conta"].forEach((id) => {
         if (charts[id]) { charts[id].destroy(); delete charts[id]; }
         setEmpty(id, true, "Cotação indisponível para comparar estas moedas. Os valores originais estão na lista de transações.");
@@ -678,8 +682,8 @@ const Dashboard = (() => {
     /* 2 e 3. Evolução mensal (linha) e saldo (barra + acumulado) */
     const months = chartMonths();
     const recM = Object.create(null), despM = Object.create(null);
-    ds.transactions.filter(inCats).forEach((t) => {
-      const ym = t.date.slice(0, 7);
+    posted.forEach((t) => {
+      const ym = accountingDate(t).slice(0, 7);
       if (t.type === "receita") recM[ym] = (recM[ym] || 0) + dispAmount(t);
       else despM[ym] = (despM[ym] || 0) + dispAmount(t);
     });
@@ -778,7 +782,7 @@ const Dashboard = (() => {
     const ym = refMonth();
     const spentByCat = Object.create(null);
     ds.transactions
-      .filter((t) => t.type === "despesa" && inPeriod(t, p))
+      .filter((t) => t.type === "despesa" && !isPendingBill(t) && inPeriod(t, p))
       .forEach((t) => {
         const k = stripAccents(t.category);
         spentByCat[k] = (spentByCat[k] ?? 0) + dispAmount(t);
@@ -915,7 +919,7 @@ const Dashboard = (() => {
       const k = stripAccents(m.category);
       let owed = 0, paid = 0;
       ds.transactions.forEach((t) => {
-        if (stripAccents(t.category) !== k) return;
+        if (isPendingBill(t) || stripAccents(t.category) !== k) return;
         if (t.type === "despesa") owed += dispAmount(t); else paid += dispAmount(t);
       });
       const target = Math.round(owed * 100) / 100;
@@ -1008,7 +1012,7 @@ const Dashboard = (() => {
       const k = stripAccents(cat);
       let owed = 0, paid = 0;
       ds.transactions.forEach((t) => {
-        if (stripAccents(t.category) !== k) return;
+        if (isPendingBill(t) || stripAccents(t.category) !== k) return;
         if (t.type === "despesa") owed += dispAmount(t); else paid += dispAmount(t);
       });
       if (!Number.isFinite(owed) || !Number.isFinite(paid)) return empty("Cotação indisponível para calcular o progresso dessa categoria");
@@ -1220,6 +1224,7 @@ const Dashboard = (() => {
     const { key, dir } = sort;
     return list.slice().sort((a, b) => {
       let va = a[key], vb = b[key];
+      if (key === "date") { va = accountingDate(a); vb = accountingDate(b); }
       if (key === "amount") {
         va = a.type === "despesa" ? -dispAmount(a) : dispAmount(a);
         vb = b.type === "despesa" ? -dispAmount(b) : dispAmount(b);
@@ -1298,6 +1303,61 @@ const Dashboard = (() => {
     </span>`;
   }
 
+  function billPayButton(t) {
+    const pending = isPendingBill(t);
+    const label = (pending ? "Marcar como paga" : "Reabrir conta") + " · " + t.desc;
+    return `<button type="button" class="bill-pay ${pending ? "is-open" : "is-paid"}" data-bill-action="${pending ? "pay" : "reopen"}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${uiIcon("check", 15)} ${pending ? "Marcar como paga" : "Pago"}</button>`;
+  }
+
+  function billPinButton(t) {
+    const label = (t.billPinned ? "Desafixar" : "Fixar no topo") + " · " + t.desc;
+    return `<button type="button" class="btn-icon bill-pin" data-bill-action="${t.billPinned ? "unpin" : "pin"}" aria-pressed="${!!t.billPinned}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${uiIcon("pin", 16)}</button>`;
+  }
+
+  function billRow(t) {
+    const pending = isPendingBill(t);
+    const when = pending ? "Vencimento " + fmtDate(t.date) : (t.type === "receita" ? "Recebido em " : "Pago em ") + fmtDate(accountingDate(t));
+    return `<div class="bill-row" data-id="${escapeHtml(t.id)}">
+      <div class="bill-title"><strong>${escapeHtml(t.desc)}</strong><small>${escapeHtml([when, t.account, t.installment].filter(Boolean).join(" · "))}</small></div>
+      <b class="bill-amount">${fmtTxAmount(t)}</b><div class="bill-actions">${t.type === "despesa" ? billPayButton(t) : ""}${billPinButton(t)}</div>
+    </div>`;
+  }
+
+  function renderBillBoards() {
+    const active = ds.transactions.filter(t => t.billPinned || isPendingBill(t));
+    active.sort((a,b) => Number(!!b.billPinned) - Number(!!a.billPinned) || Number(isPendingBill(b)) - Number(isPendingBill(a)) || a.date.localeCompare(b.date));
+    const settled = ds.transactions.filter(t => !t.billPinned && t.paymentStatus === "paid")
+      .sort((a,b) => accountingDate(b).localeCompare(accountingDate(a)));
+    const count = active.filter(isPendingBill).length;
+    const header = `<div class="bill-head"><div><h2>Contas a pagar</h2><p>${count ? (count === 1 ? "1 conta em aberto" : count + " contas em aberto") : "Nenhuma conta em aberto"}</p></div>
+      <button type="button" class="btn btn-ghost btn-sm" data-bill-action="new">${uiIcon("plus", 15)} Nova conta a pagar</button></div>`;
+    const list = active.length ? `<div class="bill-list">${active.map(billRow).join("")}</div>` : "";
+    for (const selector of ["#dash-bills", "#tx-bills"]) {
+      const panel = $(selector);
+      if (!panel) continue;
+      const expanded = panel.querySelector("details")?.open;
+      const history = settled.length ? `<details class="bill-history" ${expanded ? "open" : ""}><summary>Contas pagas (${settled.length})</summary><div class="bill-list">${settled.map(billRow).join("")}</div></details>` : "";
+      panel.innerHTML = header + list + history;
+    }
+  }
+
+  function changeBill(id, action) {
+    if (!refreshImportTarget()) return;
+    const t = ds.transactions.find(tx => tx.id === id);
+    if (!t) { toast("Esta conta não está mais na pasta."); return; }
+    if (action === "pin" || action === "unpin") {
+      if (!!t.billPinned === (action === "pin")) return;
+      if (action === "pin") t.billPinned = true; else delete t.billPinned;
+    } else {
+      if (t.type !== "despesa" || !["pay", "reopen"].includes(action) || isPendingBill(t) !== (action === "pay")) return;
+      t.paymentStatus = action === "pay" ? "paid" : "pending";
+      if (action === "pay") t.paidOn = todayISO(); else delete t.paidOn;
+    }
+    saveCur();
+    renderAll();
+    toast({pin:"Fixada no topo.",unpin:"Conta desafixada.",pay:"Conta paga. Despesa contabilizada.",reopen:"Conta em aberto. Total atualizado."}[action]);
+  }
+
   function renderTable() {
     renderTableFilters();
     const list = sortTxs(tableTxs());
@@ -1328,13 +1388,15 @@ const Dashboard = (() => {
       return `
       <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
-        <td style="white-space:nowrap">${fmtDate(t.date)}${cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}</td>
+        <td style="white-space:nowrap">${fmtDate(accountingDate(t))}${t.date !== accountingDate(t) ? '<br><small>Venc. ' + fmtDate(t.date) + '</small>' : cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}</td>
         <td><span class="tx-desc-cell">${catAvatar(t.category)}<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span></span></td>
         <td><span class="cat-chip" style="background:color-mix(in srgb, ${catColor(ds, t.category)} 16%, var(--card,#24212e));color:var(--chip-text,var(--text,#f1eff5));border:1px solid color-mix(in srgb, ${catColor(ds, t.category)} 28%, var(--card,#24212e))">${escapeHtml(t.category)}</span></td>
         <td>${escapeHtml(t.account || "—")}</td>
         <td>${t.installment ? escapeHtml(t.installment) + (t.advance ? '<br><span class="fixa-chip">Adiantada</span>' : '') : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
         <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtTxAmount(t)}</td>
         <td class="tx-actions">
+          ${t.type === "despesa" && (t.paymentStatus || t.billPinned) ? billPayButton(t) : ""}
+          ${billPinButton(t)}
           <button class="btn-icon" data-action="edit" title="Editar" aria-label="Editar transação">${uiIcon("edit")}</button>
           ${installmentTotal(t) > 1 ? `<button class="btn-icon" data-action="advance" title="Adiantar parcelas" aria-label="Adiantar parcelas">${uiIcon("advance")}</button>` : ""}
           <button class="btn-icon" data-action="delete" title="Excluir" aria-label="Excluir transação">${uiIcon("trash")}</button>
@@ -1520,7 +1582,10 @@ const Dashboard = (() => {
     const tx=pendingSeriesTx(pendingAdvance),date=$("#advance-date").value;if(!tx||!isValidISODate(date))return;
     const list=advanceCandidates(tx,date),count=$("#advance-all").checked?list.length:Number($("#advance-count").value);
     if(!Number.isInteger(count)||count<1||count>list.length)return;
-    list.slice(0,count).forEach(t=>{t.advance={scheduledDate:t.date,paidDate:date};t.date=date;delete t.dateEstimated;delete t.dateEstimate;});
+    list.slice(0,count).forEach(t=>{
+      t.advance={scheduledDate:t.date,paidDate:date};t.date=date;delete t.dateEstimated;delete t.dateEstimate;
+      if(t.type==="despesa" && t.paymentStatus){t.paymentStatus="paid";t.paidOn=date;}
+    });
     saveCur();renderAll();pendingAdvance=null;$("#modal-advance").classList.add("hidden");toast(count+" parcela(s) adiantada(s).");
   }
 
@@ -1566,6 +1631,9 @@ const Dashboard = (() => {
 
     $("#modal-tx-title").textContent = isEdit ? "Editar transação" : (opts.title || "Nova transação");
     txType = isEdit ? tx.type : (opts.type === "receita" ? "receita" : "despesa");
+    const paidBox = $("#tx-paid"), pinBox = $("#tx-pin");
+    paidBox.checked = paidBox.defaultChecked = isEdit ? !isPendingBill(tx) : !opts.pending;
+    pinBox.checked = pinBox.defaultChecked = !!tx?.billPinned;
     updateTypeToggle();
 
     // Reseta o leitor de comprovante
@@ -1616,6 +1684,11 @@ const Dashboard = (() => {
 
   function updateTypeToggle() {
     $$("#tx-type-toggle button").forEach((b) => b.classList.toggle("active", b.dataset.type === txType));
+    const expense = txType === "despesa";
+    $("#tx-paid-wrap").classList.toggle("hidden", !expense);
+    $("#tx-bill-hint").classList.toggle("hidden", !expense);
+    $("#tx-date-label").textContent = expense && !$("#tx-paid").checked ? "Vencimento" : "Data";
+    $("#tx-bill-hint").textContent = $("#tx-paid").checked ? "Desmarque “Conta paga” para guardar uma conta a pagar." : "Em aberto. O valor só entra nas despesas quando você marcar como paga.";
   }
 
   function updateFixedOption(tx) {
@@ -1731,9 +1804,19 @@ const Dashboard = (() => {
     if (startFixed && !isValidISODate(monthlyDate(FIXA_MESES-1))) { toast("Escolha uma data que permita criar a série mensal."); return; }
     ensureCat(ds, category);
     const fields = { amount: Math.abs(amount), date, desc, category, account, type: txType, currency };
+    const paidBox = $("#tx-paid"), pinBox = $("#tx-pin");
+    // Se o formulário não mudou estes controles, mantenha a última versão salva em outra tela.
+    const paid = edited && paidBox.checked === paidBox.defaultChecked ? !isPendingBill(edited) : paidBox.checked;
+    const pinned = edited && pinBox.checked === pinBox.defaultChecked ? !!edited.billPinned : pinBox.checked;
+    const bill = cleanBillFields({ type:txType, billPinned:pinned,
+      paymentStatus: !paid ? "pending" : edited?.paymentStatus ? "paid" : undefined,
+      paidOn: edited && isPendingBill(edited) && paid ? todayISO() : edited?.paidOn });
+    const nextBill = txType === "despesa" && (!paid || pinned || bill.paymentStatus)
+      ? { ...(pinned ? {billPinned:true} : {}), paymentStatus:"pending" } : bill;
     if (edited) {
       const dateChanged = txDateEdited || date !== edited.date;
-      Object.assign(edited, fields, evidence);
+      delete edited.billPinned; delete edited.paymentStatus; delete edited.paidOn;
+      Object.assign(edited, fields, evidence, bill);
       if (dateChanged) { delete edited.dateEstimated; delete edited.dateEstimate; }
     }
     let message;
@@ -1742,7 +1825,7 @@ const Dashboard = (() => {
       if (edited) Object.assign(edited, { groupId, fixed:true });
       for (let i = edited ? 1 : 0; i < FIXA_MESES; i++) {
         ds.transactions.push({ ...fields, id:uid(), groupId, fixed:true, date:monthlyDate(i),
-          installment:null, totalValue:null, ...(i === 0 ? evidence : {}) });
+          installment:null, totalValue:null, ...(i === 0 ? {...evidence, ...bill} : nextBill) });
       }
       message = edited ? `Despesa fixa: este lançamento e mais ${FIXA_MESES-1} meses.`
         : `${txType === "receita" ? "Receita" : "Despesa"} fixa criada para ${FIXA_MESES} meses.`;
@@ -1760,7 +1843,7 @@ const Dashboard = (() => {
           currency,
           installment: `${i + 1}/${n}`,
           totalValue: amount,
-          ...(i === 0 ? evidence : {}),
+          ...(i === 0 ? {...evidence, ...bill} : nextBill),
         });
       }
       message = `Parcelamento criado: ${n} lançamentos ✔`;
@@ -1768,7 +1851,7 @@ const Dashboard = (() => {
       ds.transactions.push({
         id: uid(), date, desc, category, account, type: txType,
         amount: Math.abs(amount), currency, installment: null, totalValue: null,
-        ...evidence,
+        ...evidence, ...bill,
       });
       message = "Transação adicionada ✔";
     }
@@ -1996,9 +2079,20 @@ const Dashboard = (() => {
     $("#btn-more-rows").addEventListener("click", () => { rowLimit += 200; renderTable(); });
 
     // Ações da tabela
+    $("#tx-paid").addEventListener("change", updateTypeToggle);
+    for (const selector of ["#dash-bills", "#tx-bills"]) {
+      $(selector).addEventListener("click", ev => {
+        const button = ev.target.closest("[data-bill-action]");
+        if (!button) return;
+        if (button.dataset.billAction === "new") openTxModal(null, {pending:true, title:"Nova conta a pagar"});
+        else changeBill(button.closest("[data-id]").dataset.id, button.dataset.billAction);
+      });
+    }
     $("#tx-tbody").addEventListener("click", (ev) => {
       const tr = ev.target.closest("tr[data-id]");
       if (!tr) return;
+      const billAction = ev.target.closest("[data-bill-action]")?.dataset.billAction;
+      if (billAction) { changeBill(tr.dataset.id, billAction); return; }
       const action = ev.target.closest("[data-action]")?.dataset.action;
       if (action === "advance") { openAdvance(tr.dataset.id); return; }
       if (action === "delete") { requestDeleteTx(tr.dataset.id); return; }
@@ -2011,7 +2105,7 @@ const Dashboard = (() => {
       }
     });
     $("#tx-tbody").addEventListener("dblclick", (ev) => {
-      if (ev.target.classList.contains("tx-sel")) return;
+      if (ev.target.closest("input, button")) return;
       const tr = ev.target.closest("tr[data-id]");
       if (tr) openTxModal(tr.dataset.id);
     });

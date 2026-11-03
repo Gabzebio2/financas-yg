@@ -592,6 +592,20 @@ function cleanISO(v, fallback) {
 
 // The marker records an estimate, never proof of a date read from a document.
 // Keep only coherent anchors; malformed metadata cannot produce a UI claim.
+function isPendingBill(t) {
+  return t.type === "despesa" && t.paymentStatus === "pending";
+}
+function accountingDate(t) {
+  return t.type === "despesa" && t.paymentStatus === "paid" && isValidISODate(t.paidOn) ? t.paidOn : t.date;
+}
+function cleanBillFields(t) {
+  const result = t.billPinned === true ? { billPinned:true } : {};
+  if (t.type === "despesa" && ["pending", "paid"].includes(t.paymentStatus)) {
+    result.paymentStatus = t.paymentStatus;
+    if (t.paymentStatus === "paid" && isValidISODate(t.paidOn)) result.paidOn = t.paidOn;
+  }
+  return result;
+}
 function cleanCashback(t) {
   const c=t?.cashback;
   return c && Number.isFinite(c.amount) && c.amount>0 && c.amount<=Number.MAX_SAFE_INTEGER && typeof c.currency==='string' && /^[A-Z]{2,10}$/.test(c.currency)
@@ -638,7 +652,7 @@ function normalizeStoredDataset(raw) {
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: raw.transactions.map((t) => {
-      const { dateEstimated, dateEstimate, advance, cashback, ...fields } = t;
+      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, ...fields } = t;
       return {
         ...fields,
         id: typeof t.id === "string" && t.id ? t.id : uid(),
@@ -649,7 +663,7 @@ function normalizeStoredDataset(raw) {
         account: String(t.account || ""),
         currency: normCur(t.currency),
         type: t.type === "receita" ? "receita" : "despesa",
-        ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t),
+        ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t),
       };
     }),
     limits: Array.isArray(raw.limits) ? raw.limits : [],
@@ -754,7 +768,7 @@ function sanitizeDataset(raw, opts) {
       groupId: mapGroup(t.groupId),
       fixed: t.fixed === true,
       date,
-      ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t),
+      ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t),
       desc: text(t.desc, 120).trim() || "(sem descrição)",
       category: text(t.category, 40).trim() || "Outros",
       account: text(t.account, 40).trim(),

@@ -14,7 +14,7 @@
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261103-week-cards">
+<link rel="stylesheet" href="css/design.css?v=20261103-bills">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 <link rel="stylesheet" href="css/receipt-jobs.css?v=20261031-notifications">
 </head>
@@ -356,6 +356,7 @@
       <div id="weekly-content"></div>
     </section>
 
+    <section class="card bill-board" id="dash-bills" aria-label="Contas a pagar"></section>
     <details class="card fx-breakdown hidden" id="currency-breakdown" open>
       <summary><div><h3>Por moeda</h3><p id="currency-breakdown-hint">Valores originais. Barras comparadas pelo equivalente em PYG.</p></div><span class="fx-chevron" aria-hidden="true">⌄</span></summary>
       <div id="currency-breakdown-rows" class="fx-rows"></div>
@@ -413,6 +414,7 @@
       <button class="btn-icon" id="btn-txs-back" title="Voltar ao painel">←</button>
       <div><span class="eyebrow">SEU HISTÓRICO</span><h1>Transações</h1></div><button class="btn btn-primary txs-add" id="btn-txs-add"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nova transação</button>
     </div>
+    <section class="card bill-board" id="tx-bills" aria-label="Contas a pagar"></section>
     <div class="txs-month">
       <div class="month-nav">
         <button class="btn-icon" id="month-prev" title="Mês anterior">‹</button>
@@ -501,7 +503,7 @@
       <label id="tx-amount-label">Valor
         <input type="text" id="tx-amount" inputmode="decimal" placeholder="0,00">
       </label>
-      <label>Data
+      <label><span id="tx-date-label">Data</span>
         <input type="date" id="tx-date">
       </label>
       <label>Moeda
@@ -522,6 +524,11 @@
       <label id="tx-account-other-wrap" class="hidden">Nome do cartão/conta
         <input type="text" id="tx-account-other" placeholder="Ex: Carteira">
       </label>
+      <div class="span2 bill-options">
+        <label class="checkline" id="tx-paid-wrap"><input type="checkbox" id="tx-paid" checked> Conta paga</label>
+        <label class="checkline"><input type="checkbox" id="tx-pin"> Fixar no topo</label>
+        <p class="hint" id="tx-bill-hint">Desmarque “Conta paga” para guardar uma conta a pagar.</p>
+      </div>
       <label class="span2 checkline" id="tx-parc-wrap">
         <input type="checkbox" id="tx-parcelado"> Compra parcelada
       </label>
@@ -819,12 +826,12 @@
 <script src="lib/supabase.min.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
 <script src="js/import-dates.js?v=20261103-date-groups"></script>
-<script src="js/app.js?v=20261103-weekly-periods"></script>
+<script src="js/app.js?v=20261103-bills"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
 <script src="js/importer.js?v=20261027-import"></script>
 <script src="js/weekly-revenue.js?v=20261103-week-cards"></script>
-<script src="js/business.js?v=20261103-week-cards"></script>
-<script src="js/dashboard.js?v=20261103-edit-fixed"></script>
+<script src="js/business.js?v=20261103-bills"></script>
+<script src="js/dashboard.js?v=20261103-bills"></script>
 <script src="js/receipt.js?v=20261103-date-groups"></script>
 <script src="js/batch.js?v=20261103-date-groups"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
