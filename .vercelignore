@@ -57,6 +57,13 @@
 !/server/receipt-platforms.cjs
 
 !/server/statement-table.cjs
+!/server/c6-invoice.cjs
 
 !/js/business.js
 !/js/weekly-revenue.js
+!/js/installment-schedule.js
+
+!/supabase
+!/supabase/functions
+!/supabase/functions/receipt-jobs
+!/supabase/functions/receipt-jobs/c6-subtotals.mjs

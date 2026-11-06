@@ -25,6 +25,7 @@ function setup(extra = {}) {
   }
   const currencies = ['BRL', 'CLP', 'PYG', 'USD', 'EUR', 'GBP', 'USDT', 'USDC'];
   const env = {
+    InstallmentSchedule: require('../js/installment-schedule.js'),
     console: { error() {} }, setTimeout, clearTimeout, AbortSignal,
     document: { addEventListener: (name, fn) => ready.push(fn) }, $: node,
     location: { protocol: 'https:', hostname: 'test.invalid' },
@@ -262,6 +263,107 @@ test('repetição exata no lote vem fora e pode ser selecionada explicitamente c
   select(env, 1, true); env.batch.save();
   assert.match(env.confirmations[0].text, /possível\(is\) duplicata/);
   env.confirm(); assert.equal(env.saved().length, 2);
+});
+
+test('parcelas distintas com os mesmos dados da compra e referência comum sobrevivem à conferência', () => {
+  const env = setup();
+  const old = {date:'2026-08-03',desc:'Loja exemplo',amount:12,currency:'BRL',type:'despesa',account:'C6',referenceId:'SERIE',installment:'2/5'};
+  env.context.Dashboard.existingTransactions = () => [old];
+  const row = (n, extra={}) => item({data:old.date,descricao:'Loja exemplo - Parcela '+n+'/5',valor:12,referencia:'SERIE', ...extra});
+  ingest(env,[row(2),row(3),row(4),row(3,{descricao:'Outro comércio - Parcela 3/5'})],'C6');
+  assert.match(env.node('#batch-count').textContent,/3 de 20 selecionadas/);
+  env.batch.save();if(env.confirmations.length)env.confirm();
+  assert.deepEqual(env.saved().map(t=>[t.desc,t.installment,t.date]),[
+    ['Loja exemplo','3/5','2026-08-03'],['Loja exemplo','4/5','2026-08-03'],['Outro comércio','3/5','2026-08-03']]);
+});
+
+test('fatura C6 monta 18 séries desde a compra, conservando valores, sem ativar projeções', () => {
+  const env=setup();
+  const dates=['2026-01-31','2026-06-18','2026-07-22','2026-08-04','2026-10-11'];
+  const rows=Array.from({length:18},(_,i)=>item({data:dates[i%dates.length],descricao:'Comércio '+i+' - Parcela 3/6',
+    parcela:i%2?'Parcela 3/6':'',valor:12+i,billingMonth:'2026-11'}));
+  ingest(env,rows,'C6',{statementCheck:{source:'c6_invoice'}});
+  assert.match(env.node('#batch-count').textContent,/108 de 108 selecionadas/);
+  env.batch.save();if(env.confirmations.length)env.confirm();
+  const saved=env.saved();assert.equal(new Set(saved.map(t=>t.seriesKey)).size,18);
+  rows.forEach((r,i)=>{
+    const series=saved.filter(t=>t.desc==='Comércio '+i);
+    assert.equal(series.length,6);assert.deepEqual(series.map(t=>t.installment),['1/6','2/6','3/6','4/6','5/6','6/6']);
+    assert(series.every(t=>!t.statementMonth && t.purchaseDate===r.data && t.amount===r.valor));
+    assert.equal(series[0].date,r.data);
+  });
+  assert.deepEqual(saved.filter(t=>t.desc==='Comércio 0').map(t=>t.date),['2026-01-31','2026-02-28','2026-03-31','2026-04-30','2026-05-31','2026-06-30']);
+});
+
+test('fatura C6 com conferência incompleta bloqueia a inclusão até com linhas válidas', () => {
+  const reason='O subtotal do cartão difere das compras lidas.';
+  for (const serverReason of ['',reason]) {
+    let commits=0,checks=0;
+    const env=setup({ReceiptJobs:{commit:()=>{commits++;}},C6Subtotals:{check(pages){
+      checks++;assert.equal(pages.length,1);assert.equal(pages[0].document_id,'pdf');return reason;
+    }}});
+    const data={itens:[item()],cartao:'C6',statementCheck:{source:'c6_invoice'},excluded:[],avisos:[],partial:false,verified:true};
+    env.batch.open({backgroundJob:{statementError:serverReason,job:{id:'job',status:'ready',extra_rows:[]},pages:[{document_id:'pdf',label:'Fatura',context:{pageStart:1,pageEnd:1,totalPages:1},result:data}]}});
+    assert.equal(checks,serverReason?0:1);
+    assert.equal(env.node('#btn-batch-save').disabled,true);
+    assert.equal(env.node('#btn-batch-delete').classList.contains('hidden'),false);
+    assert.match(env.node('#batch-status').textContent,/subtotal do cartão/);
+    env.batch.save();assert.equal(commits,0);assert.equal(env.confirmations.length,0);
+  }
+});
+
+test('concorrência ao confirmar parcelas atualiza a prévia ou informa que já estavam na pasta',async()=>{
+  for (const changed of [true,false]) {
+    let syncs=0,opens=0,commits=0;
+    const env=setup({ReceiptJobs:{commit:async()=>{commits++;if(changed)throw Error('c6_series_changed');return {transactions:[]};},refresh(){}},
+      Cloud:{syncNow:async()=>{syncs++;return true;}},C6Subtotals:{check:()=>null}});
+    env.context.Dashboard.showReceiptTransactions=()=>{opens++;return true;};
+    const report={itens:[item({parcela:'2/3'})],cartao:'C6',statementCheck:{source:'c6_invoice'},excluded:[],avisos:[],partial:false,verified:true};
+    env.batch.open({backgroundJob:{job:{id:'job',status:'ready',extra_rows:[]},pages:[{document_id:'pdf',label:'Fatura',context:{pageStart:1,pageEnd:1,totalPages:1},result:report}]}});
+    env.batch.save();if(env.confirmations.length)env.confirm();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(commits,1);assert.equal(syncs,1);assert.equal(opens,0);
+    assert.equal(env.node('#modal-batch').classList.contains('hidden'),!changed);
+    if(changed)assert.match(env.node('#batch-status').textContent,/cronograma atualizado/);
+    else assert.match(env.notices.at(-1),/já estavam na pasta/);
+  }
+});
+
+test('fatura seguinte completa slots faltantes, preserva compras iguais e mantém operação única sem projeção',()=>{
+  const meta={statementCheck:{source:'c6_invoice'},sourceDocumentId:'doc1'};
+  const duplicate=item({descricao:'Mercado - Parcela 2/3',data:'2026-05-31',valor:19});
+  const first=setup();ingest(first,[duplicate,duplicate],'C6',meta);
+  first.batch.save();if(first.confirmations.length)first.confirm();const all=first.saved();
+  assert.equal(all.length,6);
+  const existing=all.filter((_,i)=>i!==2).map((t,i)=>({...t,id:'saved'+i}));
+  const second=setup();second.context.Dashboard.existingTransactions=()=>existing;
+  const later={...duplicate,descricao:'Mercado - Parcela 3/3',billingMonth:'2026-08'};
+  ingest(second,[later,later,item({descricao:'Compra única',valor:81,data:'2026-08-17'})],'C6',{...meta,sourceDocumentId:'doc2'});
+  second.batch.save();if(second.confirmations.length)second.confirm();
+  const next=second.saved();assert.equal(next.length,2);
+  const part=next.find(t=>t.installment);assert(part);assert.equal(part.installment,'3/3');assert.equal(part.date,'2026-07-31');assert.equal(part.purchaseDate,'2026-05-31');
+  const simple=next.find(t=>!t.installment);assert.equal(simple.date,'2026-08-17');assert.equal(simple.seriesKey,undefined);
+});
+
+test('tarifa e estorno pareados pelo extrato entram no dia impresso, sem gerar doze cobranças',()=>{
+  const env=setup();
+  ingest(env,[item({descricao:'Anuidade Diferenciada',parcela:'11/12',data:'2026-10-24',valor:98,reversedFee:true}),
+    item({descricao:'Estorno Tarifa',tipo:'receita',data:'2026-10-24',valor:98,reversedFee:true})],'C6',{statementCheck:{source:'c6_invoice'}});
+  env.batch.save();if(env.confirmations.length)env.confirm();
+  assert.deepEqual(env.saved().map(t=>[t.type,t.date,t.installment,t.seriesKey]),[
+    ['despesa','2026-10-24','11/12',undefined],['receita','2026-10-24',null,undefined]]);
+});
+test('editar a compra recalcula a série, conserva posições desmarcadas; cancelar descarta a edição',()=>{
+  const raw=item({descricao:'Compra teste',parcela:'2/3',valor:18,data:'2026-01-31'}),meta={sourceDocumentId:'one',statementCheck:{source:'c6_invoice'}};
+  const env=setup();ingest(env,[raw],'C6',meta);select(env,1,false);
+  edit(env,0,'date','2026-02-28');edit(env,2,'amount','27');env.batch.refreshPreview();
+  env.batch.save();if(env.confirmations.length)env.confirm();
+  const amended=env.saved();
+  assert.deepEqual(amended.map(t=>[t.date,t.amount,t.purchaseDate]),[['2026-02-28',27,'2026-02-28'],['2026-04-28',27,'2026-02-28']]);
+  assert(amended.every(t=>t.seriesKey.includes('2026-02-28') && t.seriesKey.includes('27')));
+  env.batch.open();ingest(env,[raw],'C6',meta);edit(env,2,'amount','30');env.batch.close();
+  env.batch.open();ingest(env,[raw],'C6',meta);env.batch.save();if(env.confirmations.length>1)env.confirm();
+  assert(env.saved().every(t=>t.amount===18 && t.purchaseDate==='2026-01-31'));
 });
 
 test('data estimada nunca comprova repetição exata para desmarcar automaticamente', async () => {

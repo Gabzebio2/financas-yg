@@ -13,6 +13,13 @@ test('background transactions preserve the debit and cashback without counting r
  assert.equal(got.length,1);assert.equal(got[0].amount,8.78);assert.equal(got[0].currency,'USD');assert.deepEqual(got[0].cashback,{amount:.08,currency:'USD'});assert.equal(got[0].id,undefined);assert.equal(got[0].user_id,undefined);
  for(const change of [{amount:0},{amount:NaN},{date:'2026-02-30'},{currency:'FAKE'},{type:'cashback'}])assert.throws(()=>cleanTransactions([{...got[0],...change}]));
 });
+test('programação C6 conserva cada posição e a data da compra na gravação',async()=>{
+ const {cleanTransactions}=await core();
+ const key='c6:v1:["2026-08-11",5,"loja","BRL","despesa","c6",164.9,1]';
+ const tx={date:'2026-10-11',purchaseDate:'2026-08-11',desc:'Loja',amount:164.9,type:'despesa',currency:'BRL',installment:'3/5',seriesKey:key,groupId:key};
+ const [stored]=cleanTransactions([tx]);assert.equal(stored.purchaseDate,tx.purchaseDate);assert.equal(stored.seriesKey,key);assert.equal(stored.groupId,null);assert.equal(stored.installment,'3/5');
+ for(const changed of [{purchaseDate:'2026-02-30'},{installment:'6/5'},{seriesKey:'x'}])assert.throws(()=>cleanTransactions([{...tx,...changed}]));
+});
 test('owner filter is required before get, commit, upload and retry; expired drafts unavailable',async()=>{
  const {createBackend}=await core();
  for(const action of ['get','commit','upload','retry','discard']){

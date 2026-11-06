@@ -82,11 +82,13 @@ const ReceiptJobs=(()=>{
   if(announcement&&announcement.textContent!==notice)announcement.textContent=notice;
   const list=panel.querySelector('[data-jobs-list]');
   panel.querySelector('[data-jobs-error]').textContent='';
-  const fingerprint=JSON.stringify([owner(),folder(),jobs]);if(fingerprint===rendered)return;rendered=fingerprint;
+  const currentJobIds=Dashboard.receiptJobIds?.();
+  const removed=new Set(jobs.filter(j=>currentJobIds && j.status==='committed' && !j.photo_notice && syncedJobs.has(j.id+':committed') && !currentJobIds.has(j.id)).map(j=>j.id));
+  const fingerprint=JSON.stringify([owner(),folder(),jobs,[...removed]]);if(fingerprint===rendered)return;rendered=fingerprint;
   list.innerHTML=jobs.map(j=>{
-   const status=j.photo_notice ? (j.photo_notice.items?.length ? (j.photo_notice.items.length===1?'1 lançamento incluído automaticamente':j.photo_notice.items.length+' lançamentos incluídos automaticamente') : j.status==='ready'?'Foto precisa de ajuste':j.photo_corrected_count?'Ajustes incluídos na pasta':'Nenhum lançamento novo') : j.status==='ready'?'Pronto para conferir e incluir':j.status==='committed'?'Incluído na pasta':j.status==='uploading'?`Envio incompleto · ${j.uploaded}/${j.total_pages} páginas`:j.status==='error'?'Leitura interrompida — o progresso foi preservado':`Leitura ${j.first}/${j.total_pages} · conferência ${j.second}/${j.total_pages}`;
+   const status=removed.has(j.id)?'Lançamentos removidos da pasta':j.photo_notice ? (j.photo_notice.items?.length ? (j.photo_notice.items.length===1?'1 lançamento incluído automaticamente':j.photo_notice.items.length+' lançamentos incluídos automaticamente') : j.status==='ready'?'Foto precisa de ajuste':j.photo_corrected_count?'Ajustes incluídos na pasta':'Nenhum lançamento novo') : j.status==='ready'?'Pronto para conferir e incluir':j.status==='committed'?'Incluído na pasta':j.status==='uploading'?`Envio incompleto · ${j.uploaded}/${j.total_pages} páginas`:j.status==='error'?'Leitura interrompida — o progresso foi preservado':`Leitura ${j.first}/${j.total_pages} · conferência ${j.second}/${j.total_pages}`;
    const buttons=j.status==='ready'?`<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="open">${j.photo_notice?'Ver pendência':'Conferir e incluir'}</button>`:j.status==='error'&&j.retry_count<3?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="retry">Retomar leitura</button>`:'';
-   const view=(j.photo_notice ? j.photo_notice.items?.length || j.photo_corrected_count : j.status==='committed') ? `<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="view">Ver lançamentos</button>`:'';
+   const view=!removed.has(j.id) && (j.photo_notice ? j.photo_notice.items?.length || j.photo_corrected_count : j.status==='committed') ? `<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="view">Ver lançamentos</button>`:'';
    const discard=['uploading','ready','error','committed'].includes(j.status)?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="discard">Excluir documento</button>`:'';
    return `<article class="receipt-job"><div><strong>${escapeHtml(j.label||'Documento')}</strong><p class="${j.status==='ready'?'receipt-ready':''}">${escapeHtml(status)}</p>${photoDetails(j)}<small>${j.status==='error'&&j.error==='saldo_ia'?'Recarregue os créditos da API e retome a leitura. ':''}Documento disponível até ${escapeHtml(new Date(j.expires_at).toLocaleDateString('pt-BR'))}.</small></div><div class="receipt-job-actions">${buttons}${view}${discard}</div></article>`;
   }).join('')||`<div class="receipt-notifications-empty"><strong>${!owner()?'Entre na sua conta':!folder()?'Abra uma pasta':'Tudo em dia'}</strong>${!owner()?'Conecte sua conta para acompanhar seus documentos privados.':!folder()?'As notificações dos documentos aparecem na pasta em que você os enviou.':'Quando você enviar um comprovante, o andamento e o resultado aparecerão aqui.'}</div>`;
@@ -106,7 +108,7 @@ const ReceiptJobs=(()=>{
      retrySyncAfter=Date.now()+30000;
      const synced=await Cloud.syncNow({fresh:true});
      if(synced!==false && current===version && o===owner() && f===folder()){
-      retrySyncAfter=0;saved.forEach(key=>syncedJobs.add(key));Dashboard.refreshFromStore?.({force:true});
+      retrySyncAfter=0;saved.forEach(key=>syncedJobs.add(key));Dashboard.refreshFromStore?.({force:true});render(data.jobs);
      }
     }
    }}

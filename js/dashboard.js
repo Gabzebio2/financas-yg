@@ -294,8 +294,8 @@ const Dashboard = (() => {
       return '"' + s.replace(/"/g, '""') + '"';
     };
     const number = (v, currency) => Number(v).toFixed(curFrac(currency)).replace(".", ",");
-    const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição", "Pagamento", "Pago em", "Conta a pagar"]];
-    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t), t.paymentStatus ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", t.paidOn || "", t.paymentStatus ? "Sim" : "Não"]));
+    const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição", "Pagamento", "Pago em", "Conta a pagar", "Data da compra"]];
+    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t), t.paymentStatus ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", t.paidOn || "", t.paymentStatus ? "Sim" : "Não", t.purchaseDate || ""]));
     const csv = "\uFEFF" + rows.map((row) => row.map(cell).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
@@ -1475,7 +1475,7 @@ const Dashboard = (() => {
       return `
       <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${t.paymentStatus === "paid" ? " bill-settled" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
-        <td style="white-space:nowrap">${fmtDate(accountingDate(t))}${t.date !== accountingDate(t) ? '<br><small>Venc. ' + fmtDate(t.date) + '</small>' : cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}</td>
+        <td style="white-space:nowrap">${fmtDate(accountingDate(t))}${t.date !== accountingDate(t) ? '<br><small>Venc. ' + fmtDate(t.date) + '</small>' : cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}${t.purchaseDate && t.purchaseDate !== t.date ? '<br><small>Compra ' + fmtDate(t.purchaseDate) + '</small>' : ""}</td>
         <td><span class="tx-desc-cell">${catAvatar(t.category)}${paid
           ? `<span class="tx-paid-caption">${title}${billPayButton(t, billConfirmations.get(t.id)?.source === "transactions")}</span>`
           : title}</span></td>
@@ -1584,6 +1584,7 @@ const Dashboard = (() => {
 
   // Irmãs de uma parcelada: mesmo groupId; fallback p/ dados antigos sem groupId
   function parcSiblings(tx) {
+    if (tx.seriesKey) return ds.transactions.filter(t => t.seriesKey === tx.seriesKey || (tx.groupId && t.groupId === tx.groupId));
     if (tx.groupId) return ds.transactions.filter((t) => t.groupId === tx.groupId);
     const n = installmentTotal(tx);
     const originMonth = (t) => {
@@ -2443,7 +2444,7 @@ const Dashboard = (() => {
   function currentDatasetName() { return ds ? ds.name : ""; }
 
   function importEvidence(value) {
-    const out = {...cleanDateEstimate(value),...cleanCashback(value)};
+    const out = {...cleanDateEstimate(value),...cleanCashback(value),...cleanPurchaseSchedule(value)};
     for (const [key, max] of [["referenceId", 160], ["sourceEvidence", 300]]) {
       if (typeof value?.[key] === "string" && value[key].trim()) out[key] = value[key].trim().slice(0, max);
     }
@@ -2452,6 +2453,14 @@ const Dashboard = (() => {
   }
 
   function getImportTargetId() { return ds?.id || null; }
+  function receiptJobIds() {
+    const ids = new Set();
+    for (const tx of ds?.transactions || []) {
+      const match = /^receipt_([a-f0-9-]{36})_\d+$/i.exec(tx.id);
+      if (match) ids.add(match[1]);
+    }
+    return ids;
+  }
   function showReceiptTransactions(jobId, expectedIds = []) {
     if (!ds || !jobId) return false;
     refreshFromStore({force:true});
@@ -2525,6 +2534,13 @@ const Dashboard = (() => {
     }
     if (!refreshImportTarget()) return 0;
     const groupMap = new Map();
+    for (const tx of txs) {
+      if (!tx.seriesKey) continue;
+      const related=ds.transactions.filter(t => t.seriesKey === tx.seriesKey || (tx.groupId && t.groupId === tx.groupId));
+      if (related.some(t => t.installment === tx.installment)) return 0;
+      const existing=related.find(t => t.groupId);
+      if (existing && tx.groupId) groupMap.set(tx.groupId,existing.groupId);
+    }
     let n = 0;
     txs.forEach((t) => {
       const category = String(t.category || "Outros").trim() || "Outros";
@@ -2553,5 +2569,5 @@ const Dashboard = (() => {
     return n;
   }
 
-  return { open, openTxModal, closeFolder, createEmpresaDataset, refreshFromStore, showReceiptTransactions, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, isEditingTransaction: () => !!editingId, refitHero: fitHeroFlow };
+  return { open, openTxModal, closeFolder, createEmpresaDataset, refreshFromStore, showReceiptTransactions, receiptJobIds, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, isEditingTransaction: () => !!editingId, refitHero: fitHeroFlow };
 })();

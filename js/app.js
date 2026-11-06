@@ -85,10 +85,12 @@ const ImportMatch = (() => {
   const reference = (v) => String(v || "").trim().toLowerCase();
   function signature(t) {
     return JSON.stringify([t.id || "", t.date, text(t.desc), Number(t.amount), t.type,
-      normCur(t.currency), text(t.account), reference(t.referenceId), t.installment || ""]);
+      normCur(t.currency), text(t.account), reference(t.referenceId), t.installment || "", t.purchaseDate || ""]);
   }
   function compare(a, b) {
     if (!a || !b || a.type !== b.type || normCur(a.currency) !== normCur(b.currency)) return null;
+    // Parcelas da mesma compra podem compartilhar data original, valor e referência.
+    if (a.installment && b.installment && a.installment !== b.installment) return null;
     const ref = reference(a.referenceId), sameRef = ref && ref === reference(b.referenceId);
     const sameValue = Number.isFinite(Number(a.amount)) && Number(a.amount) === Number(b.amount);
     const sameDate = isValidISODate(a.date) && a.date === b.date;
@@ -97,7 +99,13 @@ const ImportMatch = (() => {
     const sameDesc = text(a.desc) && text(a.desc) === text(b.desc);
     // Projeções geradas podem coincidir com a parcela observada em outra fatura.
     const projection = (a.gen || b.gen) && a.installment && a.installment === b.installment && sameDesc && sameValue && aa === ba;
-    if (sameRef) return { kind: sameDate && sameValue && aa === ba ? "strong" : "possible", reason: "Mesma referência informada; confira se identifica a mesma operação" };
+    if (sameRef) {
+      const exactReference = !!(sameDate && sameValue && sameDesc && aa && aa === ba &&
+        !a.dateEstimated && !b.dateEstimated && a.currency === b.currency &&
+        (a.installment || "") === (b.installment || "") &&
+        (!a.purchaseDate || !b.purchaseDate || a.purchaseDate === b.purchaseDate));
+      return { kind: exactReference ? "strong" : "possible", exactReference, reason: "Mesma referência informada; confira se identifica a mesma operação" };
+    }
     if (projection) return { kind: "strong", reason: "Projeção da mesma parcela identificada no lote" };
     if (!sameValue || !sameDate) return null;
     if (aa && ba && aa !== ba) return { kind: "possible", reason: "Data e valor iguais, mas contas diferentes; confira a conta e se são operações distintas" };
@@ -610,6 +618,7 @@ function cleanCats(v, fallback, preserveContent) {
 // próprio usuário) preservamos IDs válidos p/ não duplicar no round-trip;
 // em backups importados de terceiros, sempre regeramos.
 const RE_SAFE_ID = /^[a-z0-9]{6,40}$/;
+const RE_RECEIPT_ID = /^receipt_[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}_(?:\d{1,5}|[a-f0-9]{32})$/i;
 function keepOrNewId(v, preserve) {
   return preserve && typeof v === "string" && RE_SAFE_ID.test(v) ? v : uid();
 }
@@ -624,6 +633,11 @@ function isPendingBill(t) {
 }
 function accountingDate(t) {
   return t.type === "despesa" && !isPendingBill(t) && isValidISODate(t.paidOn) ? t.paidOn : t.date;
+}
+function cleanPurchaseSchedule(t) {
+  if (!isValidISODate(t.purchaseDate) || !RE_PARC.test(t.installment || "")) return {};
+  const key = t.seriesKey;
+  return {purchaseDate:t.purchaseDate, ...(typeof key === "string" && key.startsWith("c6:v1:") && key.length <= 2000 ? {seriesKey:key} : {})};
 }
 function cleanBillFields(t) {
   const result = {};
@@ -680,7 +694,7 @@ function normalizeStoredDataset(raw) {
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: raw.transactions.map((t) => {
-      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, ...fields } = t;
+      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, purchaseDate, seriesKey, ...fields } = t;
       return {
         ...fields,
         id: typeof t.id === "string" && t.id ? t.id : uid(),
@@ -691,7 +705,7 @@ function normalizeStoredDataset(raw) {
         account: String(t.account || ""),
         currency: normCur(t.currency),
         type: t.type === "receita" ? "receita" : "despesa",
-        ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t),
+        ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t), ...cleanPurchaseSchedule(t),
       };
     }),
     limits: Array.isArray(raw.limits) ? raw.limits : [],
@@ -740,8 +754,8 @@ function sanitizeDataset(raw, opts) {
     }}:{}),
   };
   const usedIds = new Set([ds.id]);
-  const uniqueId = (value) => {
-    let id = keepOrNewId(value, preserve);
+  const uniqueId = (value, receipt = false) => {
+    let id = receipt && preserve && RE_RECEIPT_ID.test(value) ? value : keepOrNewId(value, preserve);
     while (usedIds.has(id)) id = uid();
     usedIds.add(id);
     return id;
@@ -779,7 +793,7 @@ function sanitizeDataset(raw, opts) {
   const groupMap = new Map();
   const mapGroup = (g) => {
     if (typeof g !== "string" || !g) return null;
-    if (preserve && RE_SAFE_ID.test(g)) return g;
+    if (preserve && (RE_SAFE_ID.test(g) || /^c6_[a-f0-9]{32}$/.test(g) || RE_RECEIPT_ID.test(g))) return g;
     if (!groupMap.has(g)) groupMap.set(g, uid());
     return groupMap.get(g);
   };
@@ -792,11 +806,11 @@ function sanitizeDataset(raw, opts) {
     const amount = validAmount == null ? null : Number(t.amount);
     if (!date || amount == null) return;
     ds.transactions.push({
-      id: uniqueId(t.id),
+      id: uniqueId(t.id, true),
       groupId: mapGroup(t.groupId),
       fixed: t.fixed === true,
       date,
-      ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t),
+      ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t), ...cleanPurchaseSchedule(t),
       desc: text(t.desc, 120).trim() || "(sem descrição)",
       category: text(t.category, 40).trim() || "Outros",
       account: text(t.account, 40).trim(),

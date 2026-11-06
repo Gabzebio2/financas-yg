@@ -1,3 +1,4 @@
+import {checkC6Subtotals} from './c6-subtotals.mjs';
 export const BUCKET='receipt-documents';
 export const CURRENCIES=['BRL','PYG','CLP','USD','EUR','GBP','USDT','USDC'];
 export const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v);
@@ -20,6 +21,14 @@ export function cleanTransactions(txs){
   if(t.cashback&&Number.isFinite(t.cashback.amount)&&t.cashback.amount>0&&CURRENCIES.includes(t.cashback.currency))out.cashback={amount:t.cashback.amount,currency:t.cashback.currency};
   for(const k of ['referenceId','sourceEvidence'])if(typeof t[k]==='string')out[k]=t[k].slice(0,2000);
   if(Number.isInteger(t.sourcePage)&&t.sourcePage>0&&t.sourcePage<=120)out.sourcePage=t.sourcePage;
+  if (t.seriesKey != null || t.purchaseDate != null) {
+   const key=t.seriesKey, date=t.purchaseDate, parts=(out.installment || '').split('/').map(Number);
+   if (typeof key!=='string' || !key.startsWith('c6:v1:') || key.length>2000 || !parts[0] || parts[0]>parts[1] ||
+       typeof date!=='string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0,10)!==date) throw Error('invalid_transaction');
+   out.seriesKey=key;
+   out.purchaseDate=date;
+   if (t.groupId===key) out.groupId=null;
+  }
   if(t.dateEstimated===true&&t.dateEstimate&&typeof t.dateEstimate==='object'){out.dateEstimated=true;out.dateEstimate=JSON.parse(JSON.stringify(t.dateEstimate).slice(0,2000));}
   return out;
  });
@@ -28,7 +37,7 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
  const adminHeaders={apikey:serviceKey,Authorization:'Bearer '+serviceKey};
  async function admin(path,options={}){
   const r=await fetcher(url+path,{...options,headers:{...adminHeaders,...options.headers},redirect:'error',signal:options.signal||AbortSignal.timeout(20000)});
-  if(!r.ok){const e=await r.json().catch(()=>({}));const allowed=['folder_not_linked','active_job_limit','job_not_found','job_not_ready','invalid_transaction','retry_unavailable','upload_incomplete','job_too_large'];throw Error(allowed.includes(e.message)?e.message:'storage_unavailable');}
+  if(!r.ok){const e=await r.json().catch(()=>({}));const allowed=['folder_not_linked','active_job_limit','job_not_found','job_not_ready','invalid_transaction','retry_unavailable','upload_incomplete','job_too_large','c6_series_changed'];throw Error(allowed.includes(e.message)?e.message:'storage_unavailable');}
   if(r.status===204)return null;return r.json();
  }
  const rpc=(name,args={})=>admin('/rest/v1/rpc/'+name,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args)});
@@ -135,7 +144,10 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
    await removeExpiredJob(j.id,encodeURIComponent(now)).catch(()=>console.warn('receipt_cleanup_retry'));
    return {discarded:true};
   }
-  if(body.action==='get')return {job:j,pages:await pages(j.id)};
+  if(body.action==='get'){
+   const ps=await pages(j.id);
+   return {job:j,pages:ps,statementError:j.status==='ready'?checkC6Subtotals(ps):null};
+  }
   if(body.action==='upload'){
    if(j.status!=='uploading')throw Error('upload_closed');
    const ps=await admin('/rest/v1/receipt_job_pages?job_id=eq.'+j.id+'&page_index=eq.'+Number(body.index)+'&select=*'),p=ps[0];
@@ -155,7 +167,14 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
   }
   if(body.action==='submit')return {status:await rpc('receipt_submit',{p_user:user,p_id:j.id})};
   if(body.action==='retry')return {status:await rpc('receipt_retry',{p_user:user,p_id:j.id})};
-  if(body.action==='commit')return rpc('receipt_commit',{p_user:user,p_id:j.id,p_txs:cleanTransactions(body.transactions)});
+  if(body.action==='commit'){
+   if(j.status==='ready'){
+    const proof=await admin('/rest/v1/receipt_job_pages?job_id=eq.'+j.id+'&order=page_index&select=document_id,context,statement:result->statementCheck,partial:result->partial,firstItem:result->itens->0,excluded:result->excluded');
+    const ps=proof.map(p=>({...p,result:{statementCheck:p.statement,partial:p.partial,itens:p.firstItem==null?[]:[p.firstItem],excluded:p.excluded}}));
+    if(checkC6Subtotals(ps))throw Error('c6_statement_incomplete');
+   }
+   return rpc('receipt_commit',{p_user:user,p_id:j.id,p_txs:cleanTransactions(body.transactions)});
+  }
   throw Error('invalid_action');
  }
  return {authenticate,userAction,workerToken,work,wake,cleanup};

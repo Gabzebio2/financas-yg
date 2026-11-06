@@ -53,6 +53,18 @@ function dataset(h, id = "folder0001") {
   return ds;
 }
 
+test("identificação da série C6 e data da compra sobrevivem à sincronização e restauração", () => {
+  const h = harness(), ds = dataset(h);
+  Object.assign(ds.transactions[0], {installment:"2/5",purchaseDate:"2025-12-02",seriesKey:"c6:v1:exemplo"});
+  h.Store.saveDataset(ds);
+  const tx = h.sanitizeDataset(h.Store.loadDataset(ds.id), {preserveIds:true,preserveContent:true}).transactions[0];
+  assert.equal(tx.date, "2026-01-02");
+  assert.equal(tx.purchaseDate, "2025-12-02");
+  assert.equal(tx.seriesKey, "c6:v1:exemplo");
+  ds.transactions[0].purchaseDate = "2025-13-02";
+  assert.equal(h.sanitizeDataset(ds).transactions[0].purchaseDate, undefined);
+});
+
 test("data aproximada preserva âncoras no armazenamento, backup e restauração", () => {
   const h = harness(), ds = dataset(h);
   const metadata = { dateEstimated: true, dateEstimate: { method: "between", previousDate: "2025-12-31", nextDate: "2026-01-04" } };

@@ -10,6 +10,9 @@ const Batch = (() => {
   let backgroundJobId = null;
   let documentExclusions = [];
   let documentFailure = false;
+  let serverStatementError = "", statementError = "";
+  let installmentSources = [];
+  let installmentPlanKey = "";
   let rows = [];          // [{ date, desc, amount, type, currency, on, src, dup, cat, installment, fixa... }]
   let presetCat = null;   // categoria destino sugerida (ex: amigo)
   let srcSeq = 0;         // nº do arquivo de origem de cada linha (p/ detectar sobreposição)
@@ -84,6 +87,9 @@ const Batch = (() => {
     presetCat = opts.category || null;
     rows = [];
     documentTasks = []; documentExclusions = []; documentFailure = false;
+    serverStatementError = ""; statementError = "";
+    installmentSources = [];
+    installmentPlanKey = "";
     $("#batch-phases").textContent = ""; $("#btn-batch-retry").classList.add("hidden");
     $("#batch-source-summary").textContent = ""; $("#batch-exclusions").innerHTML = "";
     srcSeq = 0;
@@ -121,6 +127,7 @@ const Batch = (() => {
 
   function restoreBackgroundJob(payload) {
     backgroundJobId=payload.job.id;
+    serverStatementError=typeof payload.statementError==="string"?payload.statementError:"";
     $("#btn-batch-delete").classList.remove("hidden");
     rows=Array.isArray(payload.job.extra_rows)?payload.job.extra_rows:[];
     srcSeq=rows.reduce((n,r)=>Math.max(n,Number(r.src)||0),0);
@@ -129,7 +136,7 @@ const Batch = (() => {
     reviewWarnings=documentTasks.flatMap(t=>t.result?.avisos||[]);
     documentFailure=payload.job.status!=='ready'||documentTasks.some(t=>!t.result);
     rebuildDocumentPreview();flagDuplicates();renderPreview();
-    setStatus('Leitura concluída e guardada com privacidade. Confira o resumo e clique em Incluir para salvar.','ok');
+    if(!statementError)setStatus('Leitura concluída e guardada com privacidade. Confira o resumo e clique em Incluir para salvar.','ok');
   }
 
   function close() {
@@ -191,7 +198,7 @@ const Batch = (() => {
   // No financial history is sent to either reading of the document.
   function reviewSnapshot(r, original = false) {
     const t = original ? r : effectiveRow(r);
-    return JSON.stringify([t.date, t.desc, t.amount, t.type, t.currency, t.account,
+    return JSON.stringify([t.date, t.purchaseDate || "", t.desc, t.amount, t.type, t.currency, t.account,
       t.cat || $("#batch-cat").value, t.installment || null, t.fixed === true,
       t.totalValue, t.referenceId || "", t.sourceEvidence || "", t.sourcePage || null, t.cashback || null]);
   }
@@ -199,7 +206,7 @@ const Batch = (() => {
   function needsReview(r) { return !!r.reviewRequired && !autoVerified(r); }
   function invalidRow(r) {
     const t = effectiveRow(r);
-    return !isValidISODate(r.date) || !r.desc.trim() || !Number.isFinite(r.amount) || r.amount <= 0 || r.amount > Number.MAX_SAFE_INTEGER ||
+    return !isValidISODate(r.date) || (r.c6SeriesKey && !isValidISODate(r.purchaseDate)) || !r.desc.trim() || !Number.isFinite(r.amount) || r.amount <= 0 || r.amount > Number.MAX_SAFE_INTEGER ||
       !["receita", "despesa"].includes(t.type) || !CURRENCY_CODES.includes(t.currency) || !availableCats().includes(t.cat || $("#batch-cat").value || "Outros");
   }
   function pendingRow(r) { return invalidRow(r) || needsReview(r) || r.dup || r.dateEstimated; }
@@ -220,6 +227,9 @@ const Batch = (() => {
     });
   }
   function reviewHTML(r, index) {
+    if (r.c6Matched) return '<div class="batch-verification-row verified">Parcela já registrada</div>';
+    if (r.c6Ambiguous) return '<div class="batch-verification-row attention">'+escapeHtml(r.c6Reason || "Confira se esta parcela pertence a uma compra já registrada.")+'</div>';
+    if (r.c6SeriesKey && !r.c6Printed) return '<div class="batch-verification-row">Calculada a partir da data da compra e do valor da parcela</div>';
     if (!r.reviewRequired) return "";
     if (autoVerified(r)) return '<div class="batch-verification-row verified">' + (r.quickRead ? 'Leitura rápida validada' : 'Conferido em duas leituras') + '</div>';
     const reasons = r.verifiedSnapshot ? ["Os dados foram alterados depois da conferência."] : r.auditReasons || ["A segunda leitura não confirmou este item."];
@@ -231,11 +241,24 @@ const Batch = (() => {
     const automatic = selected.filter(autoVerified).length;
     const hasAI = rows.some((r) => r.reviewRequired);
     const quick = selected.some((r) => r.quickRead);
-    const clean = hasAI && !reading && !incomplete() && !pending && selected.length > 0 && automatic === selected.length &&
+    const clean = hasAI && !reading && !statementError && !incomplete() && !pending && selected.length > 0 && automatic === selected.length &&
       coverage.every((p) => !p.auditStatus || p.auditStatus === "verified");
     $("#batch-verification").classList.toggle("is-verified", clean);
     $("#batch-verification-title").textContent = reading ? "Conferindo seu documento" : !selected.length ? "Nenhum lançamento válido selecionado" : clean ? (quick ? "Pronto para incluir" : "Duas leituras, dados de acordo") : "Lote pronto para incluir";
     $("#batch-verification-note").textContent = !selected.length ? "Itens sem dados válidos ficaram fora. Abra os detalhes para corrigir." : clean ? (quick ? "Valores na moeda debitada. Cashback separado das receitas. Clique em Incluir." : "As duas leituras concordam. Inclua os lançamentos de uma vez.") : hasAI ? "Abra os detalhes se quiser editar. Apenas dúvidas que afetam os lançamentos pedem confirmação." : "Planilha lida no seu dispositivo, sem IA.";
+    if (rows.some(r=>r.c6SeriesKey)) {
+      if (rows.every(r=>r.c6Matched)) {
+        $("#batch-verification-title").textContent = "Estas parcelas já estão na pasta";
+        $("#batch-verification-note").textContent = "Todas as posições do cronograma estão registradas. Você pode fechar a prévia.";
+      } else if (!reading) {
+        $("#batch-verification-title").textContent = "Cronograma de parcelas";
+        $("#batch-verification-note").textContent = "A primeira parcela começa no mês da compra. Nos detalhes, alterar a data da primeira parcela ou o valor da compra recalcula a série.";
+      }
+    }
+    if (statementError) {
+      $("#batch-verification-title").textContent = "Fatura pendente de conferência";
+      $("#batch-verification-note").textContent = statementError;
+    }
     const selectedCurrency = $("#batch-cur").value;
     if (selectedCurrency && selectedCurrency !== "original") $("#batch-verification-note").textContent += ` Você alterou a moeda do lote para ${selectedCurrency}; os valores não são convertidos. O resumo abaixo conserva a moeda lida, e o Saldo da seleção mostra o que será incluído.`;
     $("#batch-verification-counts").textContent = hasAI ? (quick ? `${selected.length} selecionado(s) · ${automatic} validado(s)` : `${automatic} conferido(s) em duas leituras · ${selected.length} selecionado(s)`) + (pending ? ' · '+pending+' com aviso' : '') : `${selected.length} selecionado(s) · ${pending} com aviso · leitura local`;
@@ -262,7 +285,16 @@ const Batch = (() => {
     if (excludedCount) messages.push(`${excludedCount} item(ns) não importado(s) por valor, moeda ou tipo ausente/inválido.`);
     const invalid = rows.filter((r) => !r.gen && invalidRow(r)).length;
     if (invalid) messages.push(`${invalid} item(ns) sem dados válidos ficaram fora da seleção. Você pode corrigi-los nos detalhes.`);
-    const repeated = rows.filter((r) => r.duplicateExcluded && !r.on).length;
+    const scheduled = rows.filter(r => r.c6SeriesKey);
+    if (scheduled.length) {
+      const printed = scheduled.filter(r => r.c6Printed).length;
+      const existing = scheduled.filter(r => r.c6Matched).length;
+      const ambiguous = scheduled.filter(r => r.c6Ambiguous && !r.on).length;
+      messages.push(`${printed} parcela(s) impressa(s). O cronograma começa na data de cada compra e inclui ${scheduled.filter(r=>r.on).length} parcela(s) selecionada(s), uma por mês.` +
+        (existing ? ` ${existing} já registrada(s) ficaram de fora.` : "") +
+        (ambiguous ? ` ${ambiguous} precisam de revisão e estão desmarcadas.` : ""));
+    }
+    const repeated = rows.filter((r) => !r.c6SeriesKey && r.duplicateExcluded && !r.on).length;
     if (repeated) messages.push(`${repeated} item(ns) com a mesma referência e dados já registrados ou repetidos ficaram fora. Você pode selecioná-los de volta nos detalhes.`);
     const unresolved = rows.filter((r) => r.on && r.dup).length;
     if (unresolved) messages.push(`${unresolved} possível(is) duplicata(s) estão selecionadas e serão informadas na confirmação do lote.`);
@@ -315,11 +347,11 @@ const Batch = (() => {
     const fallCat = sel.value; // linhas sem categoria da IA seguem o seletor geral
     $("#batch-tbody").innerHTML = rows.map((r, i) => (r.gen && !includeGenerated) || (viewFilter === "pending" && !pendingRow(r)) ? "" : `
       <tr data-i="${i}" class="${r.on ? "" : "batch-off"}${r.dup ? " batch-dup" : ""}${r.gen ? " batch-generated" : ""}">
-        <td><input type="checkbox" class="batch-check" data-i="${i}" aria-label="Selecionar ${escapeHtml(r.desc || "item")}${r.gen ? " (projeção)" : ""}" ${r.on ? "checked" : ""}>${r.dup ? '<span class="dup-flag" title="Coincidência para revisão; isso não comprova duplicação">⚠</span>' : ""}</td>
-        <td><input type="date" data-f="date" data-i="${i}" aria-label="Data de ${escapeHtml(r.desc || "item")}" value="${escapeHtml(r.date)}"></td>
+        <td><input type="checkbox" class="batch-check" data-i="${i}" aria-label="Selecionar ${escapeHtml(r.desc || "item")}${r.gen ? " (projeção)" : ""}" ${r.c6Matched ? "disabled" : ""} ${r.on ? "checked" : ""}>${r.dup ? '<span class="dup-flag" title="Coincidência para revisão; isso não comprova duplicação">⚠</span>' : ""}</td>
+        <td><input type="date" data-f="date" data-i="${i}" aria-label="Data de ${escapeHtml(r.desc || "item")}" value="${escapeHtml(r.date)}" ${r.c6SeriesKey && !r.installment.startsWith("1/") ? 'readonly title="Data calculada a partir da primeira parcela"' : ""}></td>
         <td><div class="batch-desc-cell"><input type="text" data-f="desc" data-i="${i}" value="${escapeHtml(r.desc)}">${
           r.installment
-            ? `<span class="parc-tag" title="${r.gen ? "Projeção: parcela não identificada no documento" : "Parcela vista na fatura"}">${r.gen ? "Projeção · " : ""}${escapeHtml(r.installment)}</span>`
+            ? `<span class="parc-tag" title="${r.gen || (r.c6SeriesKey && !r.c6Printed) ? "Parcela calculada" : "Parcela vista na fatura"}">${r.gen ? "Projeção · " : r.c6SeriesKey && !r.c6Printed ? "Calculada · " : ""}${escapeHtml(r.installment)}</span>`
             : (r.fixed || r.fixa)
               ? `<span class="parc-tag" title="${r.gen ? "Projeção: repetição não identificada no documento" : "Assinatura/mensalidade detectada"}">${r.gen ? "Projeção · " : ""}fixa</span>`
               : ""
@@ -357,12 +389,12 @@ const Batch = (() => {
     const total = Object.entries(totals).map(([cur, amount]) => fmtMoney(amount, cur)).join(" · ") || fmtMoney(0, "BRL");
     $("#batch-count").textContent = `${on.length} de ${rows.length} selecionadas · Saldo da seleção: ${total}`;
     $("#btn-batch-save").textContent = `Incluir ${on.length} lançamento${on.length === 1 ? "" : "s"}`;
-    $("#btn-batch-save").disabled = reading || committing || documentFailure || on.length === 0;
+    $("#btn-batch-save").disabled = reading || committing || documentFailure || !!statementError || on.length === 0;
     renderReviewSummary();
   }
 
   // Normaliza itens vindos da IA/Excel para o formato interno
-  function normalize(items) {
+  function normalize(items, c6Invoice = false) {
     return (Array.isArray(items) ? items : []).map((it, sourceIndex) => {
       if (!it || typeof it !== "object") { excludedCount++; return null; }
       // A IA devolve o campo como "data" (pt); o Excel devolve "date". Aceita os dois.
@@ -382,21 +414,22 @@ const Batch = (() => {
       // "Outros" is a valid default; categorization is optional editing, not a
       // financial ambiguity that should block an otherwise clear receipt.
 
-      // Parcela "3/12" detectada na fatura -> a série completa é gerada em expandSeries
+      let desc = String(it.desc ?? it.descricao ?? "").slice(0, 120);
+      const printed = desc.match(/(?:^|[\s(–—-]+)(?:parcela|cuota|parc\.?)\s*(\d{1,2})\s*(?:\/|de|of)\s*(\d{1,2})\s*\)?$/i);
       let parcNum = 0, parcTotal = 0;
       const rawParcela = String(it.parcela ?? it.installment ?? "").trim();
-      const pm = rawParcela.match(/^(\d{1,2})\s*\/\s*(\d{1,2})$/);
+      const pm = rawParcela ? rawParcela.match(/^(?:(?:parcela|cuota|parc\.?)\s*)?(\d{1,2})\s*(?:\/|de|of)\s*(\d{1,2})$/i) : printed;
       if (pm) {
         const a = Number(pm[1]), b = Number(pm[2]);
-        if (a >= 1 && b >= 2 && a <= b && b <= 48) { parcNum = a; parcTotal = b; }
+        if (a >= 1 && b >= 2 && a <= b && (c6Invoice || b <= 48)) { parcNum = a; parcTotal = b; }
       }
       if (rawParcela && !parcTotal) review.push("Confira a parcela não reconhecida");
       const fixa = it.fixa === true && !parcTotal;
 
-      let desc = String(it.desc ?? it.descricao ?? "").slice(0, 120);
-      // Se a IA deixou o marcador de parcela na descrição, limpa ("LOJA 3/12" -> "LOJA")
       if (parcTotal) {
-        desc = desc.replace(/[\s\-–(]*(?:parc\.?\w*|parcela|cuota)?\s*\d{1,2}\s*(?:\/|de|of)\s*\d{1,2}\s*\)?/i, "").trim() || desc;
+        const suffix = printed || desc.match(/[\s(–—-]+(\d{1,2})\s*(?:\/|de|of)\s*(\d{1,2})\s*\)?$/i);
+        if (suffix && Number(suffix[1]) === parcNum && Number(suffix[2]) === parcTotal) desc = desc.slice(0, suffix.index).trim() || desc;
+        else if (printed) review.push("Confira a parcela: o marcador da descrição difere do campo de parcela.");
       }
 
       return { date, desc, amount, type, currency, on: true, cat, parcNum, parcTotal, fixa, review, sourceIndex,
@@ -454,11 +487,13 @@ const Batch = (() => {
     const det = typeof cartao === "string" ? stripAccents(cartao) : "";
     const card = det ? CARDS.find((c) => stripAccents(c) === det) || "" : "";
     detectedCard = card || detectedCard;
-    const normalized = normalize(itens).map((r) => ({ ...r, account: r.account || card,
+    const c6Invoice = metadata.statementCheck?.source === "c6_invoice";
+    const normalized = normalize(itens,c6Invoice).map((r) => ({ ...r, account: r.account || card,
+      ...(c6Invoice && r.installment && itens[r.sourceIndex].reversedFee !== true ? {c6Original:true, receiptMonth:itens[r.sourceIndex].billingMonth || ""} : {}),
       sourceDocumentId: metadata.sourceDocumentId || "",
       sourceLabel: metadata.sourceLabel || "", sourcePage: r.sourcePage && metadata.pageStart ? r.sourcePage + metadata.pageStart - 1 : r.sourcePage }));
     normalized.forEach((r) => { r.order = (r.sourcePage || metadata.pageStart || 1) * 10000 + (metadata.orderOffset || 0) + r.sourceIndex; });
-    const novos = expandSeries(normalized);
+    const novos = c6Invoice ? normalized : expandSeries(normalized);
     if (novos.length) {
       const src = srcSeq++;
       novos.forEach((r) => {
@@ -483,13 +518,65 @@ const Batch = (() => {
     return { ...r, currency: cur && cur !== "original" ? cur : r.currency,
       account: account && account !== "original" ? account : account === "" && chosenAccount !== null ? "" : r.account };
   }
+  function prepareInstallmentSchedule(existing) {
+    const fresh = rows.filter(r => r.c6Original);
+    if (fresh.length) {
+      installmentSources.push(...fresh);
+      rows = rows.filter(r => !r.c6Original);
+      installmentPlanKey = "";
+    }
+    if (!installmentSources.length) return;
+    if (typeof InstallmentSchedule === "undefined") {
+      statementError = "Atualize o app para montar o cronograma de parcelas da fatura C6.";
+      setStatus(statementError,"err"); return;
+    }
+    const lines = installmentSources.map(effectiveRow);
+    const bySource = new Map(installmentSources.map(line=>[line.src+":"+line.sourceIndex,line]));
+    const parts = existing.filter(t=>t.installment);
+    const key = JSON.stringify([lines, parts.map(t=>[t.id,t.seriesKey,t.groupId,t.purchaseDate,t.date,t.desc,t.amount,t.currency,t.type,t.account,t.installment,t.referenceId,t.advance])]);
+    if (key === installmentPlanKey) return;
+    const prior = new Map(rows.filter(r=>r.c6SeriesKey).map(r=>[r.c6SourceSlot,r]));
+    rows = rows.filter(r => !r.c6SeriesKey);
+    for (const group of InstallmentSchedule.plan(lines, parts)) {
+      for (const slot of group.installments) {
+        const source = group.lines.find(r=>r.parcNum===slot.number) || group.line;
+        const installment = slot.number+"/"+source.parcTotal;
+        const sourceSlot = group.line.src+":"+group.line.sourceIndex+"|"+installment;
+        const old = prior.get(sourceSlot);
+        const printed = group.printedNumbers.includes(slot.number);
+        const ambiguous = !!(group.needsReview || slot.ambiguous);
+        const row = { ...source, c6Original:false, c6SeriesKey:group.seriesKey, c6Printed:printed, c6SourceSlot:sourceSlot,
+          c6PurchaseLines:group.lines.map(line=>bySource.get(line.src+":"+line.sourceIndex)),
+          c6Matched:slot.matchedId || "", c6Ambiguous:ambiguous, c6Reason:group.reason || "", purchaseDate:source.date,
+          date:slot.date, installment, groupId:group.groupId, on:!slot.matchedId && !ambiguous };
+        if (!printed) { row.referenceId = ""; row.cashback = null; }
+        row.verifiedSnapshot = source.verifiedSnapshot ? reviewSnapshot(row) : "";
+        if (old) {
+          if (old.categoryEdited) { row.cat = old.cat; row.categoryEdited = true; }
+          if (!slot.matchedId && old.selectionTouched && (!old.on || !ambiguous)) { row.selectionTouched = true; row.on = old.on; }
+        }
+        rows.push(row);
+      }
+    }
+    installmentPlanKey = key;
+  }
   function flagDuplicates() {
     if (typeof ImportMatch === "undefined") return 0;
-    const existing = ImportMatch.createIndex(Dashboard.existingTransactions?.() || []);
+    const transactions = Dashboard.existingTransactions?.() || [];
+    prepareInstallmentSchedule(transactions);
+    const existing = ImportMatch.createIndex(transactions);
     const seen = ImportMatch.createIndex();
     let flagged = 0;
     [...rows].sort((a, b) => Number(!!a.gen) - Number(!!b.gen)).forEach((r) => {
       const candidate = effectiveRow(r);
+      // O plano compara ocorrências e posições em conjunto. Uma compra
+      // genuinamente repetida não consome a mesma parcela existente duas vezes.
+      if (r.c6SeriesKey) {
+        r.dup = r.c6Ambiguous;
+        r.matches = [];
+        if (r.c6Matched) r.on = false;
+        return;
+      }
       const matches = [
         ...ImportMatch.find(candidate, existing).map((m) => ({ ...m, origin: "Já na pasta" })),
         ...ImportMatch.find(candidate, seen).filter((m) => !independentReferences(candidate, m.transaction)).map((m) => ({ ...m, origin: "Neste lote" }))
@@ -497,7 +584,7 @@ const Batch = (() => {
       const key = ImportMatch.reviewKey(candidate, matches);
       if (matches.length && r.matchKey !== key) flagged++;
       r.matches = matches; r.matchKey = key; r.dup = matches.length > 0;
-      const exact = matches.some((m) => sameReferencedOperation(candidate, m.transaction));
+      const exact = matches.some((m) => m.exactReference);
       if (!r.selectionTouched && !r.gen) {
         if (exact) { r.on = false; r.duplicateExcluded = true; }
         else if (r.duplicateExcluded) { r.duplicateExcluded = false; r.on = !invalidRow(r); }
@@ -506,11 +593,6 @@ const Batch = (() => {
     });
     return flagged;
   }
-  function sameReferencedOperation(a, b) {
-    const ref = (t) => String(t.referenceId || "").trim().toLowerCase();
-    return !a.dateEstimated && !b.dateEstimated && ref(a) && ref(a) === ref(b) && a.date === b.date && a.amount === b.amount &&
-      a.type === b.type && a.currency === b.currency && !!a.account.trim() && stripAccents(a.account) === stripAccents(b.account);
-  }
   function independentReferences(a, b) {
     const ref = (t) => String(t.referenceId || "").trim().toLowerCase();
     return autoVerified(a) && autoVerified(b) && ref(a) && ref(b) && ref(a) !== ref(b) &&
@@ -518,7 +600,7 @@ const Batch = (() => {
       stripAccents(a.account) === stripAccents(b.account);
   }
   function matchHTML(r, index) {
-    if (!r.dup) return "";
+    if (!r.dup || r.c6SeriesKey) return "";
     const comparisons = r.matches.slice(0, 3).map((m) => {
       const t = m.transaction;
       return '<small>' + escapeHtml(m.origin + ': ' + m.reason + '. ' + t.date + ' · ' + t.desc + ' · ' + fmtMoney(t.amount, t.currency) + ' · ' + (t.account || 'sem conta') + (t.referenceId ? ' · ref. ' + t.referenceId : '')) + '</small>';
@@ -576,12 +658,18 @@ const Batch = (() => {
     $("#btn-batch-retry").classList.toggle("hidden",!documentFailure||reading);
   }
   function rebuildDocumentPreview() {
+    installmentSources = installmentSources.filter(r => !r.documentTask);
     rows=rows.filter(r=>!r.documentTask);
     documentExclusions=[];
+    statementError=serverStatementError;
+    if (!statementError && documentTasks.some(t=>t.result?.statementCheck?.source==='c6_invoice') && documentTasks.every(t=>t.result)) {
+      const pages=documentTasks.map(t=>({document_id:t.documentId,context:t.part.documentContext,result:t.result}));
+      statementError=typeof C6Subtotals==="undefined" ? "Atualize o app para conferir a fatura C6." : C6Subtotals.check(pages);
+    }
     for(const t of documentTasks){
       const data=t.result||t.first;if(!data)continue;
       const start=rows.length;
-      ingestAiResult(data.itens,data.cartao,{sourceDocumentId:t.documentId,sourceLabel:t.label,pageStart:t.part.documentContext.pageStart,reviewRequired:true});
+      ingestAiResult(data.itens,data.cartao,{sourceDocumentId:t.documentId,sourceLabel:t.label,pageStart:t.part.documentContext.pageStart,reviewRequired:true,statementCheck:data.statementCheck});
       rows.slice(start).forEach(r=>{
         r.documentTask=true;
         r.quickRead=t.result?.reviewMode==='automatic';
@@ -612,6 +700,7 @@ const Batch = (() => {
     $("#batch-source-summary").textContent=summary.join(' ');
     $("#batch-exclusions").innerHTML=documentExclusions.filter(x=>x.motivo!=='resumo').map(x=>'<li>'+escapeHtml(x.descricao)+' — '+escapeHtml(x.explicacao)+(x.operacao===false?' (informação de resumo)':'')+' <small>'+escapeHtml(x.label)+'</small></li>').join('');
     renderPreview();documentProgress();
+    if(statementError)setStatus(statementError,'err');
   }
   async function processDocumentTasks(version) {
     documentFailure=false;$("#btn-batch-retry").classList.add("hidden");
@@ -887,7 +976,7 @@ const Batch = (() => {
     const txs = selected.map((r) => {
       const t = effectiveRow(r);
       return {
-        date: t.date, desc: t.desc, amount: t.amount, type: t.type,
+        date: t.date, ...(t.c6SeriesKey ? {purchaseDate:t.purchaseDate, seriesKey:t.c6SeriesKey} : {}), desc: t.desc, amount: t.amount, type: t.type,
         category: t.cat || $("#batch-cat").value, currency: t.currency, account: t.account,
         groupId: t.serie || t.groupId || null, installment: t.installment || null,
         totalValue: t.totalValue, fixed: t.fixed === true,
@@ -926,7 +1015,7 @@ const Batch = (() => {
   }
 
   async function commitPlan(plan, version) {
-    if (committing || reading || !contextValid(version)) return;
+    if (committing || reading || documentFailure || statementError || !contextValid(version)) return;
     committing = true;
     pendingConfirmation = null;
     confirmationSeq++;
@@ -944,6 +1033,7 @@ const Batch = (() => {
         if(!contextValid(version))return;
         close();
         ReceiptJobs.refresh();
+        if (!savedIds.length) { toast("Estas parcelas já estavam na pasta."); return; }
         const visible = Dashboard.showReceiptTransactions(id, savedIds);
         toast(visible ? `${savedIds.length} lançamento(s) do documento na pasta.` : "Inclusão confirmada na nuvem. Quando a pasta atualizar, abra o sino e toque em Ver lançamentos.");
         return;
@@ -952,6 +1042,21 @@ const Batch = (() => {
       close();
       toast(`${n} transaç${n === 1 ? "ão adicionada" : "ões adicionadas"} ✔`);
     } catch (error) {
+      if (backgroundJobId && error?.message === "c6_series_changed") {
+        if (!contextValid(version)) return;
+        const synced = await Cloud.syncNow({fresh:true}).catch(() => false);
+        if (!contextValid(version)) return;
+        installmentPlanKey = "";
+        renderPreview();
+        setStatus(synced ? "Uma parcela mudou em outro aparelho. Revise o cronograma atualizado antes de incluir. Nenhum item desta tentativa foi adicionado." : "Uma parcela mudou em outro aparelho. Sincronize a pasta antes de tentar novamente. Nenhum item desta tentativa foi adicionado.","err");
+        return;
+      }
+      if (backgroundJobId && error?.message === "c6_statement_incomplete") {
+        serverStatementError = statementError = "A conferência da fatura C6 encontrou uma divergência. Exclua esta leitura e envie o PDF completo novamente.";
+        renderPreview();
+        setStatus(statementError,"err");
+        return;
+      }
       toast(backgroundJobId?"Não foi possível confirmar a resposta. Confira o sino de notificações ou tente Incluir novamente; este lote está protegido contra gravação repetida.":"Não foi possível gravar o lote. A prévia foi mantida para tentar novamente.");
     } finally {
       committing = false;
@@ -976,6 +1081,7 @@ const Batch = (() => {
   }
 
   function save() {
+    if (statementError) { toast(statementError); return; }
     if (reading || committing || documentFailure) { toast("Conclua a leitura e a comparação antes de adicionar."); return; }
     if (!contextValid()) { toast("A pasta ou conta mudou. Reabra a importação na pasta desejada."); return; }
     if (pendingConfirmation && !$("#modal-confirm").classList.contains("hidden")) return;
@@ -1040,6 +1146,7 @@ const Batch = (() => {
       const f = el.dataset.f;
       if (f === "date") {
         const current = rows[i];
+        if (current.c6SeriesKey && !current.installment.startsWith("1/")) return;
         current.date = el.value;
         current.dateEdited = true;
         delete current.dateEstimated; delete current.dateEstimate;
@@ -1054,6 +1161,14 @@ const Batch = (() => {
       else if (f === "cat") rows[i].cat = el.value;
       else if (f === "type") rows[i].type = el.value;
       else if (f === "currency") rows[i].currency = el.value;
+      if (rows[i].c6SeriesKey && f === "cat") rows[i].categoryEdited = true;
+      if (rows[i].c6SeriesKey && ["date","desc","amount","type","currency"].includes(f)) {
+        for (const line of rows[i].c6PurchaseLines) {
+          line[f] = rows[i][f]; line.verifiedSnapshot = "";
+          line.auditReasons = ["Dados da compra ajustados na prévia."];
+        }
+        installmentPlanKey = "";
+      }
       updateCount();
     });
     tbody.addEventListener("change", (ev) => {

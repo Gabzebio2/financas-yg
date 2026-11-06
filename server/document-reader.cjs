@@ -7,6 +7,7 @@ const FAST_MODEL = "gpt-6-luna";
 const { accountName, sourceAccount, platformPrompt } = require('./receipt-platforms.cjs');
 const {header,tableLines,parseTable,reconcile,STATEMENT_PROMPT}=require('./statement-table.cjs');
 const {imageContext,visualReading,checkFirstRows}=require('./image-groups.cjs');
+const c6Invoice=require('./c6-invoice.cjs');
 const object = properties => ({type:"object",additionalProperties:false,properties,required:Object.keys(properties)});
 const string={type:"string"}, number={type:["number","null"]}, strings={type:"array",items:string}, lines={type:"array",items:{type:"integer"}};
 const rowSchema=object({data:string,descricao:string,valor:number,moeda:string,tipo:{type:"string",enum:["despesa","receita",""]},categoria:string,parcela:string,instituicao:string,referencia:string,evidencia:string,incertezas:strings,linhas:lines,cobranca:object({valor:number,moeda:string,origem:{type:'string',enum:['debito_explicito','usd_abaixo_local','unica_moeda','incerta']}}),cashback:object({valor:number,moeda:string})});
@@ -58,6 +59,7 @@ SILÊNCIO ÚTIL: incertezas/avisos somente para dúvida material em valor, moeda
 Categorias permitidas: ${JSON.stringify(categories)}. Contas/cartões: ${JSON.stringify(cards)}. cartao/instituicao só do titular, não banco da contraparte.
 ${platformPrompt(cards)}
 ${STATEMENT_PROMPT}
+${c6Invoice.instructions}
 ESCOPO: apenas esta página/trecho ${JSON.stringify(context)}. Outras páginas NÃO estão faltando neste envio. contagemOperacoes é contagem impressa INEQUÍVOCA do documento inteiro (se houver), incluindo recusadas/cashback conforme o documento; null se não há. Nunca use quantidade de compras como total de operações. completo só true depois de percorrer todas as linhas recebidas. Avisos devem ser específicos; não use avisos genéricos de conferir tudo.`;
 }
 function normalize(raw,ledger,first=null,cards) {
@@ -114,6 +116,19 @@ async function readPage({image,categories,cards,context,first,mode,sourceHeader,
   const model=quick?FAST_MODEL:MODEL;
   const ledger=await sourceLedger(image);
   const reference=sourceHeader?await sourceLedger({media_type:'application/pdf',data:sourceHeader}):null;
+  const invoice=c6Invoice.inspect(ledger,reference);
+  const invoiceResult=raw=>{
+    const evidence=c6Invoice.evidence(invoice);
+    const moneyLines=[...invoice.rows.map(r=>r.line),...invoice.excluded.flatMap(r=>r.linhas),...invoice.unresolved];
+    const result=normalize(c6Invoice.reconcile(raw,invoice,categories),{...ledger,moneyLines},first,cards);
+    return {...result,statementCheck:evidence,readingMode:'full',reviewMode:first?'compared':'pending'};
+  };
+  // On stage two, re-open the original PDF and enumerate its table again.
+  // Only categories come from the draft. No AI guess can remove, duplicate or
+  // alter a row that the independently parsed table can account for.
+  if(invoice && (invoice.info || (first && c6Invoice.evidence(invoice).complete))){
+    return {...invoiceResult(first||{itens:[]}),provider:'pdf',model:'c6-table'};
+  }
   const statement=parseTable(ledger,reference);
   const media=image.media_type==='application/pdf'?{type:'input_file',filename:'pagina.pdf',file_data:`data:application/pdf;base64,${image.data}`}:{type:'input_image',image_url:`data:${image.media_type};base64,${image.data}`,detail:'high'};
   const userText=`Contexto do cabeçalho da primeira página do MESMO documento: ${JSON.stringify(reference?header(reference):header(ledger))}.\nTexto original numerado, extraído sem IA (pode conter erros de fonte/OCR; a imagem original prevalece):\n${ledger.text||'(imagem sem camada textual)'}\nLinhas monetárias para conferir: ${ledger.moneyLines.join(', ')}.\n${first?'Rascunho da etapa 1, para comparação, sem autoridade: '+JSON.stringify({itens:first.itens,excluded:first.excluded}):'Leia todas as operações.'}`;
@@ -125,7 +140,9 @@ async function readPage({image,categories,cards,context,first,mode,sourceHeader,
   const response=await r.json();
   if(response.status!=='completed')throw Error('resposta_incompleta');
   const text=(response.output||[]).flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');
-  const raw=reconcile(JSON.parse(text),statement,categories);
+  const extracted=JSON.parse(text);
+  if(invoice)return invoiceResult(extracted);
+  const raw=reconcile(extracted,statement,categories);
   const visual=isImage?visualReading(raw,context,previousHeading):null;
   const result=normalize(visual?visual.raw:raw,ledger,first,cards);
   if(visual){

@@ -582,6 +582,14 @@ test('sair do acompanhamento de uma conta paga conserva o mês original do pagam
   api.setFilters({month:'2026-09'});assert.equal(api.tableTxs().length,0);
 });
 
+test('parcelas do C6 entram uma por mês e mostram a data original da compra',()=>{
+  const ds=dataset(); ds.transactions=[tx('c6001',{date:'2026-08-11',purchaseDate:'2026-08-11',installment:'1/5'}),tx('c6002',{date:'2026-09-11',purchaseDate:'2026-08-11',installment:'2/5'})];
+  saveBase(ds); api.setFilters({month:'2026-08'});
+  assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['c6001']); api.renderSummary(); const august=get('#hero-acc').textContent;
+  api.setFilters({month:'2026-09'});
+  assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['c6002']); api.renderAll();
+  assert.match(get('#tx-tbody').innerHTML,/Compra 11\/08/);assert.notEqual(get('#hero-acc').textContent,august);
+});
 test('Ver lançamentos reúne só os registros do documento e volta ao filtro mensal',()=>{
   const ds=dataset();
   ds.transactions=[tx('receipt_first_0',{date:'2026-05-03'}),tx('receipt_first_1'),tx('receipt_second_0')];
