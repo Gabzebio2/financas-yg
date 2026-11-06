@@ -934,13 +934,19 @@ const Batch = (() => {
     try {
       let n;
       if(backgroundJobId){
-        const result=await ReceiptJobs.commit(backgroundJobId,plan.txs);
-        // The server committed once, even if this browser loses the response.
-        // Sync merges remote additions by their stable IDs, preserving local edits.
-        await Cloud.syncNow({fresh:true});
+        const id = backgroundJobId;
+        const result = await ReceiptJobs.commit(id, plan.txs);
+        if (!Array.isArray(result.transactions)) throw new Error("invalid_commit_response");
         if(!contextValid(version))return;
-        Dashboard.refreshFromStore({force:true});
-        n=result.transactions.length;ReceiptJobs.refresh();
+        // A confirmação pertence ao servidor, mesmo se o download da pasta falhar.
+        const savedIds = result.transactions.map(t => t.id);
+        await Cloud.syncNow({fresh:true}).catch(() => false);
+        if(!contextValid(version))return;
+        close();
+        ReceiptJobs.refresh();
+        const visible = Dashboard.showReceiptTransactions(id, savedIds);
+        toast(visible ? `${savedIds.length} lançamento(s) do documento na pasta.` : "Inclusão confirmada na nuvem. Quando a pasta atualizar, abra o sino e toque em Ver lançamentos.");
+        return;
       }else n = Dashboard.appendImported(plan.txs);
       if (n !== plan.txs.length) { toast("Não foi possível adicionar todos os itens. A prévia foi mantida; confira se a pasta ainda está disponível."); return; }
       close();

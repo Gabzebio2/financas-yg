@@ -42,6 +42,7 @@ const CloudArchive = (() => {
         if (!row || !validId(row.id) || !validId(row.keeper_id) || row.id === row.keeper_id ||
             !row.data || row.data.id !== row.id || seen.has(row.id) ||
             row.user_id != null && row.user_id !== userId) throw error("Registro de arquivamento inconsistente. Nenhuma cópia local foi removida.");
+        if (remote.has(row.id)) throw error("A mesma pasta consta como ativa e arquivada na nuvem. A sincronização precisa de conferência.");
         seen.add(row.id); archives.push(row);
       }
       if (archives.length > MAX_ARCHIVES) throw error("Há muitos arquivos para conferir nesta operação. Nenhuma cópia local foi removida.");

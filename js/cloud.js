@@ -286,7 +286,7 @@ const Cloud = (() => {
     const blockedPendingCount = q ? [...new Set([...invalidRemoteIds, ...mergeConflictIds])].filter((id) => own(q.dirty, id) || own(q.deletes, id)).length : 0;
     const error = lastError || (invalidRemoteCount
       ? `${invalidRemoteCount} pasta(s) da nuvem têm dados inválidos e foram preservadas sem alterações. Confira essas pastas antes de sincronizá-las.` : null);
-    const unlinkedCount = localDatasets().filter((ds) => !own(ledger.owners, ds.id)).length;
+    const unlinkedCount = localDatasets().filter((ds) => !own(ledger.owners, ds.id) && !q?.base[ds.id]?.archived).length;
     const connected = !!session, autoSync = isAuto();
     let status = "local";
     if (syncing) status = "syncing";
@@ -295,12 +295,12 @@ const Cloud = (() => {
     else if (pendingCount && isOffline()) status = "offline";
     else if (pendingCount) status = error ? "error" : "pending";
     else if (error || accountConflictCount) status = "error";
-    else if (unlinkedCount) status = "unlinked";
     else if (connected && q?.lastSyncedAt) status = "synced";
+    else if (unlinkedCount) status = "unlinked";
     // Shared account identity for document uploads and stale-response guards.
     // Never expose access/refresh tokens through UI state events.
     return { status, connected, owner: connected ? activeOwner : null, autoSync, pendingUploads, pendingDeletes, pendingCount, otherAccountPending, unlinkedCount,
-      lastSyncedAt: q?.lastSyncedAt || null, nextRetryAt, error, conflictCount: q?.conflicts.length || 0,
+      lastSyncedAt: q?.lastSyncedAt || null, nextRetryAt, error, conflictCount: q?.conflicts.filter(item => mergeConflictIds.has(item.sourceId) && ownsFolder(item.copyId)).length || 0,
       accountConflictCount, invalidRemoteCount, blockedPendingCount, mergeConflictCount: mergeConflictIds.size, queueDurable,
       repairableRemoteCount, repairableDateCount, repairDatePreview: repairDatePreview.map((pair) => ({ ...pair })),
       repairing, hasRepairBackup: hasRepairBackup(), lastRepairCount };
@@ -320,7 +320,7 @@ const Cloud = (() => {
       else message = count + (state.nextRetryAt ? " Nova tentativa automática com o app aberto." : "");
       if (state.error) message += " " + state.error;
     } else if (state.error) message = state.error;
-    else if (state.unlinkedCount) message = state.connected
+    else if (state.status === "unlinked") message = state.connected
       ? "Há pastas locais sem vínculo. Vincule-as explicitamente à conta desejada para enviá-las."
       : "Há pastas locais sem vínculo. Entre na conta desejada para vincular e enviar essas pastas.";
     else if (state.accountConflictCount) message = "Uma pasta da nuvem coincide com dados de outra conta neste aparelho. As duas versões foram mantidas nos seus locais de origem.";
@@ -727,7 +727,7 @@ const Cloud = (() => {
     if (!activeOwner) return 0;
     let linked = 0;
     for (const id of ids) {
-      if (!validId(id) || own(ledger.owners, id) || !localDataset(id)) continue;
+      if (!validId(id) || own(ledger.owners, id) || loadQueue(activeOwner).base[id]?.archived || !localDataset(id)) continue;
       ledger.owners[id] = activeOwner;
       markDirty(activeOwner, id, true);
       linked++;
@@ -1199,10 +1199,15 @@ const Cloud = (() => {
             removeLocal: id => Store.deleteDataset(id),
           });
           assertCurrent(c, version, owner);
-          // Um arquivo permanente impede recriar IDs retirados da lista ativa.
-          // Só removemos metadados órfãos quando não há conteúdo local a salvar.
+          // A confirmação do arquivo aposenta apenas a fila desse ID. A reconciliação
+          // mantém no aparelho qualquer conteúdo cuja equivalência não foi comprovada.
           const archiveQueue = loadQueue(owner);
-          for (const id of archiveResult.archivedIds) if (!localDataset(id)) delete archiveQueue.dirty[id];
+          mergeQueueFromDisk(owner, archiveQueue);
+          for (const id of archiveResult.archivedIds) {
+            archiveQueue.base[id] = { listed: false, archived: true };
+            delete archiveQueue.dirty[id];
+            delete archiveQueue.deletes[id];
+          }
           requireDurableQueue();
           if (archiveResult.removedCount) {
             renderFolders();
@@ -1215,7 +1220,6 @@ const Cloud = (() => {
         const invalidLocalCount = await pushDirty(rowsById, owner, c, version, archivedIds);
         await flushDeletions(rowsById, owner, c, version);
         assertCurrent(c, version, owner);
-        if (archiveResult.blockedIds.length) throw new Error("Há cópias antigas com alterações ou vínculo que precisam de conferência. Elas foram preservadas neste aparelho; a CASINHA unificada e as demais pastas continuam sincronizando.");
         if (invalidLocalCount) throw new Error("Uma pasta local contém dados inválidos e não foi enviada. As alterações continuam salvas e pendentes. Use a correção de datas, quando disponível, ou revise a pasta antes de sincronizar.");
         if (mergeConflictIds.size) throw new Error("Há alterações simultâneas que precisam de conferência. As versões foram preservadas; a pasta original continua pendente para evitar sobrescrever dados da nuvem.");
         if (!invalidRemoteIds.size) retryAttempt = 0;
@@ -1376,7 +1380,7 @@ const Cloud = (() => {
       // Somente a notificação de uma gravação sob a sessão atual cria um vínculo novo.
       const created = createdIds.includes(id) && !!activeOwner;
       if (!owner && created) { owner = activeOwner; ledger.owners[id] = owner; }
-      if (owner) markDirty(owner, id, created && owner === activeOwner);
+      if (owner && !loadQueue(owner).base[id]?.archived) markDirty(owner, id, created && owner === activeOwner);
     }
     persistMetadata();
     publishState();

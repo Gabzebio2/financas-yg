@@ -64,22 +64,25 @@ test("Store real remove quatro cópias arquivadas e esvazia dirty/tombstones sem
   assert.equal(restored.cloud.getSyncState().pendingCount, 0);
 });
 
-test("alteração local em ID arquivado é preservada e bloqueada, mas pasta nova continua enviando", async () => {
+test("cópia arquivada divergente permanece local, sem erro ou reenvio, enquanto a pasta nova sincroniza", async () => {
   const { h, ids } = await archivedFixture({ auto: true });
   h.add("Alteração inédita", ids[0]); h.create("fresh0001");
   const changed = copy(h.local(ids[0]));
-  assert.equal(await h.sync(), false);
+  assert.equal(await h.sync(), true);
   assert.deepEqual(copy(h.local(ids[0])), changed);
   for (const id of ids.slice(1)) assert.equal(h.local(id), null);
   assert.equal(h.remote(ids[0]), undefined, "cópia arquivada não é reenviada");
   assert.ok(h.remote("fresh0001"), "pasta independente continua enviando");
-  assert.equal(h.cloud.getSyncState().pendingUploads, 1);
-  assert.equal(h.cloud.getSyncState().status, "error");
-  assert.match(h.cloud.getSyncState().error, /cópias antigas com alterações/);
+  assert.equal(h.cloud.getSyncState().pendingUploads, 0);
+  assert.equal(h.cloud.getSyncState().status, "synced");
+  assert.equal(h.cloud.getSyncState().error, null);
+  assert.equal(h.cloud.ownsFolder(ids[0]), false);
   assert.equal(h.server.calls.filter((call) => call.operation === "insert").length, 1);
-  assert.ok([...h.timers.values()].some((timer) => timer.delay === 5000));
-  await h.tick(5000);
-  assert.ok([...h.timers.values()].some((timer) => timer.delay === 15000));
+  assert.equal(h.cloud.getSyncState().nextRetryAt, null);
+  const restored = harness({ values:h.values, server:h.server }); restored.login("user-a","INITIAL_SESSION");
+  assert.equal(await restored.sync(), true);
+  assert.deepEqual(copy(restored.local(ids[0])), changed);
+  assert.equal(restored.cloud.getSyncState().status, "synced");
   assert.equal(h.remote(ids[0]), undefined);
 });
 
@@ -88,8 +91,8 @@ test("edição durante leitura do arquivo continua local, sem exclusão nem uplo
   const gate = deferred(); h.server.holdArchive = gate;
   const pending = h.sync(); await settle(); h.add("Compra durante conferência", ids[0]);
   const changed = copy(h.local(ids[0])); gate.resolve();
-  assert.equal(await pending, false); assert.deepEqual(copy(h.local(ids[0])), changed);
-  assert.equal(h.remote(ids[0]), undefined); assert.equal(h.cloud.getSyncState().pendingCount, 1);
+  assert.equal(await pending, true); assert.deepEqual(copy(h.local(ids[0])), changed);
+  assert.equal(h.remote(ids[0]), undefined); assert.equal(h.cloud.getSyncState().pendingCount, 0);
   for (const id of ids.slice(1)) assert.equal(h.local(id), null);
 });
 

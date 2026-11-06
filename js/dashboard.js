@@ -4,6 +4,7 @@
 const Dashboard = (() => {
   let ds = null; // dataset aberto
   let fil = { mode: "month", month: null, from: "", to: "", cats: null, search: "", type: "all", account: "all" };
+  let receiptPrefix = "";
   let sort = { key: "date", dir: -1 };
   let rowLimit = 100;
   const charts = {};
@@ -93,6 +94,7 @@ const Dashboard = (() => {
     billConfirmations.forEach(({timer}) => clearTimeout(timer));
     billConfirmations.clear();
     ds = loaded;
+    receiptPrefix = "";
     // Lembra a última pasta pessoal aberta (usada no menu Pessoa física/Empresa)
     if (ds.profile !== "pj") {
       try { localStorage.setItem("fyg:pf-last", ds.id); } catch { /* sem storage */ }
@@ -136,6 +138,7 @@ const Dashboard = (() => {
 
   function closeFolder() {
     ds = null;
+    receiptPrefix = "";
     editingId = null;
     receiptRead = null;
     txModalRevision++;
@@ -252,7 +255,7 @@ const Dashboard = (() => {
 
   function tableTxs() {
     const q = stripAccents(fil.search);
-    let list = filteredTxs(true);
+    let list = receiptPrefix ? ds.transactions.filter(t => typeof t.id === "string" && t.id.startsWith(receiptPrefix)) : filteredTxs(true);
     if (fil.type !== "all") list = list.filter((t) => t.type === fil.type);
     if (fil.account !== "all") list = list.filter((t) => "account:" + (t.account || "") === fil.account);
     if (q) {
@@ -266,6 +269,7 @@ const Dashboard = (() => {
   // Os filtros rápidos pertencem à lista; os cartões continuam mostrando o
   // período e as categorias escolhidos no cabeçalho.
   function renderTableFilters() {
+    $("#tx-receipt-filter")?.classList.toggle("hidden", !receiptPrefix);
     const type = $("#tx-type-filter");
     if (type) type.value = fil.type;
     const account = $("#tx-account-filter");
@@ -495,6 +499,7 @@ const Dashboard = (() => {
   }
 
   function stepMonth(delta) {
+    receiptPrefix = "";
     let [y, m] = fil.month.split("-").map(Number);
     m += delta;
     if (m < 1) { m = 12; y--; }
@@ -2042,6 +2047,7 @@ const Dashboard = (() => {
     $("#mm-next").addEventListener("click", () => { mmYear++; renderMonthMenu(); });
     $("#mm-cancel").addEventListener("click", () => $("#month-menu").classList.add("hidden"));
     $("#mm-today").addEventListener("click", () => {
+      receiptPrefix = "";
       fil.month = todayISO().slice(0, 7);
       rowLimit = 100;
       $("#month-menu").classList.add("hidden");
@@ -2050,6 +2056,7 @@ const Dashboard = (() => {
     $("#mm-grid").addEventListener("click", (ev) => {
       const b = ev.target.closest("[data-ym]");
       if (!b) return;
+      receiptPrefix = "";
       fil.month = b.dataset.ym;
       rowLimit = 100;
       $("#month-menu").classList.add("hidden");
@@ -2145,7 +2152,13 @@ const Dashboard = (() => {
       renderTable();
     });
     $("#btn-export-csv")?.addEventListener("click", exportCSV);
+    $("#btn-close-receipt-filter")?.addEventListener("click", () => {
+      receiptPrefix = "";
+      rowLimit = 100;
+      renderTable();
+    });
     $("#btn-clear-tx-filters")?.addEventListener("click", () => {
+      receiptPrefix = "";
       fil.search = ""; fil.type = "all"; fil.account = "all"; fil.cats = null;
       $("#tx-search").value = "";
       rowLimit = 100;
@@ -2439,6 +2452,21 @@ const Dashboard = (() => {
   }
 
   function getImportTargetId() { return ds?.id || null; }
+  function showReceiptTransactions(jobId, expectedIds = []) {
+    if (!ds || !jobId) return false;
+    refreshFromStore({force:true});
+    const prefix = "receipt_" + jobId + "_";
+    const ids = new Set(ds.transactions.filter(t => typeof t.id === "string" && t.id.startsWith(prefix)).map(t => t.id));
+    if (!expectedIds.every(id => ids.has(id))) return false;
+    receiptPrefix = prefix;
+    fil.search = ""; fil.type = "all"; fil.account = "all";
+    $("#tx-search").value = "";
+    selectedTx.clear();
+    rowLimit = 100;
+    showScreen("screen-txs");
+    renderTable();
+    return true;
+  }
   function existingTransactions() {
     if (!ds) return [];
     const current = Store.loadDataset(ds.id) || ds;
@@ -2525,5 +2553,5 @@ const Dashboard = (() => {
     return n;
   }
 
-  return { open, openTxModal, closeFolder, createEmpresaDataset, refreshFromStore, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, isEditingTransaction: () => !!editingId, refitHero: fitHeroFlow };
+  return { open, openTxModal, closeFolder, createEmpresaDataset, refreshFromStore, showReceiptTransactions, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, isEditingTransaction: () => !!editingId, refitHero: fitHeroFlow };
 })();

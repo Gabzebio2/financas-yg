@@ -582,6 +582,19 @@ test('sair do acompanhamento de uma conta paga conserva o mês original do pagam
   api.setFilters({month:'2026-09'});assert.equal(api.tableTxs().length,0);
 });
 
+test('Ver lançamentos reúne só os registros do documento e volta ao filtro mensal',()=>{
+  const ds=dataset();
+  ds.transactions=[tx('receipt_first_0',{date:'2026-05-03'}),tx('receipt_first_1'),tx('receipt_second_0')];
+  saveBase(ds);api.setFilters({month:'2026-11',search:'busca antiga'});
+  win.scrollTo=()=>{};
+  const dashboard=vm.runInContext('Dashboard',ctx);
+  assert.equal(dashboard.showReceiptTransactions('first',['receipt_missing_0']),false);
+  assert.equal(dashboard.showReceiptTransactions('first',['receipt_first_0','receipt_first_1']),true);
+  assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['receipt_first_0','receipt_first_1']);
+  get('#btn-close-receipt-filter').listeners.get('click')();
+  assert.equal(api.tableTxs().length,0);
+});
+
 (async()=>{
   let failed=0;
   for(const [name,fn] of cases){try{await fn();console.log('PASS',name);}catch(error){failed++;console.error('FAIL',name,error);}}

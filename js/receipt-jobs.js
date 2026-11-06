@@ -4,11 +4,11 @@ const ReceiptJobs=(()=>{
  const URL='https://mhgagjhwsjjjwwvopjgu.supabase.co/functions/v1/receipt-jobs';
  let timer=null,version=0,lastOwner=null,lastFolder=null,busy=false,uploading=false;
  let rendered=null,lastJobs=[];
- let seenPhotos=new Set(),syncedPhotos=new Set();
+ let seenPhotos=new Set(),syncedJobs=new Set(),retrySyncAfter=0;
  const photoKey=()=> 'fyg:photo-notices:'+owner()+':'+folder();
  function loadSeen(){
   try{seenPhotos=new Set(JSON.parse(localStorage.getItem(photoKey())||'[]'));}catch{seenPhotos=new Set();}
-  syncedPhotos=new Set();
+  syncedJobs=new Set();retrySyncAfter=0;
  }
  function photoDetails(j){
   const notice=j.photo_notice;
@@ -86,8 +86,9 @@ const ReceiptJobs=(()=>{
   list.innerHTML=jobs.map(j=>{
    const status=j.photo_notice ? (j.photo_notice.items?.length ? (j.photo_notice.items.length===1?'1 lançamento incluído automaticamente':j.photo_notice.items.length+' lançamentos incluídos automaticamente') : j.status==='ready'?'Foto precisa de ajuste':j.photo_corrected_count?'Ajustes incluídos na pasta':'Nenhum lançamento novo') : j.status==='ready'?'Pronto para conferir e incluir':j.status==='committed'?'Incluído na pasta':j.status==='uploading'?`Envio incompleto · ${j.uploaded}/${j.total_pages} páginas`:j.status==='error'?'Leitura interrompida — o progresso foi preservado':`Leitura ${j.first}/${j.total_pages} · conferência ${j.second}/${j.total_pages}`;
    const buttons=j.status==='ready'?`<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="open">${j.photo_notice?'Ver pendência':'Conferir e incluir'}</button>`:j.status==='error'&&j.retry_count<3?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="retry">Retomar leitura</button>`:'';
+   const view=(j.photo_notice ? j.photo_notice.items?.length || j.photo_corrected_count : j.status==='committed') ? `<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="view">Ver lançamentos</button>`:'';
    const discard=['uploading','ready','error','committed'].includes(j.status)?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="discard">Excluir documento</button>`:'';
-   return `<article class="receipt-job"><div><strong>${escapeHtml(j.label||'Documento')}</strong><p class="${j.status==='ready'?'receipt-ready':''}">${escapeHtml(status)}</p>${photoDetails(j)}<small>${j.status==='error'&&j.error==='saldo_ia'?'Recarregue os créditos da API e retome a leitura. ':''}Documento disponível até ${escapeHtml(new Date(j.expires_at).toLocaleDateString('pt-BR'))}.</small></div><div class="receipt-job-actions">${buttons}${discard}</div></article>`;
+   return `<article class="receipt-job"><div><strong>${escapeHtml(j.label||'Documento')}</strong><p class="${j.status==='ready'?'receipt-ready':''}">${escapeHtml(status)}</p>${photoDetails(j)}<small>${j.status==='error'&&j.error==='saldo_ia'?'Recarregue os créditos da API e retome a leitura. ':''}Documento disponível até ${escapeHtml(new Date(j.expires_at).toLocaleDateString('pt-BR'))}.</small></div><div class="receipt-job-actions">${buttons}${view}${discard}</div></article>`;
   }).join('')||`<div class="receipt-notifications-empty"><strong>${!owner()?'Entre na sua conta':!folder()?'Abra uma pasta':'Tudo em dia'}</strong>${!owner()?'Conecte sua conta para acompanhar seus documentos privados.':!folder()?'As notificações dos documentos aparecem na pasta em que você os enviou.':'Quando você enviar um comprovante, o andamento e o resultado aparecerão aqui.'}</div>`;
  }
  function closeNotifications(){const panel=document.querySelector('#receipt-jobs');if(panel?.open)panel.close();}
@@ -100,11 +101,12 @@ const ReceiptJobs=(()=>{
   if(busy){timer=setTimeout(refresh,1500);return;}busy=true;
   try{const data=await request({action:'list',folder:f},{owner:o,folder:f});if(current===version){
     render(data.jobs);
-    const saved=data.jobs.filter(j=>j.photo_notice?.items?.length&&!syncedPhotos.has(j.id));
-    if(saved.length && Cloud.getSyncState().autoSync!==false){
+    const saved=data.jobs.filter(j=>j.status==='committed'||j.photo_notice?.items?.length).map(j=>j.id+':'+j.status).filter(key=>!syncedJobs.has(key));
+    if(saved.length && Date.now()>=retrySyncAfter && Cloud.getSyncState().autoSync!==false){
+     retrySyncAfter=Date.now()+30000;
      const synced=await Cloud.syncNow({fresh:true});
      if(synced!==false && current===version && o===owner() && f===folder()){
-      saved.forEach(j=>syncedPhotos.add(j.id));Dashboard.refreshFromStore?.({force:true});
+      retrySyncAfter=0;saved.forEach(key=>syncedJobs.add(key));Dashboard.refreshFromStore?.({force:true});
      }
     }
    }}
@@ -131,6 +133,14 @@ const ReceiptJobs=(()=>{
    const action=button.dataset.action,id=button.dataset.job;
    try{
     if(action==='open'){const before={owner:owner(),folder:folder()};await Cloud.syncNow({fresh:true});const data=await request({action:'get',id},before);if(data.job.status!=='ready'){await refresh();return;}closeNotifications();Batch.open({title:'Conferir documentos e lançamentos',hideSources:true,backgroundJob:data});}
+    else if(action==='view'){
+     const before={owner:owner(),folder:folder()};
+     const synced=await Cloud.syncNow({fresh:true});
+     if(before.owner!==owner()||before.folder!==folder())return;
+     if(!synced && !Dashboard.existingTransactions().some(t=>String(t.id).startsWith('receipt_'+id+'_'))){toast('A pasta ainda não terminou de sincronizar. Tente Ver lançamentos novamente quando a conexão voltar.');return;}
+     closeNotifications();Dashboard.showReceiptTransactions(id);
+     if(!synced)toast('Exibindo os lançamentos deste documento já disponíveis neste aparelho.');
+    }
     else if(action==='discard'){
      const context={owner:owner(),folder:folder()};closeNotifications();
      askConfirm('Excluir documento?',discardText,async()=>{
@@ -144,7 +154,7 @@ const ReceiptJobs=(()=>{
   refresh();
  });
  document.addEventListener('visibilitychange',refresh);
- document.addEventListener('fyg:cloudstate',refresh);
+ document.addEventListener('fyg:cloudstate',()=>{if(owner()!==lastOwner||folder()!==lastFolder)refresh();});
  window.addEventListener('focus',refresh);window.addEventListener('online',refresh);
  return {submit,refresh,commit,discard,discardText,message,uploadMessage};
 })();

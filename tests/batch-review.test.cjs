@@ -79,8 +79,8 @@ function withDocument(itens, changes = {}) {
 function edit(env, index, field, value) { env.node('#batch-tbody').fire('input', { dataset: { i: String(index), f: field }, value }); }
 test('retomar documento privado restaura USD e cashback; só Incluir confirma na nuvem',async()=>{
   const commits=[];let synced=0,refreshed=0;
-  const env=setup({ReceiptJobs:{commit:async(id,txs)=>{commits.push({id,txs});return {transactions:txs};},refresh(){}},Cloud:{getToken:()=> 'session',syncNow:async()=>{synced++;return true;}}});
-  env.context.Dashboard.refreshFromStore=()=>{refreshed++;};
+  const env=setup({ReceiptJobs:{commit:async(id,txs)=>{commits.push({id,txs});return {transactions:txs.map(t=>({...t,id:'receipt_private-job_0'}))};},refresh(){}},Cloud:{getToken:()=> 'session',syncNow:async()=>{synced++;return true;}}});
+  env.context.Dashboard.showReceiptTransactions=(id,ids)=>{assert.equal(id,'private-job');assert.deepEqual([...ids],['receipt_private-job_0']);refreshed++;return true;};
   const data={itens:[item({valor:8.78,moeda:'USD',cashback:{valor:.08,moeda:'USD'},incertezas:[],revisar:[]})],cartao:'',excluded:[],avisos:[],partial:false,verified:true,reviewMode:'automatic',ledger:{monetaryLines:0,accounted:0,missing:[]}};
   env.batch.open({backgroundJob:{job:{id:'private-job',status:'ready',extra_rows:[]},pages:[{document_id:'doc1',label:'print',context:{pageStart:1,pageEnd:1,totalPages:1},quick:true,first_result:data,result:data}]}});
   assert.equal(commits.length,0);assert.equal(env.node('#btn-batch-save').disabled,false);
@@ -94,6 +94,16 @@ test('erro de confirmação mantém a prévia e permite repetir o mesmo job sem 
  env.batch.save();await new Promise(resolve=>setImmediate(resolve));
  assert.equal(env.node('#modal-batch').classList.contains('hidden'),false);assert.equal(env.savedCount(),0);
  env.batch.save();await new Promise(resolve=>setImmediate(resolve));assert.equal(attempts,2);
+});
+
+test('gravação confirmada e atualização local adiada encerra a prévia sem pedir nova inclusão',async()=>{
+  let writes=0;
+  const env=setup({ReceiptJobs:{commit:async()=>{writes++;return {transactions:[{id:'receipt_done_0'}]};},refresh(){}},Cloud:{syncNow:async()=>false}});
+  env.context.Dashboard.showReceiptTransactions=()=>false;
+  const result={itens:[item()],excluded:[],avisos:[],partial:false,verified:true,reviewMode:'automatic',ledger:{monetaryLines:0,accounted:0,missing:[]}};
+  env.batch.open({backgroundJob:{job:{id:'done',status:'ready',extra_rows:[]},pages:[{document_id:'doc',label:'file',context:{pageStart:1,pageEnd:1,totalPages:1},result}]}});
+  env.batch.save();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(writes,1);assert.equal(env.node('#modal-batch').classList.contains('hidden'),true);assert.match(env.notices.at(-1),/Inclusão confirmada na nuvem/);
 });
 
 test('excluir na conferência exige confirmação, bloqueia inclusão concorrente e libera novo envio',async()=>{

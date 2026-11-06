@@ -63,6 +63,7 @@ document.addEventListener("DOMContentLoaded", () => {
       label = labels[state.status] || label;
       if (pending) label = state.status === "syncing" ? "Sincronizando…" : `${pending} pasta${pending === 1 ? "" : "s"} pendente${pending === 1 ? "" : "s"}`;
       else if (invalidRemote) label = "Conferir pastas antigas";
+      else if (state.mergeConflictCount) label = "Conferir alterações";
       else if (state.otherAccountPending) label = "Pendências de outra conta";
       else if (state.accountConflictCount) label = "Conferir pastas da nuvem";
       if (state.repairing) label = "Corrigindo datas…";
@@ -84,7 +85,7 @@ document.addEventListener("DOMContentLoaded", () => {
       let message = pending ? `${state.pendingUploads} pasta(s) com alterações e ${state.pendingDeletes} exclusão(ões) aguardando confirmação da nuvem. ` : "";
       if (invalidRemote) message += `${invalidRemote} pasta(s) da nuvem têm dados inválidos e foram preservadas sem alterações. As demais pastas podem sincronizar. `;
       if (state?.blockedPendingCount) message += `${state.blockedPendingCount} pendência(s) dependem da correção dessas pastas. `;
-      if (errorDetail && state.status !== "syncing") message += `Motivo: ${errorDetail} `;
+      if (pending && errorDetail && state.status !== "syncing") message += `Motivo: ${errorDetail} `;
       if (state?.nextRetryAt && state.autoSync) message += "O app tentará novamente automaticamente. ";
       if (state?.otherAccountPending) message += "Há pendências de outra conta. Entre na conta correspondente para enviá-las. ";
       if (state?.accountConflictCount) message += "Uma pasta da nuvem tem o mesmo identificador de uma pasta de outra conta neste aparelho; ambas foram preservadas nos seus locais de origem. ";

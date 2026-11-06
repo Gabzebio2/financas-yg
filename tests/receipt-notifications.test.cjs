@@ -8,7 +8,7 @@ function setup(initial=[]){
  ctx.askConfirm=(title,text,callback)=>confirmations.push({title,text,callback});
  const originalFetch=ctx.fetch;ctx.fetch=async(url,opt)=>{const b=JSON.parse(opt.body);if(b.action==='discard'){requests.push(b);if(discardFailure)return {ok:false,json:async()=>({error:'service_unavailable'})};jobs=jobs.filter(j=>j.id!==b.id);return {ok:true,json:async()=>({discarded:true})};}return originalFetch(url,opt);};
  vm.runInContext(source+'\nthis.api=ReceiptJobs;',ctx);events.get('DOMContentLoaded')();
- return {node,requests,opened,confirmations,api:ctx.api,setJobs:v=>jobs=v,setUser:v=>user=v,setFolder:v=>folder=v,fail:()=>listFailure=true,failDiscard:()=>discardFailure=true};
+ return {node,requests,opened,confirmations,api:ctx.api,ctx,setJobs:v=>jobs=v,setUser:v=>user=v,setFolder:v=>folder=v,fail:()=>listFailure=true,failDiscard:()=>discardFailure=true};
 }
 const job=(status='ready',id='test')=>({id,label:'Extrato fictício',status,uploaded:1,total_pages:2,first:2,second:1,expires_at:'2026-11-14',retry_count:0});
 test('sino abre diálogo, conta pendências e mostra progresso, resultado e confirmação de inclusão',async()=>{
@@ -28,6 +28,15 @@ test('logout e troca de pasta limpam notificações e fecham o diálogo',async()
  const h=setup([job()]);await settle();await h.node('#hero-notifications').fire('click');await settle();
  h.setUser(null);await h.api.refresh();assert.equal(h.node('#receipt-jobs').open,false);assert.equal(h.node('#receipt-notification-count').classList.contains('hidden'),true);assert.doesNotMatch(h.node('[data-jobs-list]').innerHTML,/Extrato fictício/);
  h.setUser('other');h.setFolder('other-folder');h.setJobs([]);await h.api.refresh();assert.match(h.node('[data-jobs-list]').innerHTML,/Tudo em dia/);
+});
+test('documento confirmado em outro aparelho atualiza a pasta uma vez e pode ser aberto pelo sino',async()=>{
+ const h=setup([]);await settle();let pulls=0,shown=[];
+ h.ctx.Cloud.syncNow=async()=>{pulls++;return true;};h.ctx.Dashboard.showReceiptTransactions=id=>shown.push(id);
+ h.setJobs([job('committed','old')]);await h.api.refresh();await h.api.refresh();
+ assert.equal(pulls,1);assert.match(h.node('[data-jobs-list]').innerHTML,/Ver lançamentos/);
+ await h.node('#hero-notifications').fire('click');await settle();
+ await h.node('#receipt-jobs').fire('click',{target:{closest:()=>({dataset:{action:'view',job:'old'}})}});
+ assert.deepEqual(shown,['old']);assert.equal(h.node('#receipt-jobs').open,false);assert(!h.requests.some(r=>r.action==='commit'));
 });
 test('inclusão remove contagem pendente; falha de consulta mantém resultado anterior e erro legível',async()=>{
  const h=setup([job()]);await settle();h.fail();await h.api.refresh();assert.match(h.node('[data-jobs-list]').innerHTML,/Conferir e incluir/);assert.match(h.node('#receipt-jobs [data-jobs-error]').textContent,/Não foi possível conectar/);
