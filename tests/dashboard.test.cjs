@@ -607,7 +607,8 @@ test('fatura C6 fecha em outubro: soma linhas impressas pelo fechamento e manté
   assert.match(get('#hero-rec').textContent,/6\.145,28/);
   assert.match(get('#tx-tbody').innerHTML,/30\/10\/2026<br><span title="Data da compra">Cpr\. 30\/05\/2026<\/span>/);
   assert.match(get('#tx-tbody').innerHTML,/>Pg recebido</);
-  assert.match(get('#tx-tbody').innerHTML,/Movimento 30\/09\/2026/);
+  assert.match(get('#tx-tbody').innerHTML.match(/<tr data-id="september-pos"[\s\S]*?<\/tr>/)[0], /<td style="white-space:nowrap">30\/10\/2026<\/td>/);
+  assert.match(get('#tx-tbody').innerHTML.match(/<tr data-id="payment"[\s\S]*?<\/tr>/)[0], /<td style="white-space:nowrap">05\/10\/2026<\/td>/);
   assert.doesNotMatch(get('#tx-tbody').innerHTML.match(/<tr data-id="last-five"[\s\S]*?<\/tr>/)[0],/Vence em|Venc\. previsto|05\/11\/2026/);
   api.exportCSV();const csv=await csvBlob.text();
   assert.match(csv,/"2026-05-30";"2026-10"/);

@@ -1454,16 +1454,13 @@ const Dashboard = (() => {
 
   function transactionDateCell(t) {
     const date = accountingDate(t);
-    const lines = [fmtDate(date)];
-    if (t.purchaseDate) lines.push('<span title="Data da compra">Cpr. ' + fmtDate(t.purchaseDate) + '</span>');
-    if (date !== t.date) {
-      const fromStatement = t.billClosingDate && !(t.type === "despesa" && isValidISODate(t.paidOn)) && !t.advance && !isPendingBill(t);
-      if (!fromStatement) lines.push("<small>Venc. " + fmtDate(t.date) + "</small>");
-      else if (!t.purchaseDate) lines.push("<small>Movimento " + fmtDate(t.date) + "</small>");
+    const label = date === t.date && cleanDateEstimate(t).dateEstimated
+      ? '<span title="Data aproximada">' + fmtDate(date) + '</span>'
+      : fmtDate(date);
+    if (installmentTotal(t) > 1 && isValidISODate(t.purchaseDate)) {
+      return label + '<br><span title="Data da compra">Cpr. ' + fmtDate(t.purchaseDate) + '</span>';
     }
-    if (!t.installment && t.billDueDate) lines.push("<small>" + (t.type === "receita" ? "Fatura de " : t.billDateObserved ? "Vence em " : "Venc. previsto ") + fmtDate(t.billDueDate) + "</small>");
-    if (date === t.date && cleanDateEstimate(t).dateEstimated) lines.push('<span class="fixa-chip">Data aproximada</span>');
-    return lines.join("<br>");
+    return label;
   }
 
   function renderTable() {
