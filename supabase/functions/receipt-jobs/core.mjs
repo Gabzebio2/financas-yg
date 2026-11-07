@@ -26,7 +26,7 @@ export function cleanTransactions(txs){
    const date=t[key];
    if(typeof date==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(date)&&Number.isFinite(Date.parse(date))&&new Date(date).toISOString().slice(0,10)===date)out[key]=date;
   }
-  if(out.billDueDate)out.billDateObserved=t.billDateObserved===true;
+  if(out.billDueDate || out.billClosingDate)out.billDateObserved=t.billDateObserved===true;
   if(out.billDateObserved && Number.isInteger(t.cardBestPurchaseDay) && t.cardBestPurchaseDay>=1 && t.cardBestPurchaseDay<=31)out.cardBestPurchaseDay=t.cardBestPurchaseDay;
   if(t.creditKind==='card_payment' && t.type==='receita')out.creditKind=t.creditKind;
   if (t.seriesKey != null || t.purchaseDate != null) {

@@ -1,6 +1,6 @@
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict");
-const {plan}=require("../js/installment-schedule.js");
+const {plan,statementDate}=require("../js/installment-schedule.js");
 const line=(overrides={})=>({desc:"Farmácia",date:"2026-08-11",account:"C6",currency:"BRL",type:"despesa",amount:164.90,installment:"3/5",sourceDocumentId:"invoice",...overrides});
 const tx=(n,date,more={})=>({...line(),id:"slot-"+n,installment:n+"/5",date,...more});
 const missing=g=>g.installments.filter(p=>!p.matchedId&&!p.ambiguous).map(p=>p.number);
@@ -74,6 +74,18 @@ test("vencimentos impressos prevalecem sobre projeções, inclusive em fevereiro
   assert.deepEqual(g.installments.map(s=>s.billDueDate),['2026-10-31','2026-11-30','2026-12-31','2027-01-28','2027-02-28']);
   assert.deepEqual(g.installments.map(s=>s.billDateObserved),[false,false,true,true,false]);
   assert.equal(plan([line()],[])[0].installments[0].billDueDate,undefined);
+});
+
+test("fechamento define o mês da parcela impressa e dos meses vizinhos, mesmo sem vencimento",()=>{
+  const row=line({date:'2026-05-30',installment:'5/5',closingDate:'2026-10-29'});
+  const [g]=plan([row],[]);
+  assert.deepEqual(g.installments.map(s=>statementDate({...s,purchaseDate:row.date})),
+    ['2026-06-30','2026-07-30','2026-08-30','2026-09-30','2026-10-30']);
+  assert.equal(g.installments.at(-1).date,'2026-09-30');
+  assert.equal(g.installments.at(-1).billDateObserved,true);
+  assert.equal(g.installments.at(-1).billDueDate,undefined);
+  assert.equal(statementDate({date:'2024-01-31',billClosingDate:'2024-02-25'}),'2024-02-29');
+  assert.equal(statementDate({date:'2026-09-30',billDueDate:'2026-11-05'}),'2026-09-30');
 });
 
 test("pequeno deslocamento de data ocupa uma posição, sem consumir o registro de uma compra datada distintamente",()=>{

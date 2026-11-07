@@ -270,7 +270,7 @@ const Dashboard = (() => {
   // período e as categorias escolhidos no cabeçalho.
   function renderTableFilters() {
     $("#tx-receipt-filter")?.classList.toggle("hidden", !receiptFilter);
-    if (receiptFilter && $("#tx-receipt-label")) $("#tx-receipt-label").textContent = receiptFilter.printedOnly ? "Itens impressos na fatura · todos os meses" : "Lançamentos deste documento · todos os meses";
+    if (receiptFilter && $("#tx-receipt-label")) $("#tx-receipt-label").textContent = receiptFilter.printedOnly ? "Itens impressos na fatura" : "Lançamentos deste documento · todos os meses";
     const type = $("#tx-type-filter");
     if (type) type.value = fil.type;
     const account = $("#tx-account-filter");
@@ -295,8 +295,8 @@ const Dashboard = (() => {
       return '"' + s.replace(/"/g, '""') + '"';
     };
     const number = (v, currency) => Number(v).toFixed(curFrac(currency)).replace(".", ",");
-    const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição", "Pagamento", "Pago em", "Conta a pagar", "Data da compra"]];
-    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t), t.paymentStatus ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", t.paidOn || "", t.paymentStatus ? "Sim" : "Não", t.purchaseDate || ""]));
+    const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição", "Pagamento", "Pago em", "Conta a pagar", "Data da compra", "Mês da fatura"]];
+    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t), t.paymentStatus ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", t.paidOn || "", t.paymentStatus ? "Sim" : "Não", t.purchaseDate || "", t.billClosingDate?.slice(0,7) || ""]));
     const csv = "\uFEFF" + rows.map((row) => row.map(cell).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
@@ -1452,6 +1452,25 @@ const Dashboard = (() => {
     toast(action === "pay" ? "Conta paga. Despesa contabilizada." : "Conta em aberto. O valor só entra nas despesas após o pagamento.");
   }
 
+  function transactionDateCell(t) {
+    const date = accountingDate(t);
+    const statementMonth = t.billClosingDate?.slice(0, 7);
+    const ownPaymentDate = t.type === "despesa" && isValidISODate(t.paidOn);
+    let label = fmtDate(date);
+    const details = [];
+    const sourceDate = t.purchaseDate || t.date;
+    if (statementMonth && !ownPaymentDate && !t.advance && !isPendingBill(t) && sourceDate !== date) {
+      label = (t.billDateObserved ? "Fatura " : "Fatura prevista ") + fmtMonth(statementMonth);
+      details.push((t.purchaseDate ? "Compra " : "Movimento ") + fmtDate(sourceDate));
+    } else {
+      if (date !== t.date) details.push("Venc. " + fmtDate(t.date));
+      if (t.purchaseDate && t.purchaseDate !== t.date) details.push("Compra " + fmtDate(t.purchaseDate));
+    }
+    if (!t.installment && t.billDueDate) details.push((t.type === "receita" ? "Fatura de " : t.billDateObserved ? "Vence em " : "Venc. previsto ") + fmtDate(t.billDueDate));
+    const estimate = date === t.date && cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : "";
+    return label + estimate + details.map(text => '<br><small>' + text + '</small>').join("");
+  }
+
   function renderTable() {
     renderTableFilters();
     const list = sortTxs(tableTxs());
@@ -1484,7 +1503,7 @@ const Dashboard = (() => {
       return `
       <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${t.paymentStatus === "paid" ? " bill-settled" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
-        <td style="white-space:nowrap">${fmtDate(accountingDate(t))}${t.date !== accountingDate(t) ? '<br><small>Venc. ' + fmtDate(t.date) + '</small>' : cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}${t.purchaseDate && t.purchaseDate !== t.date ? '<br><small>Compra ' + fmtDate(t.purchaseDate) + '</small>' : ""}${t.billDueDate ? '<br><small>' + (t.type === 'receita' ? 'Fatura de ' : t.billDateObserved ? 'Vence em ' : 'Venc. previsto ') + fmtDate(t.billDueDate) + '</small>' : ""}</td>
+        <td style="white-space:nowrap">${transactionDateCell(t)}</td>
         <td><span class="tx-desc-cell">${catAvatar(t.category)}${paid
           ? `<span class="tx-paid-caption">${title}${billPayButton(t, billConfirmations.get(t.id)?.source === "transactions")}</span>`
           : title}</span></td>

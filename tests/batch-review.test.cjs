@@ -36,6 +36,7 @@ function setup(extra = {}) {
     stripAccents: (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(),
     escapeHtml: (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
     fmtMoney: (n, c) => `${c} ${n}`, fmtMoneyInput: (n) => String(n), fmtDate: (iso) => iso.split('-').reverse().join('/'),
+    fmtMonth: (iso) => iso.split('-').reverse().join('/'),
     isValidISODate: (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '') && Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0, 10) === s,
     daysInMonth: (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate(),
     dupTxKey: (...v) => v.join('|'),
@@ -374,8 +375,9 @@ test('revisão manual C6 preserva crédito da fatura, estorno e calendário das 
     {document_id:'pdf',label:'Fatura',context:{pageStart:1,pageEnd:1,totalPages:1},result}
   ]}});
   assert.match(env.node('#batch-review-summary').textContent,/fechamento em 29\/10\/2026 · vencimento em 05\/11\/2026 · melhor dia de compra 28/);
-  assert.match(env.node('#batch-tbody').innerHTML,/Vencimento previsto · 05\/07\/2026/);
-  assert.match(env.node('#batch-tbody').innerHTML,/Vencimento da fatura · 05\/11\/2026/);
+  assert.match(env.node('#batch-tbody').innerHTML,/Fatura prevista · 06\/2026/);
+  assert.match(env.node('#batch-tbody').innerHTML,/Fatura · 10\/2026/);
+  assert.doesNotMatch(env.node('#batch-tbody').innerHTML,/Vencimento|Vence em|05\/11\/2026/);
   assert.match(env.node('#batch-tbody').innerHTML,/Pagamento recebido pelo cartão/);
   env.batch.save();await new Promise(resolve=>setImmediate(resolve));
   const series=submitted.filter(t=>t.installment);

@@ -29,8 +29,28 @@ test('cada linha do cartão, inclusive pagamento recebido e parcela legada, tem 
  assert.equal(plan.transactions[0].creditKind,'card_payment');assert.equal(plan.transactions[0].cardBestPurchaseDay,28);
  assert.deepEqual(plan.sourceRefs.map(r=>r.id ?? r.index).sort(),[0,'legacy04','legacy15']);
  assert.equal(plan.matches.filter(x=>x.observed && x.billDueDate==='2026-11-05').length,2);
+ assert.deepEqual(plan.statements.map(s=>[s.accountingMonth,s.expenseCount,s.expenseCents,s.creditCount,s.creditCents,s.paymentCents,s.refundCents]),
+   [['2026-10',2,37330,1,614528,614528,0]]);
  p.result.itens.pop();
  assert(planDocumentImport({pages:[p],existing}).coverageError);
+});
+test('fechamento da capa cobre compras anteriores e estornos, e um lançamento em mês divergente impede a inclusão',async()=>{
+  const {planDocumentImport}=await planner();
+  const txs=[item({data:'2026-09-30',valor:45.19,sourceLines:[1]}),item({data:'2026-10-02',descricao:'Estorno',tipo:'receita',valor:8.76,sourceLines:[2]})];
+  const cover=page('doc',[],{statementCheck:{source:'c6_invoice',version:2,complete:true,rows:0,movements:[],entries:[],subtotals:[],payments:[],closingDate:'2026-10-29'}});
+  const p=page('doc',txs,{statementCheck:{source:'c6_invoice',version:2,complete:true,rows:2,
+    movements:[{line:1,type:'despesa',section:'card',cents:4519},{line:2,type:'receita',section:'card',cents:876}],
+    entries:[{line:1,cents:4519},{line:2,cents:-876}],payments:[],subtotals:[]}});
+  cover.context.totalPages=2;p.context={pageStart:2,totalPages:2};
+  const go=()=>planDocumentImport({pages:[cover,p],existing:[]});
+  const r=go();assert.equal(r.coverageError,'');assert.deepEqual(r.transactions.map(t=>t.date),['2026-09-30','2026-10-02']);
+  const {statementDate}=require('../js/installment-schedule.js');
+  assert.deepEqual(r.transactions.map(statementDate),['2026-10-30','2026-10-02']);
+  assert.equal(r.statements[0].refundCents,876);assert.equal(r.statements[0].expenseCents,4519);
+  const {cleanTransactions}=await import('../supabase/functions/receipt-jobs/core.mjs');
+  assert(cleanTransactions(r.transactions).every(t=>t.billDateObserved && t.billClosingDate==='2026-10-29'));
+  p.result.itens[0].closingDate='2026-11-27';assert.match(go().coverageError,/fechamento/);
+  delete p.result.itens[0].closingDate;delete cover.result.statementCheck.closingDate;assert.match(go().coverageError,/fechamento/);
 });
 test('programa parcelas impressas em C6 sem somar a mensalidade já estornada ou a quitação anterior',async()=>{
   const {planDocumentImport}=await planner();

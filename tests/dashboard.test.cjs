@@ -45,7 +45,7 @@ let csvBlob;
 let ratesAvailable = true;
 const ctx = vm.createContext({
   console, Blob, Event, URL: { createObjectURL(blob) { csvBlob = blob; return 'blob:test'; }, revokeObjectURL() {} },
-  window: win, localStorage: memoryStorage,
+  window: win, localStorage: memoryStorage, InstallmentSchedule: require('../js/installment-schedule.js'),
   document: {
     body: new Element(), createElement: () => new Element(),
     querySelector: get, querySelectorAll: selector => selectorGroups.get(selector) || [],
@@ -589,6 +589,31 @@ test('parcelas do C6 entram uma por mês e mostram a data original da compra',()
   api.setFilters({month:'2026-09'});
   assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['c6002']); api.renderAll();
   assert.match(get('#tx-tbody').innerHTML,/Compra 11\/08/);assert.notEqual(get('#hero-acc').textContent,august);
+});
+test('fatura C6 fecha em outubro: soma linhas impressas pelo fechamento e mantém origem e projeções',async()=>{
+  const ds=dataset();
+  const cycle={account:'C6',billClosingDate:'2026-10-29',billDueDate:'2026-11-05',billDateObserved:true};
+  ds.transactions=[
+    tx('last-five',{...cycle,date:'2026-09-30',purchaseDate:'2026-05-30',installment:'5/5',amount:340}),
+    tx('last-six',{...cycle,date:'2026-09-24',purchaseDate:'2026-05-24',installment:'6/6',amount:33.30}),
+    tx('september-pos',{...cycle,date:'2026-09-30',desc:'Compra de setembro',amount:50}),
+    tx('payment',{...cycle,creditKind:'card_payment',type:'receita',date:'2026-10-05',amount:6145.28}),
+    tx('projection',{...cycle,billClosingDate:'2026-11-29',billDueDate:'2026-12-05',billDateObserved:false,date:'2026-10-21',purchaseDate:'2026-08-21',installment:'3/4',amount:30}),
+    tx('other',{date:'2026-09-30',amount:100}),
+  ];
+  saveBase(ds);api.setFilters({month:'2026-10'});api.renderAll();
+  assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['last-five','last-six','september-pos','payment']);
+  assert.match(get('#hero-desp').textContent,/423,30/);
+  assert.match(get('#hero-rec').textContent,/6\.145,28/);
+  assert.match(get('#tx-tbody').innerHTML,/Compra 30\/05\/2026/);
+  assert.match(get('#tx-tbody').innerHTML,/Movimento 30\/09\/2026/);
+  assert.doesNotMatch(get('#tx-tbody').innerHTML.match(/<tr data-id="last-five"[\s\S]*?<\/tr>/)[0],/Vence em|Venc\. previsto|05\/11\/2026/);
+  api.exportCSV();const csv=await csvBlob.text();
+  assert.match(csv,/"2026-05-30";"2026-10"/);
+  api.setFilters({month:'2026-11'});api.renderAll();
+  assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['projection']);
+  assert.doesNotMatch(get('#tx-tbody').innerHTML,/Venc\. previsto|05\/12\/2026/);
+  api.setFilters({month:'2026-09'});assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['other']);
 });
 test('Ver lançamentos reúne só os registros do documento e volta ao filtro mensal',()=>{
   const ds=dataset();

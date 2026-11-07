@@ -18,10 +18,10 @@ begin
  end loop;
  j:=(select id from public.receipt_jobs where user_id=u and folder_id=f and id not in (j2,j3));
  observed:=original||'{"seriesKey":"c6:v1:[\"2026-05-30\",5,\"loja\",\"BRL\",\"despesa\",\"c6\",340,1]","purchaseDate":"2026-05-30","observed":true,"billDueDate":"2026-11-05","billClosingDate":"2026-10-29"}';
- avulso:='{"date":"2026-10-05","amount":6145.28,"account":"C6","type":"receita","currency":"BRL","desc":"Inclusão de pagamento","category":"Outros"}';
+ avulso:='{"date":"2026-10-05","amount":6145.28,"account":"C6","type":"receita","currency":"BRL","desc":"Inclusão de pagamento","category":"Outros","billClosingDate":"2026-10-29","billDateObserved":true}';
  row_a:='{"sourceLines":[9],"data":"2026-05-30","descricao":"Loja","valor":340,"instituicao":"C6","tipo":"despesa","moeda":"BRL","parcela":"5/5"}';
  row_b:='{"sourceLines":[10],"data":"2026-10-05","descricao":"Inclusão de pagamento","valor":6145.28,"instituicao":"C6","tipo":"receita","moeda":"BRL"}';
- update public.receipt_job_pages set result=jsonb_build_object('statementCheck',jsonb_build_object('source','c6_invoice'),'itens',jsonb_build_array(row_a,row_b)) where job_id in(j,j2);
+ update public.receipt_job_pages set result=jsonb_build_object('statementCheck',jsonb_build_object('source','c6_invoice','closingDate','2026-10-29','version',2),'itens',jsonb_build_array(row_a,row_b)) where job_id in(j,j2);
  notice:=jsonb_build_object('requireFullCoverage',true,'duplicates',1,'matches',jsonb_build_array(observed),'sourceRefs','[{"document":"d","page":1,"line":9,"id":"old-position"},{"document":"d","page":1,"line":10,"index":0}]'::jsonb);
  -- Omitting a real printed row or using its index for a different amount rolls back the whole operation.
  begin
@@ -29,11 +29,27 @@ begin
    raise exception 'TEST missing row accepted';
  exception when raise_exception then if sqlerrm<>'c6_coverage_mismatch' then raise; end if;end;
  begin
+   perform public.receipt_finish_auto_document(u,j,stamp,jsonb_build_array(avulso||'{"billClosingDate":"2026-09-29"}'),notice);
+   raise exception 'TEST movement assigned to September accepted';
+ exception when raise_exception then if sqlerrm<>'c6_coverage_mismatch' then raise; end if;end;
+ begin
+   perform public.receipt_finish_auto_document(u,j,stamp,jsonb_build_array(avulso),jsonb_set(notice,'{matches,0,billClosingDate}','"2026-09-29"'));
+   raise exception 'TEST legacy installment assigned to September accepted';
+ exception when raise_exception then if sqlerrm<>'c6_coverage_mismatch' then raise; end if;end;
+ begin
    perform public.receipt_finish_auto_document(u,j,stamp,jsonb_build_array(avulso||'{"amount":99}'),notice);
    raise exception 'TEST wrong value accepted';
  exception when raise_exception then if sqlerrm<>'c6_coverage_mismatch' then raise; end if;end;
  if (select data->'transactions' from public.pastas where user_id=u and id=f)<>jsonb_build_array(original) or
    (select status from public.receipt_jobs where id=j)<>'ready' then raise exception 'TEST partial update'; end if;
+ -- A pre-existing manual payment/advance cannot be silently counted in a
+ -- different month. All writes must roll back with the rest of the invoice.
+ update public.pastas set data=jsonb_set(data,'{transactions,0,paidOn}','"2026-09-30"') where user_id=u and id=f returning updated_at into stamp;
+ begin
+   perform public.receipt_finish_auto_document(u,j,stamp,jsonb_build_array(avulso),notice);
+   raise exception 'TEST manual payment in another period accepted';
+ exception when raise_exception then if sqlerrm<>'c6_coverage_mismatch' then raise; end if;end;
+ update public.pastas set data=data #- '{transactions,0,paidOn}' where user_id=u and id=f returning updated_at into stamp;
  perform public.receipt_finish_auto_document(u,j,stamp,jsonb_build_array(avulso),notice);
  select data,updated_at into updated,stamp from public.pastas where id=f and user_id=u;
  select document_notice into saved from public.receipt_jobs where id=j;

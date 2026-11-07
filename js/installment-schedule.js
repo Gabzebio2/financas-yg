@@ -20,21 +20,32 @@ const InstallmentSchedule = (() => {
     last.setUTCDate(Math.min(day,last.getUTCDate()));
     return last.toISOString().slice(0,10);
   }
-  // O dia lançado continua sendo a data da compra deslocada por posição.
-  // O vencimento é outro calendário: a posição impressa pertence à fatura
-  // de onde a linha veio, inclusive se a série antiga usa meses diferentes.
+  // A data nominal é usada para reconhecer uma compra quando ela reaparece.
+  // Nos filtros e totais vale o mês de fechamento, inclusive para compras
+  // avulsas, créditos e parcelas conciliadas com anotações antigas.
+  function statementDate(tx) {
+    if (!validDate(tx.billClosingDate)) return tx.date;
+    const source = validDate(tx.purchaseDate) ? tx.purchaseDate : tx.date;
+    if (!validDate(source)) return tx.date;
+    const [year, month] = tx.billClosingDate.split("-").map(Number);
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const day = Math.min(Number(source.slice(8)), lastDay);
+    return tx.billClosingDate.slice(0,8) + String(day).padStart(2,"0");
+  }
   function applyBillingCycle(group) {
-    const anchors = group.lines.filter(line => validDate(line.dueDate))
-      .map(line => ({number:parts(line).current,due:line.dueDate,
-        closing:validDate(line.closingDate) && line.closingDate <= line.dueDate ? line.closingDate : ""}));
+    const anchors = group.lines.map(line => {
+      const due = validDate(line.dueDate) ? line.dueDate : "";
+      const closing = validDate(line.closingDate) && (!due || line.closingDate<=due) ? line.closingDate : "";
+      return {number:parts(line).current,due,closing};
+    }).filter(anchor=>anchor.due || anchor.closing);
     if (!anchors.length) return;
     for (const slot of group.installments) {
       const anchor = anchors.reduce((best,a) => {
         const distance = Math.abs(slot.number-a.number), bestDistance = Math.abs(slot.number-best.number);
-        return distance<bestDistance || distance===bestDistance && a.due>best.due ? a : best;
+        return distance<bestDistance || distance===bestDistance && (a.closing || a.due)>(best.closing || best.due) ? a : best;
       });
       const offset = slot.number-anchor.number;
-      slot.billDueDate = shift(anchor.due,offset);
+      if (anchor.due) slot.billDueDate = shift(anchor.due,offset);
       if (anchor.closing) slot.billClosingDate = shift(anchor.closing,offset);
       slot.billDateObserved = offset===0;
     }
@@ -205,7 +216,7 @@ const InstallmentSchedule = (() => {
     result.forEach(applyBillingCycle);
     return result;
   }
-  return {plan};
+  return {plan,statementDate};
 })();
 if (typeof module !== "undefined" && module.exports) module.exports = InstallmentSchedule;
 else if (typeof Deno !== "undefined") globalThis.InstallmentSchedule = InstallmentSchedule;

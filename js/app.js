@@ -632,7 +632,9 @@ function isPendingBill(t) {
   return t.type === "despesa" && t.paymentStatus === "pending";
 }
 function accountingDate(t) {
-  return t.type === "despesa" && !isPendingBill(t) && isValidISODate(t.paidOn) ? t.paidOn : t.date;
+  if (isPendingBill(t) || t.advance) return t.date;
+  if (t.type === "despesa" && isValidISODate(t.paidOn)) return t.paidOn;
+  return t.billClosingDate ? InstallmentSchedule.statementDate(t) : t.date;
 }
 function cleanPurchaseSchedule(t) {
   if (!isValidISODate(t.purchaseDate) || !RE_PARC.test(t.installment || "")) return {};
@@ -641,8 +643,9 @@ function cleanPurchaseSchedule(t) {
 }
 function cleanCardCycle(t) {
   const fields = {};
-  if (isValidISODate(t.billDueDate)) {fields.billDueDate=t.billDueDate;fields.billDateObserved=t.billDateObserved===true;}
+  if (isValidISODate(t.billDueDate)) fields.billDueDate=t.billDueDate;
   if (isValidISODate(t.billClosingDate)) fields.billClosingDate=t.billClosingDate;
+  if (fields.billClosingDate || fields.billDueDate) fields.billDateObserved=t.billDateObserved===true;
   if (fields.billDateObserved && Number.isInteger(t.cardBestPurchaseDay) && t.cardBestPurchaseDay>=1 && t.cardBestPurchaseDay<=31) fields.cardBestPurchaseDay=t.cardBestPurchaseDay;
   if (t.creditKind==="card_payment" && t.type==="receita") fields.creditKind=t.creditKind;
   return fields;

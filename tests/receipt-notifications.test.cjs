@@ -65,3 +65,22 @@ test('inclusão automática avisa no sino, mostra moeda original e marca como vi
  await h.node('#hero-notifications').fire('click');await settle();
  assert.equal(h.node('#receipt-notification-count').classList.contains('hidden'),true);
 });
+
+test('sino da fatura soma somente os valores impressos e diferencia pagamentos de outros créditos',async()=>{
+ const statement={rows:4,accountingMonth:'2026-10',expenseCents:7000,paymentCents:9000,refundCents:2000,creditCents:11300};
+ const notice={included:12,statements:[statement]};
+ const h=setup([{...job('committed'),document_notice:notice}]);await settle();
+ const html=h.node('[data-jobs-list]').innerHTML;
+ assert.match(html,/4 movimentos em outubro de 2026/);
+ assert.match(html,/Despesas da fatura<\/dt><dd>70 BRL/);
+ assert.match(html,/Pagamento recebido<\/dt><dd>90 BRL/);
+ assert.match(html,/Créditos do cartão<\/dt><dd>20 BRL/);
+ assert.match(html,/Despesas após créditos do cartão<\/dt><dd>50 BRL/);
+ assert.match(html,/Outros recebimentos<\/dt><dd>3 BRL/);
+});
+
+test('importação desfeita admite reenvio e não abre parcelas antigas que haviam sido conciliadas',async()=>{
+ const h=setup([{...job('committed'),document_notice:{undoneAt:'2026-11-07',included:3,matchedIds:['older'],printedIds:['older']}}]);
+ await settle();const html=h.node('[data-jobs-list]').innerHTML;
+ assert.match(html,/Importação desfeita/);assert.doesNotMatch(html,/Ver itens da fatura|Ver lançamentos/);
+});

@@ -357,7 +357,7 @@ const Batch = (() => {
     $("#batch-tbody").innerHTML = rows.map((r, i) => (r.gen && !includeGenerated) || (viewFilter === "pending" && !pendingRow(r)) ? "" : `
       <tr data-i="${i}" class="${r.on ? "" : "batch-off"}${r.dup ? " batch-dup" : ""}${r.gen ? " batch-generated" : ""}">
         <td><input type="checkbox" class="batch-check" data-i="${i}" aria-label="Selecionar ${escapeHtml(r.desc || "item")}${r.gen ? " (projeção)" : ""}" ${r.c6Matched ? "disabled" : ""} ${r.on ? "checked" : ""}>${r.dup ? '<span class="dup-flag" title="Coincidência para revisão; isso não comprova duplicação">⚠</span>' : ""}</td>
-        <td><input type="date" data-f="date" data-i="${i}" aria-label="Data de ${escapeHtml(r.desc || "item")}" value="${escapeHtml(r.date)}" ${r.c6SeriesKey && !r.installment.startsWith("1/") ? 'readonly title="Data calculada a partir da primeira parcela"' : ""}>${r.c6SeriesKey && r.billDueDate ? `<small class="hint">Vencimento ${r.billDateObserved ? "da fatura" : "previsto"} · ${escapeHtml(fmtDate(r.billDueDate))}</small>` : ""}</td>
+        <td><input type="date" data-f="date" data-i="${i}" aria-label="Data de ${escapeHtml(r.desc || "item")}" value="${escapeHtml(r.date)}" ${r.c6SeriesKey && !r.installment.startsWith("1/") ? 'readonly title="Data calculada a partir da primeira parcela"' : ""}>${r.billClosingDate ? `<small class="hint">${r.billDateObserved ? "Fatura" : "Fatura prevista"} · ${fmtMonth(r.billClosingDate.slice(0,7))}</small>` : ""}</td>
         <td><div class="batch-desc-cell"><input type="text" data-f="desc" data-i="${i}" value="${escapeHtml(r.desc)}">${
           r.installment
             ? `<span class="parc-tag" title="${r.gen || (r.c6SeriesKey && !r.c6Printed) ? "Parcela calculada" : "Parcela vista na fatura"}">${r.gen ? "Projeção · " : r.c6SeriesKey && !r.c6Printed ? "Calculada · " : ""}${escapeHtml(r.installment)}</span>`
@@ -506,8 +506,9 @@ const Batch = (() => {
       const it = itens[r.sourceIndex], statement = metadata.statementCheck;
       const due = it.dueDate || statement.dueDate, closing = it.closingDate || statement.closingDate;
       const day = it.bestPurchaseDay || statement.bestPurchaseDay;
-      if (isValidISODate(due)) Object.assign(row,{dueDate:due,billDueDate:due,billDateObserved:true});
+      if (isValidISODate(due)) Object.assign(row,{dueDate:due,billDueDate:due});
       if (isValidISODate(closing)) Object.assign(row,{closingDate:closing,billClosingDate:closing});
+      if (row.billClosingDate || row.billDueDate) row.billDateObserved=true;
       row.c6Cycle = {dueDate:row.dueDate, closingDate:row.closingDate, bestPurchaseDay:Number.isInteger(day) && day>=1 && day<=31 ? day : null};
       if (it.creditKind === "card_payment") row.creditKind = it.creditKind;
       if (r.installment && it.reversedFee !== true) Object.assign(row,{c6Original:true,receiptMonth:it.billingMonth || statement.billingMonth || ""});
@@ -1011,8 +1012,9 @@ const Batch = (() => {
         category: t.cat || $("#batch-cat").value, currency: t.currency, account: t.account,
         groupId: t.serie || t.groupId || null, installment: t.installment || null,
         totalValue: t.totalValue, fixed: t.fixed === true,
-        ...(t.billDueDate ? {billDueDate:t.billDueDate,billDateObserved:t.billDateObserved===true} : {}),
+        ...(t.billDueDate ? {billDueDate:t.billDueDate} : {}),
         ...(t.billClosingDate ? {billClosingDate:t.billClosingDate} : {}),
+        ...(t.billClosingDate || t.billDueDate ? {billDateObserved:t.billDateObserved===true} : {}),
         ...(t.billDateObserved && t.c6Cycle?.bestPurchaseDay ? {cardBestPurchaseDay:t.c6Cycle.bestPurchaseDay} : {}),
         ...(t.creditKind === "card_payment" && t.type === "receita" ? {creditKind:t.creditKind} : {}),
         ...(t.cashback ? {cashback:t.cashback} : {}),

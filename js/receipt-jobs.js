@@ -25,7 +25,20 @@ const ReceiptJobs=(()=>{
   const counts=[n.duplicates && `${n.duplicates} já na pasta`,n.skipped && `${n.skipped} sem correspondência segura`,n.excluded && `${n.excluded} fora dos lançamentos`].filter(Boolean);
   const cycles=(n.statements || []).map(s=>{
    const fields=[['Fechamento',s.closingDate&&fmtDate(s.closingDate)],['Vencimento',s.dueDate&&fmtDate(s.dueDate)],['Melhor dia para comprar',s.bestPurchaseDay && 'Dia '+s.bestPurchaseDay]].filter(([,v])=>v);
-   return `<div class="receipt-cycle"><strong>${escapeHtml((n.statements.length>1?s.label+' · ':'')+s.rows+' movimentos na fatura')}</strong><dl>${fields.map(([name,value])=>`<div><dt>${escapeHtml(name)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl></div>`;
+   let heading=s.rows+' movimentos na fatura';
+   if(/^\d{4}-(0[1-9]|1[0-2])$/.test(s.accountingMonth) && Number.isSafeInteger(s.expenseCents)){
+    const month=new Date(s.accountingMonth+'-01T12:00:00Z').toLocaleDateString('pt-BR',{month:'long',year:'numeric',timeZone:'UTC'});
+    heading=s.rows+' movimentos em '+month;
+    const totals=[['Despesas da fatura',s.expenseCents]];
+    if(s.refundCents>0){
+     totals.push(['Créditos do cartão',s.refundCents],['Despesas após créditos do cartão',s.expenseCents-s.refundCents]);
+    }
+    if(s.paymentCents>0)totals.push(['Pagamento recebido',s.paymentCents]);
+    const otherCredits=s.creditCents-s.refundCents-s.paymentCents;
+    if(otherCredits>0)totals.push(['Outros recebimentos',otherCredits]);
+    fields.unshift(...totals.map(([name,cents])=>[name,fmtMoney(cents/100,'BRL')]));
+   }
+   return `<div class="receipt-cycle"><strong>${escapeHtml((n.statements.length>1?s.label+' · ':'')+heading)}</strong><dl>${fields.map(([name,value])=>`<div><dt>${escapeHtml(name)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl></div>`;
   }).join('');
   const blocked=Array.isArray(n.blockedDocuments)?n.blockedDocuments.map(d=>`<li>${escapeHtml(d.label || 'Documento')} · ${escapeHtml(d.reason || 'Leitura incompleta')}</li>`).join(''):'';
   return cycles+(counts.length?`<small>${escapeHtml(counts.join(' · '))}</small>`:'')+(blocked?`<details><summary>Arquivos que ficaram de fora</summary><ul>${blocked}</ul></details>`:'');
@@ -95,16 +108,16 @@ const ReceiptJobs=(()=>{
   const list=panel.querySelector('[data-jobs-list]');
   panel.querySelector('[data-jobs-error]').textContent='';
   const currentJobIds=Dashboard.receiptJobIds?.();
-  const removed=new Set(jobs.filter(j=>currentJobIds && j.status==='committed' && !j.photo_notice && !j.document_notice?.matchedIds?.length && (!j.document_notice||j.document_notice.included>0) && syncedJobs.has(j.id+':committed') && !currentJobIds.has(j.id)).map(j=>j.id));
+  const removed=new Set(jobs.filter(j=>j.document_notice?.undoneAt || (currentJobIds && j.status==='committed' && !j.photo_notice && !j.document_notice?.matchedIds?.length && (!j.document_notice||j.document_notice.included>0) && syncedJobs.has(j.id+':committed') && !currentJobIds.has(j.id))).map(j=>j.id));
   const fingerprint=JSON.stringify([owner(),folder(),jobs,[...removed]]);if(fingerprint===rendered)return;rendered=fingerprint;
   list.innerHTML=jobs.map(j=>{
    const status=removed.has(j.id)?'Lançamentos removidos da pasta':j.photo_notice ? (j.photo_notice.items?.length ? (j.photo_notice.items.length===1?'1 lançamento incluído automaticamente':j.photo_notice.items.length+' lançamentos incluídos automaticamente') : j.status==='ready'?'Foto precisa de ajuste':j.photo_corrected_count?'Ajustes incluídos na pasta':'Nenhum lançamento novo') : j.status==='ready'?'Pronto para conferir e incluir':j.status==='committed'?'Incluído na pasta':j.status==='uploading'?`Envio incompleto · ${j.uploaded}/${j.total_pages} páginas`:j.status==='error'?'Leitura interrompida — o progresso foi preservado':`Leitura ${j.first}/${j.total_pages} · conferência ${j.second}/${j.total_pages}`;
    const summary=j.document_notice?.coverageIssue?'Conciliação incompleta':removed.has(j.id)?status:j.document_notice ? (j.document_notice.included===1?'1 lançamento incluído automaticamente':j.document_notice.included>0?`${j.document_notice.included} lançamentos incluídos automaticamente`:j.document_notice.printedIds?.length?'Os movimentos da fatura já estão na pasta':'Nenhum lançamento novo') : j.document_auto && j.status==='ready'?'Incluindo na pasta…':status;
    const buttons=j.status==='ready'&&!j.document_auto?`<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="open">${j.photo_notice?'Ver pendência':'Conferir e incluir'}</button>`:j.status==='error'&&j.retry_count<3?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="retry">Retomar leitura</button>`:'';
-   const printed=j.document_notice?.printedIds?.length ? `<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="printed">Ver itens da fatura</button>`:'';
+   const printed=!removed.has(j.id) && j.document_notice?.printedIds?.length ? `<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="printed">Ver itens da fatura</button>`:'';
    const view=!removed.has(j.id) && (j.document_notice ? j.document_notice.included>0 || j.document_notice.matchedIds?.length : j.photo_notice ? j.photo_notice.items?.length || j.photo_corrected_count : j.status==='committed') ? `<button class="btn ${printed?'btn-ghost':'btn-primary'} btn-sm" data-job="${j.id}" data-action="view">Ver lançamentos</button>`:'';
    const discard=['uploading','ready','error','committed'].includes(j.status)?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="discard">Excluir documento</button>`:'';
-   return `<article class="receipt-job"><div><strong>${escapeHtml(j.label||'Documento')}</strong><p class="${j.status==='ready'?'receipt-ready':''}">${escapeHtml(summary)}</p>${photoDetails(j)}${documentDetails(j.document_notice)}<small>${j.status==='error'&&j.error==='saldo_ia'?'Recarregue os créditos da API e retome a leitura. ':''}Documento disponível até ${escapeHtml(new Date(j.expires_at).toLocaleDateString('pt-BR'))}.</small></div><div class="receipt-job-actions">${buttons}${printed}${view}${discard}</div></article>`;
+   return `<article class="receipt-job"><div><strong>${escapeHtml(j.label||'Documento')}</strong><p class="${j.status==='ready'?'receipt-ready':''}">${escapeHtml(j.document_notice?.undoneAt?'Importação desfeita. Você pode enviar o documento novamente.':summary)}</p>${photoDetails(j)}${removed.has(j.id)?'':documentDetails(j.document_notice)}<small>${j.status==='error'&&j.error==='saldo_ia'?'Recarregue os créditos da API e retome a leitura. ':''}Documento disponível até ${escapeHtml(new Date(j.expires_at).toLocaleDateString('pt-BR'))}.</small></div><div class="receipt-job-actions">${buttons}${printed}${view}${discard}</div></article>`;
   }).join('')||`<div class="receipt-notifications-empty"><strong>${!owner()?'Entre na sua conta':!folder()?'Abra uma pasta':'Tudo em dia'}</strong>${!owner()?'Conecte sua conta para acompanhar seus documentos privados.':!folder()?'As notificações dos documentos aparecem na pasta em que você os enviou.':'Quando você enviar um comprovante, o andamento e o resultado aparecerão aqui.'}</div>`;
  }
  function closeNotifications(){const panel=document.querySelector('#receipt-jobs');if(panel?.open)panel.close();}

@@ -45,7 +45,7 @@ function issueForDocument(pages) {
   return null;
 }
 
-function observedRow(item, page, index, categories, defaultCategory) {
+function observedRow(item, page, index, categories, defaultCategory, statement) {
   const pageNo = page.context.pageStart;
   const account = text(item.instituicao) || text(page.result.cartao);
   const issues = Array.isArray(item.revisar) ? item.revisar : [];
@@ -70,8 +70,9 @@ function observedRow(item, page, index, categories, defaultCategory) {
       ? {cashback:{amount:item.cashback.valor,currency:item.cashback.moeda}} : {}),
     sourceDocumentId:page.document_id, receiptMonth:item.billingMonth || '', order:pageNo*1000+index, grupoSemData:item.grupoSemData===true,
     c6, physicalLine:(item.sourceLines || item.linhas || [])[0],
-    dueDate:item.dueDate || page.result.statementCheck?.dueDate, closingDate:item.closingDate || page.result.statementCheck?.closingDate,
-    bestPurchaseDay:item.bestPurchaseDay || page.result.statementCheck?.bestPurchaseDay,
+    dueDate:item.dueDate || page.result.statementCheck?.dueDate || statement?.dueDate,
+    closingDate:item.closingDate || page.result.statementCheck?.closingDate || statement?.closingDate,
+    bestPurchaseDay:item.bestPurchaseDay || page.result.statementCheck?.bestPurchaseDay || statement?.bestPurchaseDay,
     creditKind:item.creditKind==='card_payment'?'card_payment':null,
     c6Purchase:c6 && hasPart && item.reversedFee!==true,
     invalid:!!(item.invalid || badPart || !verifiedLine || c6 && !account), issues,
@@ -94,7 +95,7 @@ function transaction(row) {
   if (row.dateEstimated) Object.assign(tx,{dateEstimated:true,dateEstimate:row.dateEstimate});
   if (row.creditKind) tx.creditKind=row.creditKind;
   if (row.c6 && validDate(row.dueDate)) Object.assign(tx,{billDueDate:row.dueDate,billDateObserved:true});
-  if (row.c6 && validDate(row.closingDate)) tx.billClosingDate=row.closingDate;
+  if (row.c6 && validDate(row.closingDate)) Object.assign(tx,{billClosingDate:row.closingDate,billDateObserved:true});
   if (row.c6 && Number.isInteger(row.bestPurchaseDay) && row.bestPurchaseDay>=1 && row.bestPurchaseDay<=31) tx.cardBestPurchaseDay=row.bestPurchaseDay;
   return tx;
 }
@@ -118,6 +119,8 @@ function findMatch(tx, options, used) {
     if (used.has(candidate)) continue;
     const otherAccount = accountKey(candidate.account), ref = fold(candidate.referenceId);
     if (account && otherAccount && account!==otherAccount || reference && ref && reference!==ref) continue;
+    if (tx.billDateObserved && candidate.billDateObserved && candidate.billClosingDate && tx.billClosingDate &&
+        candidate.billClosingDate.slice(0,7)!==tx.billClosingDate.slice(0,7)) continue;
     const sameDate = tx.date===candidate.date;
     const delta = Math.abs(Date.parse(tx.date)-Date.parse(candidate.advance?.scheduledDate || candidate.date));
     if (!sameDate && !(tx.installment && account && account===otherAccount && delta<=35*86400000)) continue;
@@ -125,6 +128,31 @@ function findMatch(tx, options, used) {
     if (score>bestScore) {best=candidate;bestScore=score;}
   }
   return best;
+}
+
+// Count exactly the lines printed, including payments and reversals, in cents.
+// Scheduled positions for other months never contribute to an invoice total.
+function summarizeStatement(checks,document,label) {
+  const get=field=>checks.find(check=>check[field]!=null)?.[field]??null;
+  const closingDate=get('closingDate');
+  const result={document,label,closingDate,dueDate:get('dueDate'),bestPurchaseDay:get('bestPurchaseDay'),
+    rows:checks.reduce((n,c)=>n+(c.rows || 0),0),version:checks.every(c=>c.version===2)?2:1};
+  if (result.version!==2 || !validDate(closingDate) || checks.some(c=>c.closingDate && c.closingDate!==closingDate)) return result;
+  const totals={accountingMonth:closingDate.slice(0,7),expenseCount:0,expenseCents:0,creditCount:0,creditCents:0,refundCents:0,paymentCents:0};
+  for (const check of checks) {
+    if (!Array.isArray(check.movements)) return result;
+    for (const m of check.movements) {
+      if (!m || !Number.isSafeInteger(m.cents) || m.cents<=0) return result;
+      if (m.type==='despesa') {totals.expenseCents+=m.cents;totals.expenseCount++;}
+      else if (m.type==='receita') {
+        totals.creditCents+=m.cents;totals.creditCount++;
+        if (m.section==='card_payment') totals.paymentCents+=m.cents;
+        else if (m.section==='card') totals.refundCents+=m.cents;
+      } else return result;
+    }
+  }
+  if (Number.isSafeInteger(totals.expenseCents) && Number.isSafeInteger(totals.creditCents)) Object.assign(result,totals);
+  return result;
 }
 
 export function planDocumentImport({pages,existing,categories=[],defaultCategory='',extraRows=[]}) {
@@ -155,15 +183,11 @@ export function planDocumentImport({pages,existing,categories=[],defaultCategory
     parts.sort((a,b)=>(a.context?.pageStart || 0)-(b.context?.pageStart || 0));
     const label=text(parts[0].label).split(' · página')[0].slice(0,160) || 'Documento';
     const checks=parts.map(p=>p.result?.statementCheck).filter(c=>c?.source==='c6_invoice');
-    if (checks.length) {
-      const get=field=>checks.find(c=>c[field]!=null)?.[field]??null;
-      report.statements.push({document:parts[0].document_id,label,closingDate:get('closingDate'),dueDate:get('dueDate'),
-        bestPurchaseDay:get('bestPurchaseDay'),rows:checks.reduce((n,c)=>n+(c.rows || 0),0),
-        version:checks.every(c=>c.version===2)?2:1});
-    }
+    const statement=checks.length ? summarizeStatement(checks,parts[0].document_id,label) : null;
+    if (statement) report.statements.push(statement);
     const issue = issueForDocument(parts);
     if (issue) {report.blockedDocuments.push({label,reason:issue});continue;}
-    const rows = dates.estimate(parts.flatMap(p=>p.result.itens.map((item,i)=>observedRow(item,p,i,categories,defaultCategory))));
+    const rows = dates.estimate(parts.flatMap(p=>p.result.itens.map((item,i)=>observedRow(item,p,i,categories,defaultCategory,statement))));
     const positions = rows.reduce((n,r)=>n+(r.c6Purchase ? Number(r.installment.split('/')[1]) : 1),0);
     if (positions>maxTransactions-upperBound) {
       report.blockedDocuments.push({label,reason:'O lote ultrapassa o limite de lançamentos por inclusão.'});continue;
@@ -196,7 +220,7 @@ export function planDocumentImport({pages,existing,categories=[],defaultCategory
         groupId:group.groupId,seriesKey:group.seriesKey});
       delete tx.billClosingDate;delete tx.billDueDate;delete tx.billDateObserved;
       if (validDate(slot.billDueDate)) Object.assign(tx,{billDueDate:slot.billDueDate,billDateObserved:slot.billDateObserved===true});
-      if (validDate(slot.billClosingDate)) tx.billClosingDate=slot.billClosingDate;
+      if (validDate(slot.billClosingDate)) Object.assign(tx,{billClosingDate:slot.billClosingDate,billDateObserved:slot.billDateObserved===true});
       if(slot.matchedId){
         report.duplicates++;matchTx(slot.matchedId,tx,!!printed.length);
         printed.forEach(r=>link(r,{id:slot.matchedId}));continue;
@@ -215,6 +239,14 @@ export function planDocumentImport({pages,existing,categories=[],defaultCategory
         new Set(refs.map(r=>r.page+'|'+r.line)).size!==refs.length ||
         report.blockedDocuments.some(d=>d.label===statement.label)) {
       report.coverageError='A leitura ainda não vinculou cada movimento da fatura a um lançamento. A fatura precisa ser relida.';
+      break;
+    }
+    if (!statement.accountingMonth || refs.some(ref=>{
+      const target=ref.id ? matchById.get(ref.id) : report.transactions[ref.index];
+      return !target || (!target.observed && !target.billDateObserved) || target.billClosingDate!==statement.closingDate ||
+        schedule.statementDate(target).slice(0,7)!==statement.accountingMonth;
+    })) {
+      report.coverageError='O mês de fechamento não confere em todos os movimentos impressos da fatura.';
       break;
     }
   }
