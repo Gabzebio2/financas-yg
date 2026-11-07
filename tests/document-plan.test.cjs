@@ -14,6 +14,24 @@ function c6(id,itens) {
 function saved(overrides={}) {
   return {id:'existing',date:'2026-08-11',desc:'Compra',amount:164.9,type:'despesa',currency:'BRL',account:'C6',...overrides};
 }
+test('cada linha do cartão, inclusive pagamento recebido e parcela legada, tem um destino verificável',async()=>{
+ const {planDocumentImport}=await planner();
+ const txs=[item({data:'2026-05-30',descricao:'Loja A',valor:340,parcela:'5/5',sourceLines:[4]}),
+   item({data:'2026-05-24',descricao:'Loja B',valor:33.30,parcela:'6/6',sourceLines:[5]}),
+   item({data:'2026-10-05',descricao:'Inclusao de Pagamento',valor:6145.28,tipo:'receita',sourceLines:[6],creditKind:'card_payment'})];
+ const movements=txs.map(t=>({line:t.sourceLines[0],cents:Math.round(t.valor*100),type:t.tipo,section:t.creditKind?'card_payment':'card'}));
+ const p=page('doc',txs,{statementCheck:{source:'c6_invoice',version:2,complete:true,rows:3,movements,entries:movements.slice(0,2),
+   payments:[movements[2]],subtotals:[],dueDate:'2026-11-05',closingDate:'2026-10-29',bestPurchaseDay:28}});
+ const existing=txs.slice(0,2).flatMap((t,i)=>Array.from({length:i+5},(_,j)=>saved({desc:t.descricao,amount:t.valor,id:'legacy'+i+j,
+   groupId:'group'+i,date:'2026-'+String((i?4:5)+j).padStart(2,'0')+'-'+(i?'24':'30'),installment:(j+1)+'/'+(i+5)})));
+ const plan=planDocumentImport({pages:[p],existing});
+ assert.equal(plan.coverageError,'');assert.equal(plan.skipped,0);assert.equal(plan.transactions.length,1);
+ assert.equal(plan.transactions[0].creditKind,'card_payment');assert.equal(plan.transactions[0].cardBestPurchaseDay,28);
+ assert.deepEqual(plan.sourceRefs.map(r=>r.id ?? r.index).sort(),[0,'legacy04','legacy15']);
+ assert.equal(plan.matches.filter(x=>x.observed && x.billDueDate==='2026-11-05').length,2);
+ p.result.itens.pop();
+ assert(planDocumentImport({pages:[p],existing}).coverageError);
+});
 test('programa parcelas impressas em C6 sem somar a mensalidade já estornada ou a quitação anterior',async()=>{
   const {planDocumentImport}=await planner();
   const p=c6('fatura',[item({descricao:'Loja - Parcela 3/5',parcela:'3/5',billingMonth:'2026-11'}),

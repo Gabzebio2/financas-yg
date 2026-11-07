@@ -29,6 +29,26 @@ test('reconciliação atravessa páginas e separa cada cartão e cada PDF pela o
   assert.match(checkC6Subtotals(offsettingErrors),/subtotal.+página 1/);
 });
 
+test('prova de linhas exige a entrada de pagamento e a transferência mesmo quando o subtotal de compras confere',async()=>{
+  const {checkC6Subtotals}=await verifier();
+  const make=()=>{
+    const page=part('fatura',1,1,[[1,800]],[[2,1000],[3,-200]]);
+    const values=[[10,'despesa','card'],[2,'receita','card'],[6145.28,'receita','card_payment'],[40,'receita','transfer']];
+    Object.assign(page.result.statementCheck,{version:2,rows:4,payments:[{line:4,cents:614528}],
+      movements:values.map(([n,type,section],index)=>({line:index+2,cents:Math.round(n*100),type,section}))});
+    page.result.itens=values.map(([valor,tipo,section],index)=>({sourceLines:[index+2],moeda:'BRL',valor,tipo,...(section==='card_payment'?{creditKind:'card_payment'}:{})}));
+    return [page];
+  };
+  assert.equal(checkC6Subtotals(make()),null);
+  for(const change of [
+    r=>r.itens.splice(2,1), r=>r.itens.splice(3,1), r=>{r.itens[2].tipo='despesa';},
+    r=>{r.itens[2].valor=614.52;}, r=>{r.itens[2].sourceLines=[2];},r=>{delete r.itens[2].creditKind;},
+    r=>{r.statementCheck.payments=[];},r=>{delete r.statementCheck.version;},r=>{r.statementCheck.entries.push({line:4,cents:-614528});},
+  ]) {
+    const bad=make();change(bad[0].result);assert.match(checkC6Subtotals(bad),/incompleta/);
+  }
+});
+
 test('subtotal ausente e transferências sem lançamentos de cartão não geram falhas espúrias',async()=>{
   const {checkC6Subtotals}=await verifier();
   assert.equal(checkC6Subtotals([part('transfer',1,1),part('without',1,1,[],[[2,100]])]),null);

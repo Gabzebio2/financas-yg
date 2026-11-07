@@ -639,6 +639,14 @@ function cleanPurchaseSchedule(t) {
   const key = t.seriesKey;
   return {purchaseDate:t.purchaseDate, ...(typeof key === "string" && key.startsWith("c6:v1:") && key.length <= 2000 ? {seriesKey:key} : {})};
 }
+function cleanCardCycle(t) {
+  const fields = {};
+  if (isValidISODate(t.billDueDate)) {fields.billDueDate=t.billDueDate;fields.billDateObserved=t.billDateObserved===true;}
+  if (isValidISODate(t.billClosingDate)) fields.billClosingDate=t.billClosingDate;
+  if (fields.billDateObserved && Number.isInteger(t.cardBestPurchaseDay) && t.cardBestPurchaseDay>=1 && t.cardBestPurchaseDay<=31) fields.cardBestPurchaseDay=t.cardBestPurchaseDay;
+  if (t.creditKind==="card_payment" && t.type==="receita") fields.creditKind=t.creditKind;
+  return fields;
+}
 function cleanBillFields(t) {
   const result = {};
   if (t.type !== "despesa") return result;
@@ -694,7 +702,7 @@ function normalizeStoredDataset(raw) {
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: raw.transactions.map((t) => {
-      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, purchaseDate, seriesKey, ...fields } = t;
+      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, purchaseDate, seriesKey, billDueDate, billDateObserved, billClosingDate, cardBestPurchaseDay, creditKind, ...fields } = t;
       return {
         ...fields,
         id: typeof t.id === "string" && t.id ? t.id : uid(),
@@ -705,7 +713,7 @@ function normalizeStoredDataset(raw) {
         account: String(t.account || ""),
         currency: normCur(t.currency),
         type: t.type === "receita" ? "receita" : "despesa",
-        ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t), ...cleanPurchaseSchedule(t),
+        ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t), ...cleanPurchaseSchedule(t), ...cleanCardCycle(t),
       };
     }),
     limits: Array.isArray(raw.limits) ? raw.limits : [],
@@ -810,7 +818,7 @@ function sanitizeDataset(raw, opts) {
       groupId: mapGroup(t.groupId),
       fixed: t.fixed === true,
       date,
-      ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t), ...cleanPurchaseSchedule(t),
+      ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t), ...cleanPurchaseSchedule(t), ...cleanCardCycle(t),
       desc: text(t.desc, 120).trim() || "(sem descrição)",
       category: text(t.category, 40).trim() || "Outros",
       account: text(t.account, 40).trim(),

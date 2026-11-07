@@ -197,7 +197,8 @@ const Batch = (() => {
     const t = original ? r : effectiveRow(r);
     return JSON.stringify([t.date, t.purchaseDate || "", t.desc, t.amount, t.type, t.currency, t.account,
       t.cat || $("#batch-cat").value, t.installment || null, t.fixed === true,
-      t.totalValue, t.referenceId || "", t.sourceEvidence || "", t.sourcePage || null, t.cashback || null]);
+      t.totalValue, t.referenceId || "", t.sourceEvidence || "", t.sourcePage || null, t.cashback || null,
+      t.billDueDate || "", t.billClosingDate || "", t.billDateObserved ?? null, t.creditKind || ""]);
   }
   function autoVerified(r) { return !r.gen && !r.dateEstimated && !!r.verifiedSnapshot && r.verifiedSnapshot === reviewSnapshot(r); }
   function needsReview(r) { return !!r.reviewRequired && !autoVerified(r); }
@@ -279,6 +280,17 @@ const Batch = (() => {
     $("#batch-generated-wrap").classList.toggle("hidden", generated === 0);
     $("#batch-include-generated").checked = includeGenerated;
     const messages = [...new Set(reviewWarnings)];
+    const invoices = new Map();
+    for (const r of rows) {
+      if (r.c6Cycle) invoices.set(r.sourceDocumentId || r.src, r.c6Cycle);
+    }
+    for (const cycle of invoices.values()) {
+      const details = [];
+      if (cycle.closingDate) details.push("fechamento em " + fmtDate(cycle.closingDate));
+      if (cycle.dueDate) details.push("vencimento em " + fmtDate(cycle.dueDate));
+      if (cycle.bestPurchaseDay) details.push("melhor dia de compra " + cycle.bestPurchaseDay);
+      if (details.length) messages.push("Fatura C6 · " + details.join(" · ") + ".");
+    }
     if (excludedCount) messages.push(`${excludedCount} item(ns) não importado(s) por valor, moeda ou tipo ausente/inválido.`);
     const invalid = rows.filter((r) => !r.gen && invalidRow(r)).length;
     if (invalid) messages.push(`${invalid} item(ns) sem dados válidos ficaram fora da seleção. Você pode corrigi-los nos detalhes.`);
@@ -345,10 +357,12 @@ const Batch = (() => {
     $("#batch-tbody").innerHTML = rows.map((r, i) => (r.gen && !includeGenerated) || (viewFilter === "pending" && !pendingRow(r)) ? "" : `
       <tr data-i="${i}" class="${r.on ? "" : "batch-off"}${r.dup ? " batch-dup" : ""}${r.gen ? " batch-generated" : ""}">
         <td><input type="checkbox" class="batch-check" data-i="${i}" aria-label="Selecionar ${escapeHtml(r.desc || "item")}${r.gen ? " (projeção)" : ""}" ${r.c6Matched ? "disabled" : ""} ${r.on ? "checked" : ""}>${r.dup ? '<span class="dup-flag" title="Coincidência para revisão; isso não comprova duplicação">⚠</span>' : ""}</td>
-        <td><input type="date" data-f="date" data-i="${i}" aria-label="Data de ${escapeHtml(r.desc || "item")}" value="${escapeHtml(r.date)}" ${r.c6SeriesKey && !r.installment.startsWith("1/") ? 'readonly title="Data calculada a partir da primeira parcela"' : ""}></td>
+        <td><input type="date" data-f="date" data-i="${i}" aria-label="Data de ${escapeHtml(r.desc || "item")}" value="${escapeHtml(r.date)}" ${r.c6SeriesKey && !r.installment.startsWith("1/") ? 'readonly title="Data calculada a partir da primeira parcela"' : ""}>${r.c6SeriesKey && r.billDueDate ? `<small class="hint">Vencimento ${r.billDateObserved ? "da fatura" : "previsto"} · ${escapeHtml(fmtDate(r.billDueDate))}</small>` : ""}</td>
         <td><div class="batch-desc-cell"><input type="text" data-f="desc" data-i="${i}" value="${escapeHtml(r.desc)}">${
           r.installment
             ? `<span class="parc-tag" title="${r.gen || (r.c6SeriesKey && !r.c6Printed) ? "Parcela calculada" : "Parcela vista na fatura"}">${r.gen ? "Projeção · " : r.c6SeriesKey && !r.c6Printed ? "Calculada · " : ""}${escapeHtml(r.installment)}</span>`
+            : r.creditKind === "card_payment" && r.type === "receita"
+              ? '<span class="parc-tag">Pagamento recebido pelo cartão</span>'
             : (r.fixed || r.fixa)
               ? `<span class="parc-tag" title="${r.gen ? "Projeção: repetição não identificada no documento" : "Assinatura/mensalidade detectada"}">${r.gen ? "Projeção · " : ""}fixa</span>`
               : ""
@@ -485,10 +499,20 @@ const Batch = (() => {
     const card = det ? CARDS.find((c) => stripAccents(c) === det) || "" : "";
     detectedCard = card || detectedCard;
     const c6Invoice = metadata.statementCheck?.source === "c6_invoice";
-    const normalized = normalize(itens,c6Invoice).map((r) => ({ ...r, account: r.account || card,
-      ...(c6Invoice && r.installment && itens[r.sourceIndex].reversedFee !== true ? {c6Original:true, receiptMonth:itens[r.sourceIndex].billingMonth || ""} : {}),
-      sourceDocumentId: metadata.sourceDocumentId || "",
-      sourceLabel: metadata.sourceLabel || "", sourcePage: r.sourcePage && metadata.pageStart ? r.sourcePage + metadata.pageStart - 1 : r.sourcePage }));
+    const normalized = normalize(itens,c6Invoice).map((r) => {
+      const row = { ...r, account: r.account || card, sourceDocumentId: metadata.sourceDocumentId || "",
+        sourceLabel: metadata.sourceLabel || "", sourcePage: r.sourcePage && metadata.pageStart ? r.sourcePage + metadata.pageStart - 1 : r.sourcePage };
+      if (!c6Invoice) return row;
+      const it = itens[r.sourceIndex], statement = metadata.statementCheck;
+      const due = it.dueDate || statement.dueDate, closing = it.closingDate || statement.closingDate;
+      const day = it.bestPurchaseDay || statement.bestPurchaseDay;
+      if (isValidISODate(due)) Object.assign(row,{dueDate:due,billDueDate:due,billDateObserved:true});
+      if (isValidISODate(closing)) Object.assign(row,{closingDate:closing,billClosingDate:closing});
+      row.c6Cycle = {dueDate:row.dueDate, closingDate:row.closingDate, bestPurchaseDay:Number.isInteger(day) && day>=1 && day<=31 ? day : null};
+      if (it.creditKind === "card_payment") row.creditKind = it.creditKind;
+      if (r.installment && it.reversedFee !== true) Object.assign(row,{c6Original:true,receiptMonth:it.billingMonth || statement.billingMonth || ""});
+      return row;
+    });
     normalized.forEach((r) => { r.order = (r.sourcePage || metadata.pageStart || 1) * 10000 + (metadata.orderOffset || 0) + r.sourceIndex; });
     const novos = c6Invoice ? normalized : expandSeries(normalized);
     if (novos.length) {
@@ -545,7 +569,8 @@ const Batch = (() => {
         const row = { ...source, c6Original:false, c6SeriesKey:group.seriesKey, c6Printed:printed, c6SourceSlot:sourceSlot,
           c6PurchaseLines:group.lines.map(line=>bySource.get(line.src+":"+line.sourceIndex)),
           c6Matched:slot.matchedId || "", c6Ambiguous:ambiguous, c6Reason:group.reason || "", purchaseDate:source.date,
-          date:slot.date, installment, groupId:group.groupId, on:!slot.matchedId && !ambiguous };
+          date:slot.date, billDueDate:slot.billDueDate, billClosingDate:slot.billClosingDate, billDateObserved:slot.billDateObserved,
+          installment, groupId:group.groupId, on:!slot.matchedId && !ambiguous };
         if (!printed) { row.referenceId = ""; row.cashback = null; }
         row.verifiedSnapshot = source.verifiedSnapshot ? reviewSnapshot(row) : "";
         if (old) {
@@ -986,6 +1011,10 @@ const Batch = (() => {
         category: t.cat || $("#batch-cat").value, currency: t.currency, account: t.account,
         groupId: t.serie || t.groupId || null, installment: t.installment || null,
         totalValue: t.totalValue, fixed: t.fixed === true,
+        ...(t.billDueDate ? {billDueDate:t.billDueDate,billDateObserved:t.billDateObserved===true} : {}),
+        ...(t.billClosingDate ? {billClosingDate:t.billClosingDate} : {}),
+        ...(t.billDateObserved && t.c6Cycle?.bestPurchaseDay ? {cardBestPurchaseDay:t.c6Cycle.bestPurchaseDay} : {}),
+        ...(t.creditKind === "card_payment" && t.type === "receita" ? {creditKind:t.creditKind} : {}),
         ...(t.cashback ? {cashback:t.cashback} : {}),
         ...(t.referenceId ? { referenceId: t.referenceId } : {}),
         ...(t.sourceEvidence ? { sourceEvidence: t.sourceEvidence } : {}),

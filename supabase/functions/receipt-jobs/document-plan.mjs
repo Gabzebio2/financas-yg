@@ -69,6 +69,10 @@ function observedRow(item, page, index, categories, defaultCategory) {
     ...(item.cashback?.valor>0 && Number.isFinite(item.cashback.valor) && currencies.has(item.cashback.moeda)
       ? {cashback:{amount:item.cashback.valor,currency:item.cashback.moeda}} : {}),
     sourceDocumentId:page.document_id, receiptMonth:item.billingMonth || '', order:pageNo*1000+index, grupoSemData:item.grupoSemData===true,
+    c6, physicalLine:(item.sourceLines || item.linhas || [])[0],
+    dueDate:item.dueDate || page.result.statementCheck?.dueDate, closingDate:item.closingDate || page.result.statementCheck?.closingDate,
+    bestPurchaseDay:item.bestPurchaseDay || page.result.statementCheck?.bestPurchaseDay,
+    creditKind:item.creditKind==='card_payment'?'card_payment':null,
     c6Purchase:c6 && hasPart && item.reversedFee!==true,
     invalid:!!(item.invalid || badPart || !verifiedLine || c6 && !account), issues,
   };
@@ -88,6 +92,10 @@ function transaction(row) {
   if (row.sourceEvidence) tx.sourceEvidence=row.sourceEvidence;
   if (row.cashback) tx.cashback=row.cashback;
   if (row.dateEstimated) Object.assign(tx,{dateEstimated:true,dateEstimate:row.dateEstimate});
+  if (row.creditKind) tx.creditKind=row.creditKind;
+  if (row.c6 && validDate(row.dueDate)) Object.assign(tx,{billDueDate:row.dueDate,billDateObserved:true});
+  if (row.c6 && validDate(row.closingDate)) tx.billClosingDate=row.closingDate;
+  if (row.c6 && Number.isInteger(row.bestPurchaseDay) && row.bestPurchaseDay>=1 && row.bestPurchaseDay<=31) tx.cardBestPurchaseDay=row.bestPurchaseDay;
   return tx;
 }
 
@@ -120,7 +128,7 @@ function findMatch(tx, options, used) {
 }
 
 export function planDocumentImport({pages,existing,categories=[],defaultCategory='',extraRows=[]}) {
-  const report = {transactions:[],duplicates:0,excluded:0,skipped:0,blockedDocuments:[]};
+  const report = {transactions:[],duplicates:0,excluded:0,skipped:0,blockedDocuments:[],statements:[],matches:[],sourceRefs:[],coverageError:''};
   if (!Array.isArray(pages) || !pages.length || !Array.isArray(existing) || extraRows?.length ||
       pages.some(p=>!p?.document_id || p.media_type!=='application/pdf')) {
     report.blockedDocuments.push({label:'Envio',reason:'A inclusão automática exige um lote de PDFs completos.'});
@@ -132,10 +140,27 @@ export function planDocumentImport({pages,existing,categories=[],defaultCategory
     if (!docs.has(page.document_id)) docs.set(page.document_id,[]);
     docs.get(page.document_id).push(page);
   }
+  const planned = new Map();
+  function link(row,target) {
+    if (row.c6) report.sourceRefs.push({document:row.sourceDocumentId,page:row.sourcePage,line:row.physicalLine,...target});
+  }
+  const matchById = new Map();
+  function matchTx(id,tx,observed) {
+    const m={id,date:tx.date,desc:tx.desc,type:tx.type,currency:tx.currency,amount:tx.amount,account:tx.account,installment:tx.installment,
+      purchaseDate:tx.purchaseDate,seriesKey:tx.seriesKey,billDueDate:tx.billDueDate,billClosingDate:tx.billClosingDate,cardBestPurchaseDay:tx.cardBestPurchaseDay,creditKind:tx.creditKind,observed};
+    if (!matchById.has(id) || observed) matchById.set(id,m);
+  }
   let upperBound = 0;
   for (const parts of docs.values()) {
     parts.sort((a,b)=>(a.context?.pageStart || 0)-(b.context?.pageStart || 0));
     const label=text(parts[0].label).split(' · página')[0].slice(0,160) || 'Documento';
+    const checks=parts.map(p=>p.result?.statementCheck).filter(c=>c?.source==='c6_invoice');
+    if (checks.length) {
+      const get=field=>checks.find(c=>c[field]!=null)?.[field]??null;
+      report.statements.push({document:parts[0].document_id,label,closingDate:get('closingDate'),dueDate:get('dueDate'),
+        bestPurchaseDay:get('bestPurchaseDay'),rows:checks.reduce((n,c)=>n+(c.rows || 0),0),
+        version:checks.every(c=>c.version===2)?2:1});
+    }
     const issue = issueForDocument(parts);
     if (issue) {report.blockedDocuments.push({label,reason:issue});continue;}
     const rows = dates.estimate(parts.flatMap(p=>p.result.itens.map((item,i)=>observedRow(item,p,i,categories,defaultCategory))));
@@ -151,22 +176,46 @@ export function planDocumentImport({pages,existing,categories=[],defaultCategory
       if (row.c6Purchase) {series.push(row);continue;}
       const tx = transaction(row);
       const match = findMatch(tx,index.get(movementKey(tx)),used);
-      if (match) {report.duplicates++;used.add(match);}
-      else added.push(tx);
+      if (match) {
+        report.duplicates++;used.add(match);
+        if(match.id) {if(row.c6)matchTx(match.id,tx,true);link(row,{id:match.id});}
+        else link(row,{index:planned.get(match)});
+      } else {
+        const index=report.transactions.length+added.length;
+        planned.set(tx,index);link(row,{index});added.push(tx);
+      }
     }
     report.transactions.push(...added);
     indexRows(index,added);
   }
   for (const group of schedule.plan(series,existing)) {
     for (const slot of group.installments) {
-      if (slot.matchedId) {report.duplicates++;continue;}
-      if (group.needsReview || slot.ambiguous) {report.skipped++;continue;}
-      const printed=group.lines.find(r=>Number(r.installment.split('/')[0])===slot.number);
-      const row=printed || group.line, tx=transaction(row);
+      const printed=group.lines.filter(r=>Number(r.installment.split('/')[0])===slot.number);
+      const row=printed[0] || group.line, tx=transaction(row);
       Object.assign(tx,{date:slot.date,purchaseDate:row.date,installment:slot.number+'/'+group.installments.length,
         groupId:group.groupId,seriesKey:group.seriesKey});
-      if (!printed) {delete tx.referenceId;delete tx.cashback;}
+      delete tx.billClosingDate;delete tx.billDueDate;delete tx.billDateObserved;
+      if (validDate(slot.billDueDate)) Object.assign(tx,{billDueDate:slot.billDueDate,billDateObserved:slot.billDateObserved===true});
+      if (validDate(slot.billClosingDate)) tx.billClosingDate=slot.billClosingDate;
+      if(slot.matchedId){
+        report.duplicates++;matchTx(slot.matchedId,tx,!!printed.length);
+        printed.forEach(r=>link(r,{id:slot.matchedId}));continue;
+      }
+      if (group.needsReview || slot.ambiguous) {report.skipped++;continue;}
+      if (!printed.length) {delete tx.referenceId;delete tx.cashback;}
+      printed.forEach(r=>link(r,{index:report.transactions.length}));
       report.transactions.push(tx);
+    }
+  }
+  report.matches=[...matchById.values()];
+  for(const statement of report.statements) {
+    const refs=report.sourceRefs.filter(r=>r.document===statement.document);
+    if (statement.version!==2 || refs.length!==statement.rows ||
+        refs.some(r=>!Number.isInteger(r.line) || r.line<1 || (!r.id && !Number.isInteger(r.index))) ||
+        new Set(refs.map(r=>r.page+'|'+r.line)).size!==refs.length ||
+        report.blockedDocuments.some(d=>d.label===statement.label)) {
+      report.coverageError='A leitura ainda não vinculou cada movimento da fatura a um lançamento. A fatura precisa ser relida.';
+      break;
     }
   }
   return report;

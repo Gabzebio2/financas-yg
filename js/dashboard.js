@@ -4,7 +4,7 @@
 const Dashboard = (() => {
   let ds = null; // dataset aberto
   let fil = { mode: "month", month: null, from: "", to: "", cats: null, search: "", type: "all", account: "all" };
-  let receiptPrefix = "";
+  let receiptFilter = null;
   let sort = { key: "date", dir: -1 };
   let rowLimit = 100;
   const charts = {};
@@ -94,7 +94,7 @@ const Dashboard = (() => {
     billConfirmations.forEach(({timer}) => clearTimeout(timer));
     billConfirmations.clear();
     ds = loaded;
-    receiptPrefix = "";
+    receiptFilter = null;
     // Lembra a última pasta pessoal aberta (usada no menu Pessoa física/Empresa)
     if (ds.profile !== "pj") {
       try { localStorage.setItem("fyg:pf-last", ds.id); } catch { /* sem storage */ }
@@ -138,7 +138,7 @@ const Dashboard = (() => {
 
   function closeFolder() {
     ds = null;
-    receiptPrefix = "";
+    receiptFilter = null;
     editingId = null;
     receiptRead = null;
     txModalRevision++;
@@ -255,7 +255,7 @@ const Dashboard = (() => {
 
   function tableTxs() {
     const q = stripAccents(fil.search);
-    let list = receiptPrefix ? ds.transactions.filter(t => typeof t.id === "string" && t.id.startsWith(receiptPrefix)) : filteredTxs(true);
+    let list = receiptFilter ? ds.transactions.filter(t => receiptFilter.ids.has(t.id) || (!receiptFilter.printedOnly && typeof t.id === "string" && t.id.startsWith(receiptFilter.prefix))) : filteredTxs(true);
     if (fil.type !== "all") list = list.filter((t) => t.type === fil.type);
     if (fil.account !== "all") list = list.filter((t) => "account:" + (t.account || "") === fil.account);
     if (q) {
@@ -269,7 +269,8 @@ const Dashboard = (() => {
   // Os filtros rápidos pertencem à lista; os cartões continuam mostrando o
   // período e as categorias escolhidos no cabeçalho.
   function renderTableFilters() {
-    $("#tx-receipt-filter")?.classList.toggle("hidden", !receiptPrefix);
+    $("#tx-receipt-filter")?.classList.toggle("hidden", !receiptFilter);
+    if (receiptFilter && $("#tx-receipt-label")) $("#tx-receipt-label").textContent = receiptFilter.printedOnly ? "Itens impressos na fatura · todos os meses" : "Lançamentos deste documento · todos os meses";
     const type = $("#tx-type-filter");
     if (type) type.value = fil.type;
     const account = $("#tx-account-filter");
@@ -309,6 +310,13 @@ const Dashboard = (() => {
   }
 
   /* ---------- Renderização geral ---------- */
+  function renderCardCycle() {
+    const el=$("#dashboard-card-cycle");
+    if (!el) return;
+    const latest=ds.transactions.reduce((found,t)=>t.billDateObserved && t.billDueDate && t.cardBestPurchaseDay && (!found || t.billDueDate>found.billDueDate) ? t : found,null);
+    el.classList.toggle("hidden",!latest);
+    el.innerHTML=latest ? `<strong>Última fatura · ${escapeHtml(latest.account)}</strong><dl>${latest.billClosingDate ? '<div><dt>Fechamento</dt><dd>'+fmtDate(latest.billClosingDate)+'</dd></div>' : ''}<div><dt>Vencimento</dt><dd>${fmtDate(latest.billDueDate)}</dd></div><div><dt>Melhor dia para comprar</dt><dd>Dia ${latest.cardBestPurchaseDay}</dd></div></dl>` : "";
+  }
   function renderAll() {
     $("#ds-name").textContent = ds.name;
     if (typeof BusinessPanel !== "undefined") BusinessPanel.render(ds);
@@ -317,6 +325,7 @@ const Dashboard = (() => {
     renderCurrencyWarning();
     renderCatFilter();
     renderSummary();
+    renderCardCycle();
     renderBillBoard();
     renderCurrencyBreakdown();
     renderLimits();
@@ -499,7 +508,7 @@ const Dashboard = (() => {
   }
 
   function stepMonth(delta) {
-    receiptPrefix = "";
+    receiptFilter = null;
     let [y, m] = fil.month.split("-").map(Number);
     m += delta;
     if (m < 1) { m = 12; y--; }
@@ -1471,11 +1480,11 @@ const Dashboard = (() => {
     tbody.innerHTML = visible.map((t) => {
       const sel = selectedTx.has(t.id);
       const paid = t.type === "despesa" && t.paymentStatus === "paid";
-      const title = `<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span>`;
+      const title = `<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.creditKind === "card_payment" ? '<small class="hint">Pagamento recebido pelo cartão</small>' : ""}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span>`;
       return `
       <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${t.paymentStatus === "paid" ? " bill-settled" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
-        <td style="white-space:nowrap">${fmtDate(accountingDate(t))}${t.date !== accountingDate(t) ? '<br><small>Venc. ' + fmtDate(t.date) + '</small>' : cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}${t.purchaseDate && t.purchaseDate !== t.date ? '<br><small>Compra ' + fmtDate(t.purchaseDate) + '</small>' : ""}</td>
+        <td style="white-space:nowrap">${fmtDate(accountingDate(t))}${t.date !== accountingDate(t) ? '<br><small>Venc. ' + fmtDate(t.date) + '</small>' : cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : ""}${t.purchaseDate && t.purchaseDate !== t.date ? '<br><small>Compra ' + fmtDate(t.purchaseDate) + '</small>' : ""}${t.billDueDate ? '<br><small>' + (t.type === 'receita' ? 'Fatura de ' : t.billDateObserved ? 'Vence em ' : 'Venc. previsto ') + fmtDate(t.billDueDate) + '</small>' : ""}</td>
         <td><span class="tx-desc-cell">${catAvatar(t.category)}${paid
           ? `<span class="tx-paid-caption">${title}${billPayButton(t, billConfirmations.get(t.id)?.source === "transactions")}</span>`
           : title}</span></td>
@@ -2048,7 +2057,7 @@ const Dashboard = (() => {
     $("#mm-next").addEventListener("click", () => { mmYear++; renderMonthMenu(); });
     $("#mm-cancel").addEventListener("click", () => $("#month-menu").classList.add("hidden"));
     $("#mm-today").addEventListener("click", () => {
-      receiptPrefix = "";
+      receiptFilter = null;
       fil.month = todayISO().slice(0, 7);
       rowLimit = 100;
       $("#month-menu").classList.add("hidden");
@@ -2057,7 +2066,7 @@ const Dashboard = (() => {
     $("#mm-grid").addEventListener("click", (ev) => {
       const b = ev.target.closest("[data-ym]");
       if (!b) return;
-      receiptPrefix = "";
+      receiptFilter = null;
       fil.month = b.dataset.ym;
       rowLimit = 100;
       $("#month-menu").classList.add("hidden");
@@ -2154,12 +2163,12 @@ const Dashboard = (() => {
     });
     $("#btn-export-csv")?.addEventListener("click", exportCSV);
     $("#btn-close-receipt-filter")?.addEventListener("click", () => {
-      receiptPrefix = "";
+      receiptFilter = null;
       rowLimit = 100;
       renderTable();
     });
     $("#btn-clear-tx-filters")?.addEventListener("click", () => {
-      receiptPrefix = "";
+      receiptFilter = null;
       fil.search = ""; fil.type = "all"; fil.account = "all"; fil.cats = null;
       $("#tx-search").value = "";
       rowLimit = 100;
@@ -2444,7 +2453,7 @@ const Dashboard = (() => {
   function currentDatasetName() { return ds ? ds.name : ""; }
 
   function importEvidence(value) {
-    const out = {...cleanDateEstimate(value),...cleanCashback(value),...cleanPurchaseSchedule(value)};
+    const out = {...cleanDateEstimate(value),...cleanCashback(value),...cleanPurchaseSchedule(value),...cleanCardCycle(value)};
     for (const [key, max] of [["referenceId", 160], ["sourceEvidence", 300]]) {
       if (typeof value?.[key] === "string" && value[key].trim()) out[key] = value[key].trim().slice(0, max);
     }
@@ -2461,13 +2470,13 @@ const Dashboard = (() => {
     }
     return ids;
   }
-  function showReceiptTransactions(jobId, expectedIds = []) {
+  function showReceiptTransactions(jobId, expectedIds = [], {matchedIds = [], printedIds = null} = {}) {
     if (!ds || !jobId) return false;
     refreshFromStore({force:true});
     const prefix = "receipt_" + jobId + "_";
     const ids = new Set(ds.transactions.filter(t => typeof t.id === "string" && t.id.startsWith(prefix)).map(t => t.id));
     if (!expectedIds.every(id => ids.has(id))) return false;
-    receiptPrefix = prefix;
+    receiptFilter = {prefix, printedOnly:Array.isArray(printedIds), ids:new Set(printedIds || matchedIds)};
     fil.search = ""; fil.type = "all"; fil.account = "all";
     $("#tx-search").value = "";
     selectedTx.clear();

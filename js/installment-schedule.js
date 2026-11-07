@@ -20,6 +20,25 @@ const InstallmentSchedule = (() => {
     last.setUTCDate(Math.min(day,last.getUTCDate()));
     return last.toISOString().slice(0,10);
   }
+  // O dia lançado continua sendo a data da compra deslocada por posição.
+  // O vencimento é outro calendário: a posição impressa pertence à fatura
+  // de onde a linha veio, inclusive se a série antiga usa meses diferentes.
+  function applyBillingCycle(group) {
+    const anchors = group.lines.filter(line => validDate(line.dueDate))
+      .map(line => ({number:parts(line).current,due:line.dueDate,
+        closing:validDate(line.closingDate) && line.closingDate <= line.dueDate ? line.closingDate : ""}));
+    if (!anchors.length) return;
+    for (const slot of group.installments) {
+      const anchor = anchors.reduce((best,a) => {
+        const distance = Math.abs(slot.number-a.number), bestDistance = Math.abs(slot.number-best.number);
+        return distance<bestDistance || distance===bestDistance && a.due>best.due ? a : best;
+      });
+      const offset = slot.number-anchor.number;
+      slot.billDueDate = shift(anchor.due,offset);
+      if (anchor.closing) slot.billClosingDate = shift(anchor.closing,offset);
+      slot.billDateObserved = offset===0;
+    }
+  }
   function fields(tx, part) {
     let desc = text(tx.desc).slice(0,1000);
     const suffix = /\s*[-–—]\s*parcela\s+(\d+)\s*\/\s*(\d+)$/.exec(desc);
@@ -182,7 +201,9 @@ const InstallmentSchedule = (() => {
     for (const base of bases) {
       if (base.matches.some(m=>!used.has(m.candidate.id))) base.groups.forEach(g=>caution(g,ambiguous));
     }
-    return bases.flatMap(base=>base.groups);
+    const result=bases.flatMap(base=>base.groups);
+    result.forEach(applyBillingCycle);
+    return result;
   }
   return {plan};
 })();

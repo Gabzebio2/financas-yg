@@ -24,3 +24,17 @@ test('worker finishes an opted-in PDF without a browser, against the folder vers
  assert.deepEqual(result.p_txs.map(t=>t.desc),['Novo']);assert.equal(result.p_notice.duplicates,1);
  assert.equal(calls.some(c=>c.path.endsWith('/receipt_commit')),false);
 });
+test('an unresolved source triggers a reread instead of committing a partial batch',async()=>{
+ const {createBackend}=await import('../supabase/functions/receipt-jobs/core.mjs');
+ const calls=[];
+ const backend=createBackend({url:'https://db.invalid',serviceKey:'test',publicKey:'test',fetcher:async(raw)=>{
+  const path=new URL(raw).pathname;calls.push(path);
+  if(path.endsWith('/receipt_claim_auto_document'))return Response.json({id:'j',user_id:'u',folder_id:'f',categories:[]});
+  if(path.endsWith('/receipt_job_pages'))return Response.json([{document_id:'d',context:{pageStart:1,totalPages:2},media_type:'application/pdf',result:null}]);
+  if(path.endsWith('/pastas'))return Response.json([{updated_at:'2026-11-06T13:00:00Z',data:{transactions:[]}}]);
+  if(path.endsWith('/receipt_claim'))return Response.json(null);
+  return Response.json([]);
+ }});
+ await backend.work();assert(calls.includes('/rest/v1/rpc/receipt_retry_document_coverage'));
+ assert(!calls.includes('/rest/v1/rpc/receipt_finish_auto_document'));
+});

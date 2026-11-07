@@ -1,5 +1,35 @@
 // Reconcile printed card subtotals against the original, unfiltered rows.
 // Transfer sections, payments of a previous bill and summaries have no card entries.
+function checkMovements(proof,items) {
+  if(!Array.isArray(proof.movements) || !Array.isArray(proof.payments) || !Array.isArray(items) ||
+     proof.rows!==proof.movements.length || proof.rows!==items.length) return false;
+  const byLine = new Map(), entries = new Map(), payments = new Map();
+  for(const movement of proof.movements) {
+    if(!movement || !Number.isSafeInteger(movement.line) || movement.line<1 || byLine.has(movement.line) ||
+       !Number.isSafeInteger(movement.cents) || movement.cents<=0 || !['receita','despesa'].includes(movement.type)) return false;
+    byLine.set(movement.line,movement);
+    if(movement.section==='card') entries.set(movement.line,movement.type==='despesa'?movement.cents:-movement.cents);
+    else if(movement.section==='card_payment' && movement.type==='receita') payments.set(movement.line,movement.cents);
+    else if(movement.section!=='transfer') return false;
+  }
+  for(const item of items) {
+    const lines = item?.sourceLines ?? item?.linhas;
+    if(!Array.isArray(lines) || lines.length!==1) return false;
+    const movement=byLine.get(lines[0]);
+    if(!movement || item.moeda!=='BRL' || item.tipo!==movement.type || item.valor!==movement.cents/100 ||
+       (item.creditKind==='card_payment') !== (movement.section==='card_payment')) return false;
+    byLine.delete(lines[0]);
+  }
+  function matches(source,stamped) {
+    if(source.length!==stamped.size) return false;
+    for(const row of source){
+      if(!row || !stamped.has(row.line) || stamped.get(row.line)!==row.cents) return false;
+      stamped.delete(row.line);
+    }
+    return true;
+  }
+  return byLine.size===0 && matches(proof.entries,entries) && matches(proof.payments,payments);
+}
 function checkCardPages(pages) {
   const sorted = [...pages].sort((a,b) => a.context.pageStart - b.context.pageStart);
   const pageCount = sorted[0].context.totalPages;
@@ -24,6 +54,11 @@ function checkCardPages(pages) {
     }
     const error = 'A leitura da página ' + pageNumber + ' da fatura C6 está incompleta.';
     if (!check.complete || page.result.partial || !Array.isArray(check.entries) || !Array.isArray(check.subtotals)) return error;
+    // Old private drafts did not retain per-operation evidence. A newer
+    // draft must include each source movement, even when its value is not
+    // part of a printed purchase subtotal (e.g. a posted card payment).
+    if ((check.version!=null || check.movements!=null || check.payments!=null) &&
+        (check.version!==2 || !checkMovements(check,page.result.itens))) return error;
     const events = [
       ...check.subtotals.map(s => ({...s, subtotal:true})),
       ...check.entries.map(e => ({...e, subtotal:false})),

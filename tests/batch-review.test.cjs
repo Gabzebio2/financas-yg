@@ -35,7 +35,7 @@ function setup(extra = {}) {
     curFrac: (c) => ['USDT', 'USDC'].includes(c) ? 6 : ['CLP', 'PYG'].includes(c) ? 0 : 2,
     stripAccents: (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(),
     escapeHtml: (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
-    fmtMoney: (n, c) => `${c} ${n}`, fmtMoneyInput: (n) => String(n),
+    fmtMoney: (n, c) => `${c} ${n}`, fmtMoneyInput: (n) => String(n), fmtDate: (iso) => iso.split('-').reverse().join('/'),
     isValidISODate: (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '') && Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0, 10) === s,
     daysInMonth: (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate(),
     dupTxKey: (...v) => v.join('|'),
@@ -358,6 +358,33 @@ test('tarifa e estorno pareados pelo extrato entram no dia impresso, sem gerar d
   env.batch.save();if(env.confirmations.length)env.confirm();
   assert.deepEqual(env.saved().map(t=>[t.type,t.date,t.installment,t.seriesKey]),[
     ['despesa','2026-10-24','11/12',undefined],['receita','2026-10-24',null,undefined]]);
+});
+
+test('revisão manual C6 preserva crédito da fatura, estorno e calendário das posições',async()=>{
+  let submitted;
+  const env=setup({ReceiptJobs:{commit:async(_,txs)=>{submitted=txs;return {transactions:[]};},refresh(){}},
+    Cloud:{syncNow:async()=>true},C6Subtotals:{check:()=>null}});
+  const statementCheck={source:'c6_invoice',version:2,closingDate:'2026-10-29',dueDate:'2026-11-05',bestPurchaseDay:28};
+  const result={itens:[
+    item({descricao:'Compra parcelada',parcela:'5/5',data:'2026-05-30',valor:340}),
+    item({descricao:'Inclusão de pagamento',tipo:'receita',data:'2026-10-05',valor:6145.28,creditKind:'card_payment'}),
+    item({descricao:'Estorno de tarifa',tipo:'receita',data:'2026-10-24',valor:98}),
+  ],cartao:'C6',statementCheck,excluded:[],avisos:[],partial:false,verified:true};
+  env.batch.open({backgroundJob:{job:{id:'job',status:'ready',extra_rows:[]},pages:[
+    {document_id:'pdf',label:'Fatura',context:{pageStart:1,pageEnd:1,totalPages:1},result}
+  ]}});
+  assert.match(env.node('#batch-review-summary').textContent,/fechamento em 29\/10\/2026 · vencimento em 05\/11\/2026 · melhor dia de compra 28/);
+  assert.match(env.node('#batch-tbody').innerHTML,/Vencimento previsto · 05\/07\/2026/);
+  assert.match(env.node('#batch-tbody').innerHTML,/Vencimento da fatura · 05\/11\/2026/);
+  assert.match(env.node('#batch-tbody').innerHTML,/Pagamento recebido pelo cartão/);
+  env.batch.save();await new Promise(resolve=>setImmediate(resolve));
+  const series=submitted.filter(t=>t.installment);
+  assert.deepEqual(Array.from(series,t=>[t.date,t.billDueDate,t.billClosingDate,t.billDateObserved]),[
+    ['2026-05-30','2026-07-05','2026-06-29',false],['2026-06-30','2026-08-05','2026-07-29',false],
+    ['2026-07-30','2026-09-05','2026-08-29',false],['2026-08-30','2026-10-05','2026-09-29',false],
+    ['2026-09-30','2026-11-05','2026-10-29',true]]);
+  assert.deepEqual(Array.from(submitted.filter(t=>t.type==='receita'),t=>[t.date,t.amount,t.creditKind,t.billDueDate,t.billDateObserved]),[
+    ['2026-10-05',6145.28,'card_payment','2026-11-05',true],['2026-10-24',98,undefined,'2026-11-05',true]]);
 });
 test('editar a compra recalcula a série, conserva posições desmarcadas; cancelar descarta a edição',()=>{
   const raw=item({descricao:'Compra teste',parcela:'2/3',valor:18,data:'2026-01-31'}),meta={sourceDocumentId:'one',statementCheck:{source:'c6_invoice'}};

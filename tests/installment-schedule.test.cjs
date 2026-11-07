@@ -53,6 +53,29 @@ test("série antiga deslocada por um mês ocupa as posições já existentes e s
   const [other]=plan([printed],otherPurchase);assert(!other.needsReview);assert.deepEqual(missing(other),[1,2,3,4,5,6]);
 });
 
+test("duas séries antigas conciliam a parcela impressa com o vencimento sem duplicar o mês antigo",()=>{
+  const dueDate="2026-11-05", closingDate="2026-10-29";
+  for(const [desc,day,total,month,amount] of [["Loja A",30,5,5,42],["Loja B",24,6,4,17.50]]) {
+    const lineItem=line({desc,date:'2026-05-'+day,amount,installment:total+'/'+total,dueDate,closingDate});
+    const old=Array.from({length:total},(_,i)=>({...lineItem,id:'old'+i,groupId:'legacy',date:'2026-'+String(month+i).padStart(2,'0')+'-'+day,installment:(i+1)+'/'+total}));
+    const [g]=plan([lineItem],old);
+    assert.deepEqual(missing(g),[]);
+    const observed=g.installments.at(-1);
+    assert.equal(observed.billDueDate,dueDate);assert.equal(observed.billClosingDate,closingDate);assert.equal(observed.billDateObserved,true);
+    assert.equal(observed.matchedId,'old'+(total-1));assert.equal(g.installments[0].date,'2026-05-'+day);
+    assert.equal(g.installments[total-2].billDueDate,'2026-10-05');assert.equal(g.installments[total-2].billDateObserved,false);
+  }
+});
+
+test("vencimentos impressos prevalecem sobre projeções, inclusive em fevereiro e na virada do ano",()=>{
+  const a=line({date:'2026-09-30',installment:'3/5',dueDate:'2026-12-31',closingDate:'2026-12-18'});
+  const b={...a,installment:'4/5',dueDate:'2027-01-28',closingDate:'2027-01-17',sourceDocumentId:'next'};
+  const [g]=plan([a,b],[]);
+  assert.deepEqual(g.installments.map(s=>s.billDueDate),['2026-10-31','2026-11-30','2026-12-31','2027-01-28','2027-02-28']);
+  assert.deepEqual(g.installments.map(s=>s.billDateObserved),[false,false,true,true,false]);
+  assert.equal(plan([line()],[])[0].installments[0].billDueDate,undefined);
+});
+
 test("pequeno deslocamento de data ocupa uma posição, sem consumir o registro de uma compra datada distintamente",()=>{
   const previous=tx(3,"2026-10-15",{groupId:"old"});
   const [near]=plan([line()],[previous]);

@@ -16,7 +16,7 @@
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
 <link rel="stylesheet" href="css/design.css?v=20261103-pending-colors">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
-<link rel="stylesheet" href="css/receipt-jobs.css?v=20261031-notifications">
+<link rel="stylesheet" href="css/receipt-jobs.css?v=20261106-statement-coverage">
 </head>
 <body>
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -402,6 +402,7 @@
       </div>
       <div class="card chart-card">
         <h3>Cartões e contas</h3><p class="chart-subtitle">Distribuição das despesas no período selecionado</p>
+        <div class="receipt-cycle hidden" id="dashboard-card-cycle"></div>
         <div class="chart-box"><canvas id="chart-conta">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
     </div>
@@ -434,7 +435,7 @@
         <button class="btn btn-ghost btn-sm" id="btn-export-csv" title="Exportar todas as transações que correspondem aos filtros"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Exportar CSV</button>
       </div>
       <div class="transaction-filters"><label class="search-field"><span class="sr-only">Buscar transações</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input type="search" id="tx-search" placeholder="Buscar descrição, categoria ou conta…"></label><label><span class="sr-only">Tipo de transação</span><select id="tx-type-filter"><option value="all">Todos os tipos</option><option value="receita">Receitas</option><option value="despesa">Despesas</option></select></label><label><span class="sr-only">Filtrar por conta</span><select id="tx-account-filter"><option value="all">Todas as contas</option></select></label><button class="btn-link" id="btn-clear-tx-filters">Limpar filtros</button></div><p class="filter-help">Os filtros refinam a lista e a exportação. Os saldos acima mostram o período.</p>
-      <div class="filter-help hidden" id="tx-receipt-filter"><strong>Lançamentos deste documento · todos os meses</strong> <button type="button" class="btn-link" id="btn-close-receipt-filter">Voltar à lista do período</button></div>
+      <div class="filter-help hidden" id="tx-receipt-filter"><strong id="tx-receipt-label">Lançamentos deste documento · todos os meses</strong> <button type="button" class="btn-link" id="btn-close-receipt-filter">Voltar à lista do período</button></div>
       <div class="bulk-bar hidden" id="tx-bulk-bar">
         <span id="tx-bulk-count">0 selecionadas</span>
         <div class="bulk-actions">
@@ -825,23 +826,23 @@
 <script src="lib/chart.min.js"></script>
 <script src="lib/supabase.min.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
-<script type="module" src="supabase/functions/receipt-jobs/c6-subtotals.mjs?v=20261106"></script>
-<script src="js/installment-schedule.js?v=20261106-auto-document"></script>
+<script type="module" src="supabase/functions/receipt-jobs/c6-subtotals.mjs?v=20261106-statement-coverage"></script>
+<script src="js/installment-schedule.js?v=20261106-statement-coverage"></script>
 <script src="js/import-dates.js?v=20261106-auto-document"></script>
-<script src="js/app.js?v=20261106-c6-statement"></script>
+<script src="js/app.js?v=20261106-statement-coverage"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
 <script src="js/importer.js?v=20261027-import"></script>
 <script src="js/weekly-revenue.js?v=20261103-week-cards"></script>
 <script src="js/business.js?v=20261103-bills"></script>
-<script src="js/dashboard.js?v=20261106-c6-statement"></script>
+<script src="js/dashboard.js?v=20261106-statement-coverage"></script>
 <script src="js/receipt.js?v=20261103-date-groups"></script>
-<script src="js/batch.js?v=20261106-auto-document"></script>
+<script src="js/batch.js?v=20261106-statement-coverage"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
 <script src="js/cloud-archive.js?v=20261106-archive-sync"></script>
 <script src="js/cloud-merge.js?v=20261023-pilot"></script>
 <script src="js/cloud.js?v=20261106-archive-sync"></script>
-<script src="js/receipt-jobs.js?v=20261106-auto-document"></script>
+<script src="js/receipt-jobs.js?v=20261106-statement-coverage"></script>
 <script src="js/navigation.js?v=20261106-archive-sync"></script>
 <script src="js/whatsapp.js?v=20261023-pilot"></script>
 </body>
