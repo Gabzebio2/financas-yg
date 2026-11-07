@@ -1,4 +1,5 @@
 import {checkC6Subtotals} from './c6-subtotals.mjs';
+import {planDocumentImport} from './document-plan.mjs';
 export const BUCKET='receipt-documents';
 export const CURRENCIES=['BRL','PYG','CLP','USD','EUR','GBP','USDT','USDC'];
 export const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v);
@@ -83,10 +84,35 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
    }
    return null;
  }
+ async function includeReadyDocument() {
+   const job=await rpc('receipt_claim_auto_document');
+   if(!job?.id)return false;
+   const path='/rest/v1/pastas?user_id=eq.'+encodeURIComponent(job.user_id)+'&id=eq.'+encodeURIComponent(job.folder_id)+'&select=updated_at,data';
+   const [ps,folders]=await Promise.all([pages(job.id),admin(path)]);
+   if(folders.length!==1)throw Error('folder_not_linked');
+   const folder=folders[0];
+   if(!Array.isArray(folder.data?.transactions))throw Error('invalid_folder');
+   const plan=planDocumentImport({pages:ps,existing:folder.data.transactions,categories:job.categories,
+     defaultCategory:ps[0]?.context?.documentCategory});
+   const eligible=[];
+   let skipped=plan.skipped;
+   for(const t of plan.transactions){
+     try{eligible.push(cleanTransactions([t])[0]);}catch(e){if(e.message!=='invalid_transaction')throw e;skipped++;}
+   }
+   if(eligible.length>10000){
+     skipped+=eligible.length;eligible.length=0;
+     plan.blockedDocuments.push({label:'Documento',reason:'O lote excede 10.000 lançamentos. Divida o arquivo para incluir.'});
+   }
+   const notice={duplicates:plan.duplicates,excluded:plan.excluded,skipped,blockedDocuments:plan.blockedDocuments};
+   await rpc('receipt_finish_auto_document',{p_user:job.user_id,p_job:job.id,p_version:folder.updated_at,
+     p_txs:eligible,p_notice:notice});
+   return true;
+ }
  async function work(){
   // A cleanup outage must not stop reading; the next cron run retries deletion.
   await cleanup().catch(()=>console.warn('receipt_cleanup_retry'));
-  const task=await rpc('receipt_claim');if(!task)return;
+  const applied=await includeReadyDocument().catch(()=>{console.warn('receipt_document_retry');return false;});
+  const task=await rpc('receipt_claim');if(!task){if(applied)await wake();return;}
   const p=task.page;
   try{
    const r=await fetcher(url+'/storage/v1/object/'+BUCKET+'/'+p.object_path,{headers:adminHeaders,signal:AbortSignal.timeout(15000),redirect:'error'});
@@ -168,6 +194,7 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
   if(body.action==='submit')return {status:await rpc('receipt_submit',{p_user:user,p_id:j.id})};
   if(body.action==='retry')return {status:await rpc('receipt_retry',{p_user:user,p_id:j.id})};
   if(body.action==='commit'){
+   if(j.document_auto && j.status==='ready')throw Error('automatic_in_progress');
    if(j.status==='ready'){
     const proof=await admin('/rest/v1/receipt_job_pages?job_id=eq.'+j.id+'&order=page_index&select=document_id,context,statement:result->statementCheck,partial:result->partial,firstItem:result->itens->0,excluded:result->excluded');
     const ps=proof.map(p=>({...p,result:{statementCheck:p.statement,partial:p.partial,itens:p.firstItem==null?[]:[p.firstItem],excluded:p.excluded}}));

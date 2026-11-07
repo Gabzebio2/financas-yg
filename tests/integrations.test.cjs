@@ -124,9 +124,13 @@ test('falha na segunda etapa bloqueia inclusão e retoma somente a etapa faltant
  await env.context.$('#btn-batch-retry').listeners.get('click')();assert.equal(env.calls.length,3);assert(env.calls[2].first);assert.equal(env.context.$('#btn-batch-save').disabled,false);
  env.batch.save();if(!env.saved())env.confirm();assert.equal(env.saved().length,2);
 });
-test('contagem impressa divergente aparece na confirmação única, sem selo de completude',async()=>{
+test('leitura manual parcial exibe as duas contagens e inclui apenas o que foi identificado em um clique',async()=>{
  const env=documentEnv(()=>documentResult(2,{expectedCount:4}));await env.batch.openWithFiles([{type:'application/pdf',name:'inventado.pdf',pages:1}]);
- env.batch.save();assert.equal(env.saved(),undefined);assert.match(env.confirmations.at(-1).text,/contagem impressa \(4\).*\(2\)/);env.confirm();assert.equal(env.saved().length,2);
+ assert.equal(env.context.$('#batch-verification').classList.contains('is-verified'),false);
+ assert.match(env.context.$('#batch-source-summary').textContent,/contagem impressa \(4\).*\(2\).*Só as operações identificadas/);
+ assert.match(env.context.$('#batch-review-summary').textContent,/contagem impressa \(4\).*\(2\)/);
+ env.batch.save();assert.equal(env.confirmations.length,0);
+ assert.deepEqual(Array.from(env.saved(),r=>[r.desc,r.amount]),[['Operação 0',10],['Operação 1',11]]);
 });
 test('campo ilegível continua editável na prévia em vez de desaparecer',async()=>{
  const result=documentResult(2);result.itens[0].valor=null;result.itens[0].moeda='';const env=documentEnv(()=>result);
@@ -148,9 +152,9 @@ test('parcelas retroativas opcionais atravessam janeiro com datas reais e dias l
   const generated = env.context.$('#batch-include-generated');
   assert.equal(generated.checked, false);
   generated.checked = true; generated.listeners.get('change')();
+  assert.match(env.context.$('#batch-review-summary').textContent,/projeç/);
   env.batch.save();
-  assert.equal(env.saved(), undefined);
-  assert.equal(env.confirmations.length, 1); env.confirm();
+  assert.equal(env.confirmations.length, 0);
   assert.deepEqual(Array.from(env.saved(), (r) => r.date), ['2025-11-30','2025-12-31','2026-01-31','2026-02-28']);
   assert.equal(new Set(env.saved().map((r) => r.groupId)).size, 1);
 });
@@ -164,9 +168,9 @@ test('lote preserva moeda individual, recusa infinito e não reescreve anos de d
     { data: '2026-01-01', valor: Infinity, descricao: 'Inválido' }, null,
     ], ''), 3);
   env.batch.refreshPreview();
+  assert.match(env.context.$('#batch-review-summary').textContent,/sem dados válidos ficaram fora/);
   env.batch.save();
-  assert.equal(env.saved(), undefined);
-  assert.equal(env.confirmations.length, 1); env.confirm();
+  assert.equal(env.confirmations.length, 0);
   assert.deepEqual(Array.from(env.saved(), (r) => [r.currency, r.amount, r.date]), [['USD',10,'1999-01-01'],['BRL',20,'2026-01-01']]);
 });
 

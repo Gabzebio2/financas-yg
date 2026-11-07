@@ -97,6 +97,18 @@ test('erro de confirmação mantém a prévia e permite repetir o mesmo job sem 
  env.batch.save();await new Promise(resolve=>setImmediate(resolve));assert.equal(attempts,2);
 });
 
+test('PDF antigo pronto com observações inclui no primeiro clique sem abrir os detalhes',async()=>{
+ const writes=[];
+ const env=setup({ReceiptJobs:{commit:async(id,txs)=>{writes.push({id,txs});return {transactions:[{id:'receipt_old_0'}]};},refresh(){}},Cloud:{syncNow:async()=>true}});
+ env.context.Dashboard.showReceiptTransactions=()=>true;
+ const result={itens:[item()],cartao:'C6',excluded:[],avisos:['Categoria aproximada.'],partial:false,verified:true,ledger:{monetaryLines:1,accounted:1,missing:[]}};
+ env.batch.open({backgroundJob:{job:{id:'old',status:'ready',extra_rows:[]},pages:[{document_id:'file',label:'PDF',context:{pageStart:1,pageEnd:1,totalPages:1},result}]}});
+ assert.equal(env.node('#batch-details').open,false);
+ env.node('#btn-batch-save').click();env.node('#btn-batch-save').click();await new Promise(setImmediate);
+ assert.equal(writes.length,1);assert.equal(writes[0].id,'old');assert.equal(writes[0].txs.length,1);
+ assert.equal(env.confirmations.length,0);assert.equal(env.node('#modal-batch').classList.contains('hidden'),true);
+});
+
 test('gravação confirmada e atualização local adiada encerra a prévia sem pedir nova inclusão',async()=>{
   let writes=0;
   const env=setup({ReceiptJobs:{commit:async()=>{writes++;return {transactions:[{id:'receipt_done_0'}]};},refresh(){}},Cloud:{syncNow:async()=>false}});
@@ -175,45 +187,40 @@ test('duas leituras automáticas concordantes incluem de uma vez sem enviar hist
   assert.equal(env.confirmations.length, 0); assert.equal(env.saved().length, 2);
 });
 
-test('divergência, adicional e coincidência fraca ficam selecionadas e uma confirmação inclui tudo', async () => {
+test('divergência, adicional e coincidência fraca ficam selecionadas e um clique inclui tudo', async () => {
   const env = withDocument([item(), item({ descricao: 'Outro café' })], { status: 'attention',
     items: [{ index: 0, status: 'verified', reasons: [] }, { index: 1, status: 'attention', reasons: ['Confira o valor'] }],
     additionalItems: [item({ valor: 40, descricao: 'Item adicional' })] });
   await env.read();
   assert.equal(env.node('#btn-batch-save').disabled, false);
   assert.doesNotMatch(env.node('#batch-tbody').innerHTML, /data-reviewed|data-distinct/);
-  env.batch.save(); assert.equal(env.saved(), undefined); assert.equal(env.confirmations.length, 1);
-  assert.match(env.confirmations[0].text, /3 lançamento\(s\)/);
-  assert.match(env.confirmations[0].text, /possível\(is\) duplicata/);
-  env.confirm(); assert.deepEqual(env.saved().map((r) => r.amount), [25,25,40]);
+  env.batch.save(); assert.equal(env.confirmations.length, 0);
+  assert.deepEqual(env.saved().map((r) => r.amount), [25,25,40]);
 });
 
-test('falha da segunda conferência preserva itens, habilita CTA e pede uma aceitação explícita', async () => {
+test('falha da segunda conferência mantém observações visíveis e permite salvar itens válidos em um clique', async () => {
   const env = setup({ fetch: async (_, request) => JSON.parse(request.body).reviewOf ? response({ error: 'revisao_indisponivel' }, 503) : response({ itens: [item()], coverage: complete(), partial: false }) });
   await env.batch.fromPhotos([{ name: 'foto.png', size: 10 }]);
   assert.equal(env.node('#btn-batch-save').disabled, false);
   assert.equal(env.node('#batch-verification').classList.contains('is-verified'), false);
   env.batch.save();
-  assert.equal(env.confirmations[0].options.confirmLabel, 'Incluir sem a segunda conferência');
-  assert.match(env.confirmations[0].text, /cobertura incompleta/);
-  env.confirm(); assert.equal(env.saved()[0].amount, 25);
+  assert.equal(env.confirmations.length,0); assert.equal(env.saved()[0].amount,25);
 });
 
-test('cobertura parcial e avisos de auditoria são aceitos juntos sem checkbox nem confirmação por linha', async () => {
+test('cobertura parcial indica os avisos e salva diretamente os itens válidos', async () => {
   const env = withDocument([item()], { coverage: { complete: false, pagesRead: [], unreadablePages: [1] }, issues: ['Total não confirmado'] });
-  await env.read(); env.batch.save();
+  await env.read();
   assert.equal(env.node('#btn-batch-save').disabled, false);
-  assert.equal(env.confirmations.length, 1); assert.equal(env.saved(), undefined);
-  env.confirm(); assert.equal(env.saved().length, 1);
+  env.batch.save();
+  assert.equal(env.confirmations.length, 0); assert.equal(env.saved().length, 1);
 });
 
-test('data ausente com vizinhos do mesmo arquivo é estimada e incluída com metadados após uma confirmação', async () => {
+test('data ausente com vizinhos do mesmo arquivo é estimada e incluída com metadados em um clique', async () => {
   const env = withDocument([item({ data: '2026-01-10', valor: 10 }), item({ data: '', valor: 20 }), item({ data: '2026-01-14', valor: 30 })]);
   await env.read();
   assert.match(env.node('#batch-review-summary').textContent, /1 data\(s\) estimada/);
   assert.equal(env.node('#btn-batch-save').disabled, false);
-  env.batch.save(); assert.equal(env.confirmations.length, 1); // estimate is already disclosed in the preview
-  env.confirm();
+  env.batch.save(); assert.equal(env.confirmations.length, 0);
   assert.equal(env.saved()[1].date, '2026-01-12'); assert.equal(env.saved()[1].dateEstimated, true);
   assert.deepEqual(env.saved()[1].dateEstimate, { method: 'between', previousDate: '2026-01-10', nextDate: '2026-01-14' });
   assert.equal(env.saved()[0].dateEstimated, undefined);
@@ -252,17 +259,16 @@ test('mesma referência e dados exatos são desmarcados, sem excluir compras só
   env.context.Dashboard.existingTransactions = () => [{ id: 'old', date: '2026-01-31', desc: 'Compra', amount: 25, currency: 'BRL', type: 'despesa', account: 'C6', referenceId: 'REF-A' }];
   ingest(env, [item({ referencia: 'REF-A' }),item({ referencia: 'REF-B' }),item({ descricao: 'Sem referência' })]);
   assert.match(env.node('#batch-count').textContent, /2 de 3 selecionadas/);
-  assert.match(env.node('#batch-review-summary').textContent, /1 item\(ns\).*mesma referência/);
-  env.batch.save(); assert.match(env.confirmations[0].text, /2 possível\(is\) duplicata/);
-  env.confirm(); assert.deepEqual(env.saved().map((r) => r.referenceId || ''), ['REF-B','']);
+  assert.match(env.node('#batch-review-summary').textContent, /1 lançamento\(s\) já registrado/);
+  env.batch.save(); assert.equal(env.confirmations.length,0);
+  assert.deepEqual(env.saved().map((r) => r.referenceId || ''), ['REF-B','']);
 });
 
-test('repetição exata no lote vem fora e pode ser selecionada explicitamente com aviso global', () => {
+test('repetição exata no lote vem fora e pode ser selecionada explicitamente sem novo diálogo', () => {
   const env = setup(); ingest(env, [item({ referencia: 'REF' }),item({ referencia: 'REF' })]);
   assert.match(env.node('#batch-count').textContent, /1 de 2 selecionadas/);
   select(env, 1, true); env.batch.save();
-  assert.match(env.confirmations[0].text, /possível\(is\) duplicata/);
-  env.confirm(); assert.equal(env.saved().length, 2);
+  assert.equal(env.confirmations.length,0); assert.equal(env.saved().length, 2);
 });
 
 test('parcelas distintas com os mesmos dados da compra e referência comum sobrevivem à conferência', () => {
@@ -370,7 +376,7 @@ test('data estimada nunca comprova repetição exata para desmarcar automaticame
   const env = withDocument([item({ valor: 10 }),item({ data: '', referencia: 'REF' })]);
   env.context.Dashboard.existingTransactions = () => [{ id:'old',date:'2026-01-31',desc:'Compra',amount:25,currency:'BRL',type:'despesa',account:'C6',referenceId:'REF' }];
   await env.read(); assert.match(env.node('#batch-count').textContent,/2 de 2 selecionadas/);
-  env.batch.save(); assert.match(env.confirmations[0].text,/possível\(is\) duplicata/); env.confirm();
+  env.batch.save(); assert.equal(env.confirmations.length,0);
   assert.equal(env.saved().length,2); assert.equal(env.saved()[1].dateEstimated,true);
   const previousEstimated = withDocument([item({ referencia: 'REF' })]);
   previousEstimated.context.Dashboard.existingTransactions = () => [{ id:'old',date:'2026-01-31',desc:'Compra',amount:25,currency:'BRL',type:'despesa',account:'C6',referenceId:'REF',dateEstimated:true,dateEstimate:{method:'nearest',previousDate:'2026-01-31'} }];
@@ -386,43 +392,44 @@ test('referência igual com conta, tipo, moeda, data ou valor diferente não é 
   }
 });
 
-test('cancelar confirmação conserva a prévia e outra tentativa abre uma nova confirmação', () => {
-  const env = setup(); ingest(env,[item(),item()]); env.batch.save(); env.cancel();
-  assert.equal(env.saved(), undefined); assert.equal(env.node('#modal-batch').classList.contains('hidden'), false);
-  env.batch.save(); assert.equal(env.confirmations.length, 2); env.confirm(); assert.equal(env.saved().length, 2);
+test('fechar a prévia antes do clique não grava transações', () => {
+  const env=setup(); ingest(env,[item(),item()]); env.batch.close(); env.batch.save();
+  assert.equal(env.savedCount(),0); assert.equal(env.confirmations.length,0);
 });
 
-test('edição, seleção ou novo registro local durante confirmação reapresentam resumo antes do commit', () => {
+test('edição, seleção e registro local são reavaliados ao clicar em Incluir', () => {
   for (const change of ['edit','selection','database']) {
-    const env = setup(); let existing = [];
-    env.context.Dashboard.existingTransactions = () => existing;
-    ingest(env, [item(),item({ descricao: 'Outra' })]); env.batch.save();
-    if (change === 'edit') edit(env, 0, 'amount', '37');
-    if (change === 'selection') select(env, 1, false);
-    if (change === 'database') existing = [{ id: 'new', date: '2026-01-31', desc: 'Nova', amount: 25, type: 'despesa', currency: 'BRL', account: 'C6' }];
-    env.confirm(); assert.equal(env.saved(), undefined); assert.equal(env.confirmations.length, 2);
-    assert.match(env.confirmations[1].text, /resumo atualizado/);
-    env.confirm(); assert.equal(env.savedCount(), 1);
+    const env=setup();let existing=[];env.context.Dashboard.existingTransactions=()=>existing;
+    ingest(env,[item(),item({descricao:'Outra'})]);
+    if (change==='edit') edit(env,0,'amount','37');
+    if (change==='selection') select(env,1,false);
+    if (change==='database') existing=[{id:'new',date:'2026-01-31',desc:'Compra',amount:25,type:'despesa',currency:'BRL',account:'C6'}];
+    env.batch.save();
+    assert.equal(env.confirmations.length,0);
+    assert.deepEqual(env.saved().map(t=>[t.desc,t.amount]),change==='edit'?[['Compra',37],['Outra',25]]:change==='selection'?[['Compra',25]]:[['Outra',25]]);
   }
 });
 
-test('mudança de pasta, conta ou geração cancela confirmação antiga sem gravar em outro destino', () => {
+test('mudança de pasta, conta ou geração antes de Incluir protege o destino anterior', () => {
   for (const change of ['owner','folder','generation']) {
-    let owner = 'A', folder = 'one';
-    const env = setup({ Cloud: { getToken: () => 'fake', getSyncState: () => ({ owner }) } });
-    env.context.Dashboard.getImportTargetId = () => folder; env.batch.open();
-    ingest(env,[item(),item()]); env.batch.save();
-    if (change === 'owner') owner = 'B'; if (change === 'folder') folder = 'two';
-    if (change === 'generation') { env.batch.close(); env.batch.open(); }
-    env.confirm(); assert.equal(env.savedCount(), 0);
+    let owner='A',folder='one'; const env=setup({Cloud:{getSyncState:()=>({owner})}});
+    env.context.Dashboard.getImportTargetId=()=>folder;env.batch.open();ingest(env,[item(),item()]);
+    if(change==='owner')owner='B'; if(change==='folder')folder='two';
+    if(change==='generation'){env.batch.close();env.batch.open();}
+    env.batch.save();assert.equal(env.savedCount(),0);
   }
 });
 
-test('duplo clique no CTA ou no callback não duplica confirmação nem commit', () => {
-  const env = setup(); ingest(env,[item(),item()]); env.batch.save(); env.batch.save();
-  assert.equal(env.confirmations.length, 1);
-  const callback = env.confirmations[0].callback;
-  env.confirm(); callback(); env.batch.save(); assert.equal(env.savedCount(), 1);
+test('duplo clique em Incluir grava o lote somente uma vez', () => {
+  const env=setup(); ingest(env,[item(),item()]); env.batch.save(); env.batch.save();
+  assert.equal(env.confirmations.length,0); assert.equal(env.savedCount(),1);
+});
+
+test('uma compra já salva cobre uma única ocorrência sem referência',()=>{
+  const env=setup();
+  env.context.Dashboard.existingTransactions=()=>[{id:'one',date:'2026-01-31',desc:'Compra',amount:25,type:'despesa',currency:'BRL',account:'C6'}];
+  ingest(env,[item(),item(),item({descricao:'Outra loja'})]);env.batch.save();
+  assert.deepEqual(env.saved().map(t=>t.desc),['Compra','Outra loja']);
 });
 
 test('erro de storage ou retorno zero mantém prévia e permite retentar sem sucesso falso', () => {
@@ -441,7 +448,7 @@ test('moedas e precisão são preservadas nos totais e commit, sem arredondar st
   env.batch.save(); assert.deepEqual(env.saved().map((r) => r.amount), [25,10,25,0.000001]);
 });
 
-test('override anterior ou posterior à segunda leitura não recebe selo e exige só confirmação global', async () => {
+test('alterar moeda antes ou depois da segunda leitura permite inclusão direta sem selo de conferência', async () => {
   for (const before of [true,false]) {
     const env = withDocument([item()]);
     if (!before) await env.read();
@@ -449,15 +456,14 @@ test('override anterior ou posterior à segunda leitura não recebe selo e exige
     if (before) await env.read();
     assert.equal(env.node('#batch-verification').classList.contains('is-verified'), false);
     assert.equal(env.node('#btn-batch-save').disabled, false);
-    env.batch.save(); assert.match(env.confirmations[0].totalText || env.confirmations[0].text, /USD/);
-    env.confirm(); assert.equal(env.saved()[0].currency, 'USD');
+    env.batch.save(); assert.equal(env.confirmations.length,0); assert.equal(env.saved()[0].currency, 'USD');
   }
 });
 
-test('projeções ficam fora por padrão; opt-in mantém datas reais e confirmação única', () => {
+test('projeções ficam fora por padrão; opt-in mantém datas reais em uma inclusão', () => {
   const env = setup(); ingest(env,[item({ parcela: '3/4' })]);
   assert.match(env.node('#batch-count').textContent, /1 de 4 selecionadas/);
-  projections(env); env.batch.save(); assert.match(env.confirmations[0].text, /3 projeção/); env.confirm();
+  projections(env); env.batch.save(); assert.equal(env.confirmations.length,0);
   assert.deepEqual(env.saved().map((r) => r.date), ['2025-11-30','2025-12-31','2026-01-31','2026-02-28']);
   assert.equal(new Set(env.saved().map((r) => r.groupId)).size, 1);
 });

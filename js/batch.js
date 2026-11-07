@@ -29,8 +29,6 @@ const Batch = (() => {
   let processedParts = 0;
   let viewFilter = "all";
   let documentSeq = 0;
-  let confirmationSeq = 0;
-  let pendingConfirmation = null;
   let committing = false;
   const MAX_FILES = 15, MAX_PARTS = 120;
 
@@ -77,7 +75,7 @@ const Batch = (() => {
 
   function open(opts) {
     generation++;
-    confirmationSeq++; pendingConfirmation = null; committing = false;
+    committing = false;
     reading = false;
     $("#batch-preview").inert = false;
     opts = opts || {};
@@ -136,12 +134,11 @@ const Batch = (() => {
     reviewWarnings=documentTasks.flatMap(t=>t.result?.avisos||[]);
     documentFailure=payload.job.status!=='ready'||documentTasks.some(t=>!t.result);
     rebuildDocumentPreview();flagDuplicates();renderPreview();
-    if(!statementError)setStatus('Leitura concluída e guardada com privacidade. Confira o resumo e clique em Incluir para salvar.','ok');
+    if(!statementError)setStatus('Leitura concluída. Toque em Incluir para salvar os lançamentos selecionados.','ok');
   }
 
   function close() {
     generation++;
-    confirmationSeq++; pendingConfirmation = null;
     reading = false;
     $("#modal-batch").classList.add("hidden");
     rows = [];
@@ -152,7 +149,7 @@ const Batch = (() => {
     const id=backgroundJobId,version=generation,context={owner:targetOwner,folder:targetId};
     askConfirm('Excluir documento?',ReceiptJobs.discardText,async()=>{
       if(!contextValid(version)||backgroundJobId!==id||committing)return;
-      committing=true;confirmationSeq++;pendingConfirmation=null;
+      committing=true;
       $("#btn-batch-delete").disabled=true;updateCount();
       try{
         await ReceiptJobs.discard(id,context);
@@ -245,7 +242,7 @@ const Batch = (() => {
       coverage.every((p) => !p.auditStatus || p.auditStatus === "verified");
     $("#batch-verification").classList.toggle("is-verified", clean);
     $("#batch-verification-title").textContent = reading ? "Conferindo seu documento" : !selected.length ? "Nenhum lançamento válido selecionado" : clean ? (quick ? "Pronto para incluir" : "Duas leituras, dados de acordo") : "Lote pronto para incluir";
-    $("#batch-verification-note").textContent = !selected.length ? "Itens sem dados válidos ficaram fora. Abra os detalhes para corrigir." : clean ? (quick ? "Valores na moeda debitada. Cashback separado das receitas. Clique em Incluir." : "As duas leituras concordam. Inclua os lançamentos de uma vez.") : hasAI ? "Abra os detalhes se quiser editar. Apenas dúvidas que afetam os lançamentos pedem confirmação." : "Planilha lida no seu dispositivo, sem IA.";
+    $("#batch-verification-note").textContent = !selected.length ? "Itens sem dados válidos ficaram fora. Abra os detalhes para corrigir." : clean ? (quick ? "Valores na moeda debitada. Cashback separado das receitas. Clique em Incluir." : "As duas leituras concordam. Inclua os lançamentos de uma vez.") : hasAI ? "Toque em Incluir para salvar os lançamentos selecionados. Os detalhes são opcionais." : "Planilha lida no seu dispositivo, sem IA.";
     if (rows.some(r=>r.c6SeriesKey)) {
       if (rows.every(r=>r.c6Matched)) {
         $("#batch-verification-title").textContent = "Estas parcelas já estão na pasta";
@@ -269,7 +266,7 @@ const Batch = (() => {
       if (Number.isFinite(r.amount)) totals[code][r.type] += r.amount;
     });
     $("#batch-currency-totals").innerHTML = Object.entries(totals).map(([code, t]) => '<div class="batch-currency-line"><strong>' + escapeHtml(code) + '</strong><span>Entradas <b>' + escapeHtml(fmtMoney(t.receita, code)) + '</b></span><span>Saídas <b>' + escapeHtml(fmtMoney(t.despesa, code)) + '</b></span></div>').join("");
-    $("#batch-filter-pending").textContent = `Com avisos (${rows.filter((r) => (!r.gen || includeGenerated) && pendingRow(r)).length})`;
+    $("#batch-filter-pending").textContent = `Observações (${rows.filter((r) => (!r.gen || includeGenerated) && pendingRow(r)).length})`;
     ["pending", "all"].forEach((filter) => {
       const button = $("#batch-filter-" + filter);
       button.classList.toggle("active", viewFilter === filter);
@@ -292,12 +289,12 @@ const Batch = (() => {
       const ambiguous = scheduled.filter(r => r.c6Ambiguous && !r.on).length;
       messages.push(`${printed} parcela(s) impressa(s). O cronograma começa na data de cada compra e inclui ${scheduled.filter(r=>r.on).length} parcela(s) selecionada(s), uma por mês.` +
         (existing ? ` ${existing} já registrada(s) ficaram de fora.` : "") +
-        (ambiguous ? ` ${ambiguous} precisam de revisão e estão desmarcadas.` : ""));
+        (ambiguous ? ` ${ambiguous} ficaram fora por coincidência com parcelas da pasta.` : ""));
     }
     const repeated = rows.filter((r) => !r.c6SeriesKey && r.duplicateExcluded && !r.on).length;
-    if (repeated) messages.push(`${repeated} item(ns) com a mesma referência e dados já registrados ou repetidos ficaram fora. Você pode selecioná-los de volta nos detalhes.`);
+    if (repeated) messages.push(`${repeated} lançamento(s) já registrado(s) ficaram fora. Você pode ver as correspondências nos detalhes.`);
     const unresolved = rows.filter((r) => r.on && r.dup).length;
-    if (unresolved) messages.push(`${unresolved} possível(is) duplicata(s) estão selecionadas e serão informadas na confirmação do lote.`);
+    if (unresolved) messages.push(`${unresolved} possível(is) duplicata(s) continuam selecionadas. Os detalhes mostram as coincidências.`);
     const estimated = rows.filter((r) => r.on && r.dateEstimated).length;
     if (estimated) messages.push(`${estimated} data(s) estimada(s) pelos lançamentos vizinhos do mesmo documento. A estimativa ficará identificada após a inclusão.`);
     const invalidGenerated = rows.filter((r) => r.gen && invalidRow(r)).length;
@@ -566,6 +563,7 @@ const Batch = (() => {
     prepareInstallmentSchedule(transactions);
     const existing = ImportMatch.createIndex(transactions);
     const seen = ImportMatch.createIndex();
+    const usedExisting = new Set();
     let flagged = 0;
     [...rows].sort((a, b) => Number(!!a.gen) - Number(!!b.gen)).forEach((r) => {
       const candidate = effectiveRow(r);
@@ -577,14 +575,22 @@ const Batch = (() => {
         if (r.c6Matched) r.on = false;
         return;
       }
+      const inFolder = ImportMatch.find(candidate, existing);
       const matches = [
-        ...ImportMatch.find(candidate, existing).map((m) => ({ ...m, origin: "Já na pasta" })),
+        ...inFolder.map((m) => ({ ...m, origin: "Já na pasta" })),
         ...ImportMatch.find(candidate, seen).filter((m) => !independentReferences(candidate, m.transaction)).map((m) => ({ ...m, origin: "Neste lote" }))
       ];
       const key = ImportMatch.reviewKey(candidate, matches);
       if (matches.length && r.matchKey !== key) flagged++;
       r.matches = matches; r.matchKey = key; r.dup = matches.length > 0;
-      const exact = matches.some((m) => m.exactReference);
+      // Sem referência individual, uma linha já salva só cobre uma ocorrência
+      // do arquivo. Duas compras iguais impressas podem ser operações distintas.
+      const prior = !r.gen && !candidate.dateEstimated && candidate.account && !candidate.referenceId &&
+        inFolder.find(m => m.kind === "strong" && !usedExisting.has(m.transaction) &&
+          !m.transaction.dateEstimated && !m.transaction.referenceId && candidate.date === m.transaction.date &&
+          (candidate.installment || "") === (m.transaction.installment || ""));
+      if (prior) usedExisting.add(prior.transaction);
+      const exact = !!prior || matches.some((m) => m.exactReference);
       if (!r.selectionTouched && !r.gen) {
         if (exact) { r.on = false; r.duplicateExcluded = true; }
         else if (r.duplicateExcluded) { r.duplicateExcluded = false; r.on = !invalidRow(r); }
@@ -606,7 +612,7 @@ const Batch = (() => {
       return '<small>' + escapeHtml(m.origin + ': ' + m.reason + '. ' + t.date + ' · ' + t.desc + ' · ' + fmtMoney(t.amount, t.currency) + ' · ' + (t.account || 'sem conta') + (t.referenceId ? ' · ref. ' + t.referenceId : '')) + '</small>';
     }).join("");
     return '<div class="batch-match">' + comparisons + (r.matches.length > 3 ? '<small>Mais ' + (r.matches.length - 3) + ' comparação(ões).</small>' : '') +
-      (r.duplicateExcluded && !r.on ? '<strong>Fora da seleção: mesma referência e dados. Marque para incluir mesmo assim.</strong>' : '<small>Se mantiver selecionado, este aviso aparecerá na confirmação única do lote.</small>') + '</div>';
+      (r.duplicateExcluded && !r.on ? '<strong>Já registrado. Este item ficou fora da seleção.</strong>' : '<small>Selecionado para inclusão.</small>') + '</div>';
   }
 
   // Mensagem de sucesso do acúmulo (menciona o total quando já havia itens)
@@ -692,7 +698,7 @@ const Batch = (() => {
       const accounted=tasks.reduce((n,t)=>n+t.result.itens.length+(t.result.excluded||[]).filter(x=>x.operacao!==false&&x.motivo!=='resumo').length,0);
       summary.push('Documento informa '+count+' operações; '+accounted+' foram identificadas e explicadas.');
       if(count!==accounted){
-        const message='A contagem impressa ('+count+') difere das operações identificadas ('+accounted+'). Confira as exclusões e o documento antes de incluir.';
+        const message='A contagem impressa ('+count+') difere das operações identificadas ('+accounted+'). Só as operações identificadas estão disponíveis neste lote.';
         summary.push(message);if(!reviewWarnings.includes(message))reviewWarnings.push(message);
         rows.filter(r=>tasks.some(t=>t.documentId===r.sourceDocumentId)).forEach(r=>{delete r.verifiedSnapshot;});
       }
@@ -892,7 +898,7 @@ const Batch = (() => {
                 if (!contextValid(version)) return;
                 partRows.forEach((r) => { r.auditReasons = ["A segunda conferência não foi concluída. Confira este item manualmente no documento."]; });
                 progress.auditStatus = "failed";
-                progress.status = "partial"; progress.message = "segunda conferência indisponível; cobertura não confirmada pelas duas leituras. Primeira leitura preservada, revisão manual obrigatória";
+                progress.status = "partial"; progress.message = "segunda conferência indisponível; cobertura não confirmada pelas duas leituras. Primeira leitura preservada";
               }
               if (progress.status !== "complete") allComplete = false;
             } catch (error) {
@@ -902,7 +908,7 @@ const Batch = (() => {
             }
           }
           record.status = allComplete && partCount ? "complete" : "partial";
-          record.message = "há partes incompletas; o aviso aparecerá na confirmação do lote";
+          record.message = "algumas partes não puderam ser conferidas";
         } catch (error) {
           if (!contextValid(version)) return;
           record.status = "failed";
@@ -911,7 +917,7 @@ const Batch = (() => {
         }
       }
       if (!contextValid(version)) return;
-      setStatus(added + " lançamento(s) reconhecido(s). " + (incomplete() ? "Há avisos que aparecerão na confirmação única do lote." : "Leitura e conferência concluídas. Veja o resumo abaixo."), incomplete() ? "warn" : "ok");
+      setStatus(added + " lançamento(s) reconhecido(s). " + (incomplete() ? "Os dados válidos estão disponíveis para inclusão." : "Leitura e conferência concluídas. Veja o resumo abaixo."), incomplete() ? "warn" : "ok");
     } finally {
       if (contextValid(version)) {
         coverage.filter((p) => p.status === "pending").forEach((p) => { p.status = "failed"; p.message = "não lido: execução interrompida"; });
@@ -961,15 +967,15 @@ const Batch = (() => {
     const flagged = flagDuplicates();
     if (added) {
       statusAcumulo(added);
-      if (falhas.length || excludedCount) setStatus(`${added} itens lidos com avisos. Confira a revisão abaixo antes de adicionar.`, "warn");
-      if (flagged) setStatus(`${added} itens lidos — ${flagged} coincidência(s) precisam de revisão antes de adicionar.`, "warn");
+      if (falhas.length || excludedCount) setStatus(`${added} itens lidos. Os detalhes mostram as observações.`, "warn");
+      if (flagged) setStatus(`${added} itens lidos — ${flagged} coincidência(s) indicada(s) nos detalhes.`, "warn");
     } else {
       setStatus(falhas.length ? `Nada lido: ${falhas.join("; ")}.` : "Não reconheci transações. Confira o formato (Data, Descrição, Valor).", "err");
     }
     renderPreview();
   }
 
-  function selectionPlan() {
+  function selectedTransactions() {
     prepareSelection();
     flagDuplicates();
     const selected = rows.filter((r) => r.on && !invalidRow(r));
@@ -987,44 +993,18 @@ const Batch = (() => {
         ...(t.dateEstimated ? { dateEstimated: true, dateEstimate: { ...t.dateEstimate } } : {})
       };
     });
-    const counts = {
-      differences: selected.filter((r) => needsReview(r) || rowReview(r).length).length,
-      duplicates: selected.filter((r) => r.dup).length,
-      estimated: selected.filter((r) => r.dateEstimated).length,
-      skipped: excludedCount + rows.filter((r) => !r.gen && invalidRow(r)).length,
-      repeated: rows.filter((r) => r.duplicateExcluded && !r.on).length,
-      projections: selected.filter((r) => r.gen).length
-    };
-    const failedAudit = coverage.some((p) => p.auditStatus === "failed");
-    const warnings = [];
-    if (counts.differences) warnings.push(`${counts.differences} lançamento(s) com diferenças ou campos não confirmados nas duas leituras.`);
-    if (counts.duplicates) warnings.push(`${counts.duplicates} possível(is) duplicata(s) serão incluídas porque continuam selecionadas.`);
-    if (counts.skipped) warnings.push(`${counts.skipped} item(ns) sem dados válidos ficaram fora deste lote.`);
-    if (counts.projections) warnings.push(`${counts.projections} projeção(ões) de parcelas ou meses foram selecionadas por você.`);
-    if (incomplete()) warnings.push("Há partes não lidas ou cobertura incompleta. Este lote não representa necessariamente o documento inteiro.");
-    if (failedAudit) warnings.push("A segunda conferência não foi concluída. A inclusão usará os dados disponíveis da primeira leitura.");
-    warnings.push(...[...new Set(reviewWarnings)].slice(0, 6));
-    const totals = {};
-    txs.forEach((t) => {
-      if (!totals[t.currency]) totals[t.currency] = { receita: 0, despesa: 0 };
-      totals[t.currency][t.type] += t.amount;
-    });
-    const totalText = Object.entries(totals).map(([code, t]) => `${code}: entradas ${fmtMoney(t.receita, code)}; saídas ${fmtMoney(t.despesa, code)}.`).join("\n");
-    const key = JSON.stringify({ rows: rows.map((r) => [r.on, reviewSnapshot(r), r.matchKey || "", r.auditReasons || [], r.review || [], !!r.dateEstimated, r.dateEstimate || null, !!r.duplicateExcluded]), coverage, reviewWarnings, excludedCount, txs, counts });
-    return { txs, warnings, failedAudit, totalText, key };
+    return txs;
   }
 
-  async function commitPlan(plan, version) {
+  async function commitPlan(txs, version) {
     if (committing || reading || documentFailure || statementError || !contextValid(version)) return;
     committing = true;
-    pendingConfirmation = null;
-    confirmationSeq++;
     updateCount();
     try {
       let n;
       if(backgroundJobId){
         const id = backgroundJobId;
-        const result = await ReceiptJobs.commit(id, plan.txs);
+        const result = await ReceiptJobs.commit(id, txs);
         if (!Array.isArray(result.transactions)) throw new Error("invalid_commit_response");
         if(!contextValid(version))return;
         // A confirmação pertence ao servidor, mesmo se o download da pasta falhar.
@@ -1037,8 +1017,8 @@ const Batch = (() => {
         const visible = Dashboard.showReceiptTransactions(id, savedIds);
         toast(visible ? `${savedIds.length} lançamento(s) do documento na pasta.` : "Inclusão confirmada na nuvem. Quando a pasta atualizar, abra o sino e toque em Ver lançamentos.");
         return;
-      }else n = Dashboard.appendImported(plan.txs);
-      if (n !== plan.txs.length) { toast("Não foi possível adicionar todos os itens. A prévia foi mantida; confira se a pasta ainda está disponível."); return; }
+      }else n = Dashboard.appendImported(txs);
+      if (n !== txs.length) { toast("Não foi possível adicionar todos os itens. A prévia foi mantida; confira se a pasta ainda está disponível."); return; }
       close();
       toast(`${n} transaç${n === 1 ? "ão adicionada" : "ões adicionadas"} ✔`);
     } catch (error) {
@@ -1059,37 +1039,19 @@ const Batch = (() => {
       }
       toast(backgroundJobId?"Não foi possível confirmar a resposta. Confira o sino de notificações ou tente Incluir novamente; este lote está protegido contra gravação repetida.":"Não foi possível gravar o lote. A prévia foi mantida para tentar novamente.");
     } finally {
-      committing = false;
-      if (version === generation) updateCount();
+      if (version === generation) { committing = false; updateCount(); }
     }
   }
 
-  function confirmPlan(plan, version, changed = false) {
-    const ticket = ++confirmationSeq;
-    pendingConfirmation = ticket;
-    const label = plan.failedAudit ? "Incluir sem a segunda conferência" : `Incluir ${plan.txs.length} lançamento${plan.txs.length === 1 ? "" : "s"}`;
-    const text = `${changed ? "O lote mudou desde a confirmação anterior. Este é o resumo atualizado.\n\n" : ""}${plan.txs.length} lançamento(s) serão incluídos na pasta atual.\n\n${plan.totalText}\n\n${plan.warnings.join("\n")}\n\nConfirmar inclui todos os lançamentos válidos selecionados de uma vez.`;
-    askConfirm("Incluir lote com avisos?", text, () => {
-      if (ticket !== pendingConfirmation || ticket !== confirmationSeq || committing) return;
-      pendingConfirmation = null;
-      if (reading || !contextValid(version)) { toast("A pasta, conta ou leitura mudou. Reabra a inclusão na pasta desejada."); return; }
-      const current = selectionPlan();
-      if (!current.txs.length) { renderPreview(); toast("Nenhum lançamento válido está selecionado. Veja os detalhes do lote."); return; }
-      if (current.key !== plan.key) { renderPreview(); confirmPlan(current, version, true); return; }
-      commitPlan(current, version);
-    }, { confirmLabel: label });
-  }
-
   function save() {
+    if ($("#modal-batch").classList.contains("hidden")) return;
     if (statementError) { toast(statementError); return; }
     if (reading || committing || documentFailure) { toast("Conclua a leitura e a comparação antes de adicionar."); return; }
     if (!contextValid()) { toast("A pasta ou conta mudou. Reabra a importação na pasta desejada."); return; }
-    if (pendingConfirmation && !$("#modal-confirm").classList.contains("hidden")) return;
-    const plan = selectionPlan();
+    const txs = selectedTransactions();
     renderPreview();
-    if (!plan.txs.length) { toast("Nenhum lançamento válido está selecionado. Abra os detalhes para corrigir os dados ou selecionar itens."); return; }
-    if (plan.warnings.length) confirmPlan(plan, generation);
-    else commitPlan(plan, generation);
+    if (!txs.length) { toast("Nenhum lançamento válido está selecionado. Abra os detalhes para corrigir os dados ou selecionar itens."); return; }
+    commitPlan(txs, generation);
   }
 
   /* ---------- Eventos ---------- */

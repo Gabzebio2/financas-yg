@@ -620,12 +620,12 @@
       <div class="meta-modal-icon batch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 3H5v18h14V8zm0 0v5h5M9 12h6m-6 4h6" stroke-linejoin="round"/></svg></div>
       <div>
         <h3 id="batch-title">Importar em lote</h3>
-        <p class="meta-modal-sub">Fotos e prints são lançados automaticamente na pasta aberta.</p>
+        <p class="meta-modal-sub">Fotos e PDFs são lidos e incluídos automaticamente na pasta aberta.</p>
       </div>
     </div>
 
     <p id="batch-phases" role="status" aria-live="polite" style="white-space:pre-line"></p>
-      <p class="hint">Mantenha o app aberto só até terminar o envio. Depois, você pode apagar a tela. O sino mostra os lançamentos das fotos e qualquer item que precise de ajuste. PDFs e planilhas continuam disponíveis para conferência.</p>
+      <p class="hint">Mantenha o app aberto até terminar o envio. Depois, você pode apagar a tela e consultar o resultado no sino. Quando houver uma planilha no lote, use Incluir para salvar os itens selecionados.</p>
       <button type="button" class="btn btn-ghost hidden" id="btn-batch-retry">Continuar leitura</button>
       <p id="batch-source-summary" class="hint"></p>
       <details><summary>Exclusões explicadas e cashback</summary><ul id="batch-exclusions"></ul></details>
@@ -663,12 +663,12 @@
       <label class="checkline hidden" id="batch-generated-wrap"><input type="checkbox" id="batch-include-generated"> Incluir também parcelas e meses estimados que não aparecem no documento</label>
       <p class="hint hidden" id="batch-review-summary" role="status"></p>
       <div id="batch-coverage" class="import-review hidden" role="status"></div>
-      <div class="batch-review-filters" role="group" aria-label="Lançamentos para conferir">
-        <button type="button" class="btn btn-ghost btn-sm" id="batch-filter-pending" aria-pressed="true">Com avisos</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="batch-filter-all" aria-pressed="false">Todos</button>
-      </div>
       <details id="batch-details" class="batch-details">
       <summary>Ver ou ajustar detalhes (opcional) <span aria-hidden="true">⌄</span></summary>
+      <div class="batch-review-filters" role="group" aria-label="Filtrar lançamentos nos detalhes">
+        <button type="button" class="btn btn-ghost btn-sm" id="batch-filter-all" aria-pressed="true">Todos</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="batch-filter-pending" aria-pressed="false">Observações</button>
+      </div>
       <div class="table-wrap batch-table-wrap">
         <table id="batch-table">
           <thead>
@@ -826,8 +826,8 @@
 <script src="lib/supabase.min.js"></script>
 <script src="lib/pdf-lib.min.js"></script>
 <script type="module" src="supabase/functions/receipt-jobs/c6-subtotals.mjs?v=20261106"></script>
-<script src="js/installment-schedule.js?v=20261106-schedule"></script>
-<script src="js/import-dates.js?v=20261103-date-groups"></script>
+<script src="js/installment-schedule.js?v=20261106-auto-document"></script>
+<script src="js/import-dates.js?v=20261106-auto-document"></script>
 <script src="js/app.js?v=20261106-c6-statement"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
 <script src="js/importer.js?v=20261027-import"></script>
@@ -835,13 +835,13 @@
 <script src="js/business.js?v=20261103-bills"></script>
 <script src="js/dashboard.js?v=20261106-c6-statement"></script>
 <script src="js/receipt.js?v=20261103-date-groups"></script>
-<script src="js/batch.js?v=20261106-c6-statement"></script>
+<script src="js/batch.js?v=20261106-auto-document"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
 <script src="js/cloud-archive.js?v=20261106-archive-sync"></script>
 <script src="js/cloud-merge.js?v=20261023-pilot"></script>
 <script src="js/cloud.js?v=20261106-archive-sync"></script>
-<script src="js/receipt-jobs.js?v=20261106-c6-statement"></script>
+<script src="js/receipt-jobs.js?v=20261106-auto-document"></script>
 <script src="js/navigation.js?v=20261106-archive-sync"></script>
 <script src="js/whatsapp.js?v=20261023-pilot"></script>
 </body>

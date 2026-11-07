@@ -73,32 +73,45 @@ const InstallmentSchedule = (() => {
     }
   }
   // Um vencimento antecipado continua ocupando o número da parcela original.
-  function correspondence(tx, base, printed) {
-    if (validDate(tx.purchaseDate)) return tx.purchaseDate === base.date ? 2 : 0;
-    const part = parts(tx);
-    if (!part || !validDate(base.date)) return 0;
-    const date = tx.advance?.scheduledDate || tx.date;
-    if (!validDate(date)) return 0;
-    const expected = shift(base.date,part.current-1);
-    if (date === expected || date === base.date && printed.has(part.current)) return 2;
-    // Um cadastro antigo pode ter começado na fatura anterior. A data vizinha
-    // pede conferência e nunca prova que os dois lançamentos são o mesmo.
-    return Math.abs(Date.parse(date) - Date.parse(expected)) <= 35*86400000 ? 1 : 0;
+  function correspondence(candidate, base) {
+    const offsets = candidate.rows.map(tx => {
+      if (!parts(tx)) return null;
+      if (validDate(tx.purchaseDate)) return tx.purchaseDate === base.date ? 0 : null;
+      const date = tx.advance?.scheduledDate || tx.date;
+      if (!validDate(date) || !validDate(base.date)) return null;
+      return (Date.parse(date) - Date.parse(shift(base.date,parts(tx).current-1))) / 86400000;
+    });
+    const originalDate=i=>offsets[i]!==null && (candidate.rows[i].advance?.scheduledDate || candidate.rows[i].date)===base.date;
+    if (!offsets.some((d,i) => d !== null && (Math.abs(d)<=35 || originalDate(i)))) return 0;
+    if (candidate.signatures.size !== 1 || offsets.some(d => d === null)) return 1;
+    if (offsets.every((d,i) => d===0 || originalDate(i))) return 4;
+    if (offsets.some(d=>Math.abs(d)>35)) return 1;
+    if (offsets.every(d => Math.abs(d)<=7)) return 3;
+    // A diferença de um ciclo se repete ao longo da série antiga; o número da
+    // parcela continua identificando o mesmo débito apesar dos meses lançados.
+    const positions=new Set(candidate.rows.map(tx=>parts(tx).current));
+    if (positions.size>1 && Math.max(...offsets)-Math.min(...offsets)<=7) return 2;
+    return 1;
   }
   function plan(lines, existing) {
     const bases = createGroups(lines);
-    const exactKeys = new Map(), legacyGroups = new Map(), legacyBySignature = new Map();
+    const exactKeys = new Map(), claims = new Map(), legacyGroups = new Map(), legacyBySignature = new Map();
     for (const tx of existing || []) {
-      if (!parts(tx)) continue;
       if (tx.seriesKey) {
+        if (tx.groupId) {
+          if (!claims.has(tx.groupId)) claims.set(tx.groupId,new Set());
+          claims.get(tx.groupId).add(tx.seriesKey);
+        }
+        if (!parts(tx)) continue;
         if (!exactKeys.has(tx.seriesKey)) exactKeys.set(tx.seriesKey,[]);
         exactKeys.get(tx.seriesKey).push(tx);
       } else {
+        if (!parts(tx) && !tx.groupId) continue;
         const id = JSON.stringify(tx.groupId ? ["group",tx.groupId] : ["single",tx.id]);
         if (!legacyGroups.has(id)) legacyGroups.set(id,{id,groupId:tx.groupId || null,rows:[],signatures:new Set()});
         const candidate = legacyGroups.get(id);
         candidate.rows.push(tx);
-        candidate.signatures.add(JSON.stringify(fields(tx,parts(tx))));
+        candidate.signatures.add(parts(tx) ? JSON.stringify(fields(tx,parts(tx))) : "");
       }
     }
     for (const candidate of legacyGroups.values()) {
@@ -107,16 +120,18 @@ const InstallmentSchedule = (() => {
         legacyBySignature.get(sig).push(candidate);
       }
     }
-    const used = new Set(), strongOwners = new Map();
+    const used = new Set(), owners = new Map();
     for (const base of bases) {
-      const printed = new Set(base.groups.flatMap(group=>group.printedNumbers));
       base.matches = [];
       for (const candidate of legacyBySignature.get(base.signature) || []) {
-        const ranks = candidate.rows.map(tx=>correspondence(tx,base,printed));
-        if (!ranks.some(Boolean)) continue;
-        const strong = candidate.signatures.size === 1 && ranks.every(r=>r===2);
-        base.matches.push({candidate,strong});
-        if (strong) strongOwners.set(candidate.id,(strongOwners.get(candidate.id)||0)+1);
+        const bound=claims.get(candidate.groupId);
+        if (bound && !base.groups.some(g=>bound.has(g.seriesKey))) continue;
+        const rank = correspondence(candidate,base);
+        if (!rank) continue;
+        base.matches.push({candidate,rank});
+        const prior=owners.get(candidate.id);
+        if (!prior || rank>prior.rank) owners.set(candidate.id,{rank,count:1});
+        else if(rank===prior.rank) prior.count++;
       }
       for (const group of base.groups) {
         const saved = exactKeys.get(group.seriesKey);
@@ -129,9 +144,12 @@ const InstallmentSchedule = (() => {
         adopt(group,saved,ids.length===1?ids[0]:null);
       }
     }
-    const ambiguous = "Há uma série semelhante na pasta, com datas ou vínculos diferentes. Confira antes de criar novas parcelas.";
+    const ambiguous = "Série semelhante preservada. As posições sem correspondência segura ficam fora deste envio.";
     for (const base of bases) {
-      const automatic = base.matches.filter(m=>m.strong && strongOwners.get(m.candidate.id)===1).map(m=>m.candidate);
+      const automatic = base.matches.filter(({candidate,rank})=>{
+        const best=owners.get(candidate.id);
+        return rank>=2 && rank===best.rank && best.count===1;
+      }).map(m=>m.candidate);
       // After completing an older group its newer slots have seriesKey but
       // the original siblings may not. Reserve both under the proven group.
       const linked=[];
@@ -141,7 +159,7 @@ const InstallmentSchedule = (() => {
         else if (alreadyKnown.length>1) alreadyKnown.forEach(g=>caution(g,ambiguous));
         else linked.push(c);
       }
-      linked.sort((a,b)=>String(a.groupId).localeCompare(String(b.groupId)));
+      linked.sort((a,b)=>a.groupId<b.groupId?-1:a.groupId>b.groupId?1:0);
       const available = base.groups.filter(g=>g.groupId===g.seriesKey);
       // Never choose arbitrarily between more matching groups than printed purchases.
       if (linked.length > available.length) {
@@ -169,3 +187,4 @@ const InstallmentSchedule = (() => {
   return {plan};
 })();
 if (typeof module !== "undefined" && module.exports) module.exports = InstallmentSchedule;
+else if (typeof Deno !== "undefined") globalThis.InstallmentSchedule = InstallmentSchedule;

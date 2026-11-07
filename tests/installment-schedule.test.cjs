@@ -42,12 +42,28 @@ test("duas posições diferentes impressas na mesma fatura compõem uma série, 
   assert(groups[0].installments.every(slot=>slot.printed===groups[0].printedNumbers.includes(slot.number)));
 });
 
-test("série antiga deslocada por um mês requer conferência e não cria parcelas duplicadas",()=>{
+test("série antiga deslocada por um mês ocupa as posições já existentes e só completa as ausentes",()=>{
   const printed=line({date:"2026-05-24",installment:"6/6"});
   const old=Array.from({length:6},(_,i)=>tx(i+1,`2026-${String(i+4).padStart(2,"0")}-24`,{groupId:"old",installment:(i+1)+"/6"}));
-  const [g]=plan([printed],old);assert(g.needsReview);assert.deepEqual(missing(g),[]);
+  const [g]=plan([printed],old);assert(!g.needsReview);assert.deepEqual(missing(g),[]);
+  assert.deepEqual(g.installments.map(s=>s.matchedId),old.map(t=>t.id));
+  const [partial]=plan([printed],old.filter((_,i)=>i!==3));
+  assert(!partial.needsReview);assert.equal(partial.groupId,"old");assert.deepEqual(missing(partial),[4]);
   const otherPurchase=old.map(t=>({...t,purchaseDate:"2026-04-24"}));
   const [other]=plan([printed],otherPurchase);assert(!other.needsReview);assert.deepEqual(missing(other),[1,2,3,4,5,6]);
+});
+
+test("pequeno deslocamento de data ocupa uma posição, sem consumir o registro de uma compra datada distintamente",()=>{
+  const previous=tx(3,"2026-10-15",{groupId:"old"});
+  const [near]=plan([line()],[previous]);
+  assert.equal(near.installments[2].matchedId,previous.id);assert.equal(near.groupId,"old");assert.deepEqual(missing(near),[1,2,4,5]);
+  const [newer,exact]=plan([line(),line({date:"2026-08-15"})],[previous]);
+  assert.deepEqual(missing(newer),[1,2,3,4,5]);assert.equal(exact.installments[2].matchedId,previous.id);
+});
+test("duas compras com datas igualmente próximas preservam a série incerta e as demais compras seguem",()=>{
+  const [one,two,other]=plan([line(),line({date:"2026-08-13"}),line({desc:"Outra Loja"})],[tx(3,"2026-10-12",{groupId:"old"})]);
+  assert(one.needsReview&&two.needsReview);assert.deepEqual(missing(one),[]);assert.deepEqual(missing(two),[]);
+  assert.deepEqual(missing(other),[1,2,3,4,5]);
 });
 
 test("um slot legado só cobre uma compra observada; dois vínculos plausíveis não são escolhidos arbitrariamente",()=>{

@@ -19,6 +19,12 @@ const ReceiptJobs=(()=>{
   const notes=[notice.problem,notice.duplicates&&`${notice.duplicates} já registrado(s)`,notice.excluded&&`${notice.excluded} fora de receitas e despesas`,j.photo_corrected_count&&`${j.photo_corrected_count} incluído(s) após ajuste`].filter(Boolean);
   return (list?`<ul class="receipt-item-list">${list}</ul>`:'')+(exceptions?`<details><summary>${pending.length} para conferir</summary><ul class="receipt-item-list">${exceptions}</ul></details>`:'')+(notes.length?`<small>${escapeHtml(notes.join(' · '))}.</small>`:'');
  }
+ function documentDetails(n){
+  if(!n)return '';
+  const counts=[n.duplicates && `${n.duplicates} já na pasta`,n.skipped && `${n.skipped} sem correspondência segura`,n.excluded && `${n.excluded} fora dos lançamentos`].filter(Boolean);
+  const blocked=Array.isArray(n.blockedDocuments)?n.blockedDocuments.map(d=>`<li>${escapeHtml(d.label || 'Documento')} · ${escapeHtml(d.reason || 'Leitura incompleta')}</li>`).join(''):'';
+  return (counts.length?`<small>${escapeHtml(counts.join(' · '))}</small>`:'')+(blocked?`<details><summary>Arquivos que ficaram de fora</summary><ul>${blocked}</ul></details>`:'');
+ }
  const deleting=new Set();
  const discardText='Excluir os arquivos deste envio e o resultado da leitura? Você poderá enviar o mesmo documento novamente. Lançamentos já incluídos na pasta serão mantidos.';
  const owner=()=>typeof Cloud!=='undefined'?Cloud.getSyncState().owner:null;
@@ -44,10 +50,11 @@ const ReceiptJobs=(()=>{
   try{
    if(!context.owner||!context.folder)throw Error('login_required');
    const pages=[];
+   const documentAuto=!extraRows.length && tasks.length>0 && tasks.every(t=>t.part.mediaType==='application/pdf');
    for(const t of tasks){
     const bytes=Uint8Array.from(atob(t.part.data),c=>c.charCodeAt(0));
     const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');
-    pages.push({mediaType:t.part.mediaType,bytes:bytes.length,sha256:hash,label:t.label,documentId:t.documentId,context:{...t.part.documentContext,...(options.photoAuto?{photoAuto:true,photoCategory:options.category || null}:{})}});
+    pages.push({mediaType:t.part.mediaType,bytes:bytes.length,sha256:hash,label:t.label,documentId:t.documentId,context:{...t.part.documentContext,...(documentAuto?{documentAuto:true,documentCategory:options.category || null}:{}),...(options.photoAuto?{photoAuto:true,photoCategory:options.category || null}:{})}});
    }
    await request({action:'create',id,folder:context.folder,pages,categories:Dashboard.getCats(),cards:CARDS,extraRows},context);
    created=true;
@@ -67,30 +74,31 @@ const ReceiptJobs=(()=>{
   lastJobs=jobs;
   const panel=document.querySelector('#receipt-jobs');if(!panel)return;
   if(panel.open){
-   jobs.filter(j=>j.photo_notice).forEach(j=>seenPhotos.add(j.id));
+   jobs.filter(j=>j.photo_notice||j.document_notice).forEach(j=>seenPhotos.add(j.id));
    try{localStorage.setItem(photoKey(),JSON.stringify([...seenPhotos].slice(-60)));}catch{}
   }
-  const pending=jobs.filter(j=>j.status!=='committed'||(j.photo_notice&&!seenPhotos.has(j.id))).length;
+  const pending=jobs.filter(j=>j.status!=='committed'||((j.photo_notice||j.document_notice)&&!seenPhotos.has(j.id))).length;
   const bell=document.querySelector('#hero-notifications'),badge=document.querySelector('#receipt-notification-count');
   if(badge){badge.textContent=pending>99?'99+':String(pending);badge.classList.toggle('hidden',!pending);}
   const label=pending?`Notificações: ${pending} atualização(ões) de documentos`:'Notificações';
   bell?.setAttribute('aria-label',label);
   const announcement=document.querySelector('#receipt-notification-announcement');
-  const ready=jobs.filter(j=>j.status==='ready').length;
-  const newlySaved=jobs.filter(j=>j.photo_notice?.items?.length && !seenPhotos.has(j.id)).length;
-  const notice=newlySaved?'Fotos processadas. Veja os lançamentos no sino.':ready?`${ready} documento(s) disponível(is) para conferência.`:'';
+  const ready=jobs.filter(j=>j.status==='ready'&&!j.document_auto).length;
+  const newlySaved=jobs.filter(j=>(j.photo_notice?.items?.length||j.document_notice) && !seenPhotos.has(j.id)).length;
+  const notice=newlySaved?'Leitura concluída. Veja o resultado no sino.':ready?`${ready} documento(s) disponível(is) para incluir.`:'';
   if(announcement&&announcement.textContent!==notice)announcement.textContent=notice;
   const list=panel.querySelector('[data-jobs-list]');
   panel.querySelector('[data-jobs-error]').textContent='';
   const currentJobIds=Dashboard.receiptJobIds?.();
-  const removed=new Set(jobs.filter(j=>currentJobIds && j.status==='committed' && !j.photo_notice && syncedJobs.has(j.id+':committed') && !currentJobIds.has(j.id)).map(j=>j.id));
+  const removed=new Set(jobs.filter(j=>currentJobIds && j.status==='committed' && !j.photo_notice && (!j.document_notice||j.document_notice.included>0) && syncedJobs.has(j.id+':committed') && !currentJobIds.has(j.id)).map(j=>j.id));
   const fingerprint=JSON.stringify([owner(),folder(),jobs,[...removed]]);if(fingerprint===rendered)return;rendered=fingerprint;
   list.innerHTML=jobs.map(j=>{
    const status=removed.has(j.id)?'Lançamentos removidos da pasta':j.photo_notice ? (j.photo_notice.items?.length ? (j.photo_notice.items.length===1?'1 lançamento incluído automaticamente':j.photo_notice.items.length+' lançamentos incluídos automaticamente') : j.status==='ready'?'Foto precisa de ajuste':j.photo_corrected_count?'Ajustes incluídos na pasta':'Nenhum lançamento novo') : j.status==='ready'?'Pronto para conferir e incluir':j.status==='committed'?'Incluído na pasta':j.status==='uploading'?`Envio incompleto · ${j.uploaded}/${j.total_pages} páginas`:j.status==='error'?'Leitura interrompida — o progresso foi preservado':`Leitura ${j.first}/${j.total_pages} · conferência ${j.second}/${j.total_pages}`;
-   const buttons=j.status==='ready'?`<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="open">${j.photo_notice?'Ver pendência':'Conferir e incluir'}</button>`:j.status==='error'&&j.retry_count<3?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="retry">Retomar leitura</button>`:'';
-   const view=!removed.has(j.id) && (j.photo_notice ? j.photo_notice.items?.length || j.photo_corrected_count : j.status==='committed') ? `<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="view">Ver lançamentos</button>`:'';
+   const summary=removed.has(j.id)?status:j.document_notice ? (j.document_notice.included===1?'1 lançamento incluído automaticamente':j.document_notice.included>0?`${j.document_notice.included} lançamentos incluídos automaticamente`:'Nenhum lançamento novo') : j.document_auto && j.status==='ready'?'Incluindo na pasta…':status;
+   const buttons=j.status==='ready'&&!j.document_auto?`<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="open">${j.photo_notice?'Ver pendência':'Conferir e incluir'}</button>`:j.status==='error'&&j.retry_count<3?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="retry">Retomar leitura</button>`:'';
+   const view=!removed.has(j.id) && (j.document_notice ? j.document_notice.included>0 : j.photo_notice ? j.photo_notice.items?.length || j.photo_corrected_count : j.status==='committed') ? `<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="view">Ver lançamentos</button>`:'';
    const discard=['uploading','ready','error','committed'].includes(j.status)?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="discard">Excluir documento</button>`:'';
-   return `<article class="receipt-job"><div><strong>${escapeHtml(j.label||'Documento')}</strong><p class="${j.status==='ready'?'receipt-ready':''}">${escapeHtml(status)}</p>${photoDetails(j)}<small>${j.status==='error'&&j.error==='saldo_ia'?'Recarregue os créditos da API e retome a leitura. ':''}Documento disponível até ${escapeHtml(new Date(j.expires_at).toLocaleDateString('pt-BR'))}.</small></div><div class="receipt-job-actions">${buttons}${view}${discard}</div></article>`;
+   return `<article class="receipt-job"><div><strong>${escapeHtml(j.label||'Documento')}</strong><p class="${j.status==='ready'?'receipt-ready':''}">${escapeHtml(summary)}</p>${photoDetails(j)}${documentDetails(j.document_notice)}<small>${j.status==='error'&&j.error==='saldo_ia'?'Recarregue os créditos da API e retome a leitura. ':''}Documento disponível até ${escapeHtml(new Date(j.expires_at).toLocaleDateString('pt-BR'))}.</small></div><div class="receipt-job-actions">${buttons}${view}${discard}</div></article>`;
   }).join('')||`<div class="receipt-notifications-empty"><strong>${!owner()?'Entre na sua conta':!folder()?'Abra uma pasta':'Tudo em dia'}</strong>${!owner()?'Conecte sua conta para acompanhar seus documentos privados.':!folder()?'As notificações dos documentos aparecem na pasta em que você os enviou.':'Quando você enviar um comprovante, o andamento e o resultado aparecerão aqui.'}</div>`;
  }
  function closeNotifications(){const panel=document.querySelector('#receipt-jobs');if(panel?.open)panel.close();}

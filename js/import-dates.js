@@ -73,3 +73,4 @@ const ImportDates = (() => {
 })();
 
 if (typeof module !== "undefined" && module.exports) module.exports = ImportDates;
+else if (typeof Deno !== "undefined") globalThis.ImportDates = ImportDates;
