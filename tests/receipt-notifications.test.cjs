@@ -73,7 +73,7 @@ test('sino da fatura soma somente os valores impressos e diferencia pagamentos d
  const html=h.node('[data-jobs-list]').innerHTML;
  assert.match(html,/4 movimentos em outubro de 2026/);
  assert.match(html,/Despesas da fatura<\/dt><dd>70 BRL/);
- assert.match(html,/Pagamento recebido<\/dt><dd>90 BRL/);
+ assert.match(html,/Pg recebido<\/dt><dd>90 BRL/);
  assert.match(html,/Créditos do cartão<\/dt><dd>20 BRL/);
  assert.match(html,/Despesas após créditos do cartão<\/dt><dd>50 BRL/);
  assert.match(html,/Outros recebimentos<\/dt><dd>3 BRL/);

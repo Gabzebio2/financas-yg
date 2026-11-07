@@ -33,7 +33,7 @@ const ReceiptJobs=(()=>{
     if(s.refundCents>0){
      totals.push(['Créditos do cartão',s.refundCents],['Despesas após créditos do cartão',s.expenseCents-s.refundCents]);
     }
-    if(s.paymentCents>0)totals.push(['Pagamento recebido',s.paymentCents]);
+    if(s.paymentCents>0)totals.push(['Pg recebido',s.paymentCents]);
     const otherCredits=s.creditCents-s.refundCents-s.paymentCents;
     if(otherCredits>0)totals.push(['Outros recebimentos',otherCredits]);
     fields.unshift(...totals.map(([name,cents])=>[name,fmtMoney(cents/100,'BRL')]));

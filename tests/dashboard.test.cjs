@@ -588,7 +588,7 @@ test('parcelas do C6 entram uma por mês e mostram a data original da compra',()
   assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['c6001']); api.renderSummary(); const august=get('#hero-acc').textContent;
   api.setFilters({month:'2026-09'});
   assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['c6002']); api.renderAll();
-  assert.match(get('#tx-tbody').innerHTML,/Compra 11\/08/);assert.notEqual(get('#hero-acc').textContent,august);
+  assert.match(get('#tx-tbody').innerHTML,/Cpr\. 11\/08\/2026/);assert.notEqual(get('#hero-acc').textContent,august);
 });
 test('fatura C6 fecha em outubro: soma linhas impressas pelo fechamento e mantém origem e projeções',async()=>{
   const ds=dataset();
@@ -605,7 +605,8 @@ test('fatura C6 fecha em outubro: soma linhas impressas pelo fechamento e manté
   assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['last-five','last-six','september-pos','payment']);
   assert.match(get('#hero-desp').textContent,/423,30/);
   assert.match(get('#hero-rec').textContent,/6\.145,28/);
-  assert.match(get('#tx-tbody').innerHTML,/Compra 30\/05\/2026/);
+  assert.match(get('#tx-tbody').innerHTML,/30\/10\/2026<br><span title="Data da compra">Cpr\. 30\/05\/2026<\/span>/);
+  assert.match(get('#tx-tbody').innerHTML,/>Pg recebido</);
   assert.match(get('#tx-tbody').innerHTML,/Movimento 30\/09\/2026/);
   assert.doesNotMatch(get('#tx-tbody').innerHTML.match(/<tr data-id="last-five"[\s\S]*?<\/tr>/)[0],/Vence em|Venc\. previsto|05\/11\/2026/);
   api.exportCSV();const csv=await csvBlob.text();

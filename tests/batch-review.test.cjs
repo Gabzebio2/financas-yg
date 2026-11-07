@@ -378,7 +378,7 @@ test('revisão manual C6 preserva crédito da fatura, estorno e calendário das 
   assert.match(env.node('#batch-tbody').innerHTML,/Fatura prevista · 06\/2026/);
   assert.match(env.node('#batch-tbody').innerHTML,/Fatura · 10\/2026/);
   assert.doesNotMatch(env.node('#batch-tbody').innerHTML,/Vencimento|Vence em|05\/11\/2026/);
-  assert.match(env.node('#batch-tbody').innerHTML,/Pagamento recebido pelo cartão/);
+  assert.match(env.node('#batch-tbody').innerHTML,/>Pg recebido</);
   env.batch.save();await new Promise(resolve=>setImmediate(resolve));
   const series=submitted.filter(t=>t.installment);
   assert.deepEqual(Array.from(series,t=>[t.date,t.billDueDate,t.billClosingDate,t.billDateObserved]),[

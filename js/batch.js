@@ -362,7 +362,7 @@ const Batch = (() => {
           r.installment
             ? `<span class="parc-tag" title="${r.gen || (r.c6SeriesKey && !r.c6Printed) ? "Parcela calculada" : "Parcela vista na fatura"}">${r.gen ? "Projeção · " : r.c6SeriesKey && !r.c6Printed ? "Calculada · " : ""}${escapeHtml(r.installment)}</span>`
             : r.creditKind === "card_payment" && r.type === "receita"
-              ? '<span class="parc-tag">Pagamento recebido pelo cartão</span>'
+              ? '<span class="parc-tag">Pg recebido</span>'
             : (r.fixed || r.fixa)
               ? `<span class="parc-tag" title="${r.gen ? "Projeção: repetição não identificada no documento" : "Assinatura/mensalidade detectada"}">${r.gen ? "Projeção · " : ""}fixa</span>`
               : ""

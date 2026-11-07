@@ -1454,21 +1454,16 @@ const Dashboard = (() => {
 
   function transactionDateCell(t) {
     const date = accountingDate(t);
-    const statementMonth = t.billClosingDate?.slice(0, 7);
-    const ownPaymentDate = t.type === "despesa" && isValidISODate(t.paidOn);
-    let label = fmtDate(date);
-    const details = [];
-    const sourceDate = t.purchaseDate || t.date;
-    if (statementMonth && !ownPaymentDate && !t.advance && !isPendingBill(t) && sourceDate !== date) {
-      label = (t.billDateObserved ? "Fatura " : "Fatura prevista ") + fmtMonth(statementMonth);
-      details.push((t.purchaseDate ? "Compra " : "Movimento ") + fmtDate(sourceDate));
-    } else {
-      if (date !== t.date) details.push("Venc. " + fmtDate(t.date));
-      if (t.purchaseDate && t.purchaseDate !== t.date) details.push("Compra " + fmtDate(t.purchaseDate));
+    const lines = [fmtDate(date)];
+    if (t.purchaseDate) lines.push('<span title="Data da compra">Cpr. ' + fmtDate(t.purchaseDate) + '</span>');
+    if (date !== t.date) {
+      const fromStatement = t.billClosingDate && !(t.type === "despesa" && isValidISODate(t.paidOn)) && !t.advance && !isPendingBill(t);
+      if (!fromStatement) lines.push("<small>Venc. " + fmtDate(t.date) + "</small>");
+      else if (!t.purchaseDate) lines.push("<small>Movimento " + fmtDate(t.date) + "</small>");
     }
-    if (!t.installment && t.billDueDate) details.push((t.type === "receita" ? "Fatura de " : t.billDateObserved ? "Vence em " : "Venc. previsto ") + fmtDate(t.billDueDate));
-    const estimate = date === t.date && cleanDateEstimate(t).dateEstimated ? '<br><span class="fixa-chip">Data aproximada</span>' : "";
-    return label + estimate + details.map(text => '<br><small>' + text + '</small>').join("");
+    if (!t.installment && t.billDueDate) lines.push("<small>" + (t.type === "receita" ? "Fatura de " : t.billDateObserved ? "Vence em " : "Venc. previsto ") + fmtDate(t.billDueDate) + "</small>");
+    if (date === t.date && cleanDateEstimate(t).dateEstimated) lines.push('<span class="fixa-chip">Data aproximada</span>');
+    return lines.join("<br>");
   }
 
   function renderTable() {
@@ -1499,7 +1494,7 @@ const Dashboard = (() => {
     tbody.innerHTML = visible.map((t) => {
       const sel = selectedTx.has(t.id);
       const paid = t.type === "despesa" && t.paymentStatus === "paid";
-      const title = `<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.creditKind === "card_payment" ? '<small class="hint">Pagamento recebido pelo cartão</small>' : ""}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span>`;
+      const title = `<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.creditKind === "card_payment" ? '<small class="hint">Pg recebido</small>' : ""}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span>`;
       return `
       <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${t.paymentStatus === "paid" ? " bill-settled" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
