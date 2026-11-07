@@ -26,13 +26,27 @@ test('cada linha do cartão, inclusive pagamento recebido e parcela legada, tem 
    groupId:'group'+i,date:'2026-'+String((i?4:5)+j).padStart(2,'0')+'-'+(i?'24':'30'),installment:(j+1)+'/'+(i+5)})));
  const plan=planDocumentImport({pages:[p],existing});
  assert.equal(plan.coverageError,'');assert.equal(plan.skipped,0);assert.equal(plan.transactions.length,1);
- assert.equal(plan.transactions[0].creditKind,'card_payment');assert.equal(plan.transactions[0].cardBestPurchaseDay,28);
+ assert.equal(plan.transactions[0].creditKind,'card_payment');assert.equal(plan.transactions[0].c6Section,'card_payment');
+ assert.equal(plan.transactions[0].cardBestPurchaseDay,28);
+ assert(plan.matches.every(m=>m.c6Section==='card'));
  assert.deepEqual(plan.sourceRefs.map(r=>r.id ?? r.index).sort(),[0,'legacy04','legacy15']);
  assert.equal(plan.matches.filter(x=>x.observed && x.billDueDate==='2026-11-05').length,2);
  assert.deepEqual(plan.statements.map(s=>[s.accountingMonth,s.expenseCount,s.expenseCents,s.creditCount,s.creditCents,s.paymentCents,s.refundCents]),
    [['2026-10',2,37330,1,614528,614528,0]]);
  p.result.itens.pop();
  assert(planDocumentImport({pages:[p],existing}).coverageError);
+});
+test('a seção de origem separa transferência e compra de mesmo nome, dia e valor no C6', async()=>{
+  const {planDocumentImport}=await planner();
+  const {cleanTransactions}=await import('../supabase/functions/receipt-jobs/core.mjs');
+  const rows=[item({sourceLines:[7]}),item({sourceLines:[12]})];
+  const p=page('doc',rows,{statementCheck:{source:'c6_invoice',version:2,complete:true,rows:2,closingDate:'2026-08-29',
+    movements:[{line:12,type:'despesa',section:'transfer',cents:16490},{line:7,type:'despesa',section:'card',cents:16490}],
+    entries:[{line:7,cents:16490}],subtotals:[],payments:[]}});
+  const result=planDocumentImport({pages:[p],existing:[saved({c6Section:'transfer'})]});
+  assert.equal(result.coverageError,'');
+  assert.deepEqual(cleanTransactions(result.transactions).map(t=>t.c6Section),['card']);
+  assert.deepEqual(result.matches.map(t=>t.c6Section),['transfer']);
 });
 test('fechamento da capa cobre compras anteriores e estornos, e um lançamento em mês divergente impede a inclusão',async()=>{
   const {planDocumentImport}=await planner();

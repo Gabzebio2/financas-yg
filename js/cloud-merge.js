@@ -43,6 +43,18 @@ const CloudMerge = (() => {
     const read = (object, key) => own(object, key) ? object[key] : absent;
     for (const key of new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)])) {
       if (["transactions", "updatedAt", "whatsappRevision"].includes(key)) continue;
+      if (key === "c6InvoicePayments") {
+        const months = [base, local, remote].map(ds => own(ds, key) ? ds[key] : {});
+        if (!months.every(record)) { conflicts.push("field:" + key); continue; }
+        const payments = Object.create(null);
+        for (const month of new Set(months.flatMap(Object.keys))) {
+          const payment = choose(...months.map(m => read(m, month)));
+          if (!payment.ok) conflicts.push(key + ":" + month);
+          else if (payment.value !== absent) payments[month] = copy(payment.value);
+        }
+        if (Object.keys(payments).length) result[key] = payments;
+        continue;
+      }
       const selected = choose(read(base, key), read(local, key), read(remote, key));
       if (!selected.ok) conflicts.push("field:" + key);
       else if (selected.value !== absent) result[key] = copy(selected.value);

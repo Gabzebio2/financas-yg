@@ -1,5 +1,6 @@
 'use strict';
 const ImportDates = require('../js/import-dates.js');
+const {c6AccountFields} = require('../js/installment-schedule.js');
 const currencies = new Set(['BRL','PYG','CLP','USD','EUR','GBP','USDT','USDC']);
 
 // The provider's result has already reconciled local/debited currencies and
@@ -24,7 +25,7 @@ function photoPlan(result, context, categories) {
     if (incomplete || !valid || issues.length) return {name: desc, reason: incomplete ? 'Leitura incompleta' : issues[0] || 'Dados incompletos'};
     const account = item.instituicao || result.cartao || '';
     const category = [context.photoCategory, item.categoria].find(c => categories.includes(c)) || 'Outros';
-    const tx = {desc, date:date.date, amount:item.valor, currency:item.moeda, type:item.tipo, account, category,
+    const tx = {desc, date:date.date, amount:item.valor, currency:item.moeda, type:item.tipo, ...c6AccountFields(account), category,
       referenceId:item.referencia || '', sourceEvidence:item.evidencia || '', sourcePage:context.pageStart,
       installment:installment || null, groupId:null, fixed:false, totalValue:null};
     if (date.dateEstimated) Object.assign(tx, {dateEstimated:true, dateEstimate:date.dateEstimate});

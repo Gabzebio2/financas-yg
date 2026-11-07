@@ -3,6 +3,8 @@
 
 const Dashboard = (() => {
   let ds = null; // dataset aberto
+  let groupedC6Ids = new Set();
+  function pendingIndividualBill(t) { return isPendingBill(t) && !groupedC6Ids.has(t.id); }
   let fil = { mode: "month", month: null, from: "", to: "", cats: null, search: "", type: "all", account: "all" };
   let receiptFilter = null;
   let sort = { key: "date", dir: -1 };
@@ -75,7 +77,7 @@ const Dashboard = (() => {
   }
 
   function renderCurrencyWarning() {
-    const pending = ds.transactions.some((t) => !isPendingBill(t) && !Number.isFinite(dispAmount(t))) ||
+    const pending = ds.transactions.some((t) => !pendingIndividualBill(t) && !Number.isFinite(dispAmount(t))) ||
       ds.limits.some((l) => !Rates.ready(normCur(l.currency), dispCur())) ||
       ds.metas.some((m) => !m.category && !Rates.ready(normCur(m.currency), dispCur()));
     ["#currency-warning", "#tx-currency-warning"].forEach((id) => {
@@ -250,7 +252,7 @@ const Dashboard = (() => {
 
   function filteredTxs(includePending = false) {
     const p = periodRange();
-    return ds.transactions.filter((t) => (includePending || !isPendingBill(t)) && inPeriod(t, p) && inCats(t));
+    return ds.transactions.filter((t) => (includePending || !pendingIndividualBill(t)) && inPeriod(t, p) && inCats(t));
   }
 
   function tableTxs() {
@@ -296,7 +298,7 @@ const Dashboard = (() => {
     };
     const number = (v, currency) => Number(v).toFixed(curFrac(currency)).replace(".", ",");
     const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição", "Pagamento", "Pago em", "Conta a pagar", "Data da compra", "Mês da fatura"]];
-    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t), t.paymentStatus ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", t.paidOn || "", t.paymentStatus ? "Sim" : "Não", t.purchaseDate || "", t.billClosingDate?.slice(0,7) || ""]));
+    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t), t.paymentStatus && !groupedC6Ids.has(t.id) ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", groupedC6Ids.has(t.id) ? "" : t.paidOn || "", t.paymentStatus && !groupedC6Ids.has(t.id) ? "Sim" : "Não", t.purchaseDate || "", t.billClosingDate?.slice(0,7) || ""]));
     const csv = "\uFEFF" + rows.map((row) => row.map(cell).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
@@ -318,6 +320,8 @@ const Dashboard = (() => {
     el.innerHTML=latest ? `<strong>Última fatura · ${escapeHtml(latest.account)}</strong><dl>${latest.billClosingDate ? '<div><dt>Fechamento</dt><dd>'+fmtDate(latest.billClosingDate)+'</dd></div>' : ''}<div><dt>Vencimento</dt><dd>${fmtDate(latest.billDueDate)}</dd></div><div><dt>Melhor dia para comprar</dt><dd>Dia ${latest.cardBestPurchaseDay}</dd></div></dl>` : "";
   }
   function renderAll() {
+    const cycles = InstallmentSchedule.c6Invoices(ds.transactions, todayISO());
+    groupedC6Ids = new Set(cycles.filter(i => i.month >= "2026-11").flatMap(i => i.transactionIds));
     $("#ds-name").textContent = ds.name;
     if (typeof BusinessPanel !== "undefined") BusinessPanel.render(ds);
     renderPeriodControls();
@@ -326,7 +330,7 @@ const Dashboard = (() => {
     renderCatFilter();
     renderSummary();
     renderCardCycle();
-    renderBillBoard();
+    renderBillBoard(cycles);
     renderCurrencyBreakdown();
     renderLimits();
     renderMetas();
@@ -546,7 +550,7 @@ const Dashboard = (() => {
 
     const p = periodRange();
     const acumulado = ds.transactions
-      .filter((t) => !isPendingBill(t) && inCats(t) && (!p || !p.to || accountingDate(t) <= p.to))
+      .filter((t) => !pendingIndividualBill(t) && inCats(t) && (!p || !p.to || accountingDate(t) <= p.to))
       .reduce((s, t) => s + (t.type === "receita" ? dispAmount(t) : -dispAmount(t)), 0);
 
     const label = fil.mode === "month" ? "do mês" : fil.mode === "range" ? "do período" : "total";
@@ -685,7 +689,7 @@ const Dashboard = (() => {
 
   // Meses exibidos nos gráficos de evolução
   function chartMonths() {
-    const months = [...new Set(ds.transactions.filter(t => !isPendingBill(t)).map(t => accountingDate(t).slice(0,7)))].sort();
+    const months = [...new Set(ds.transactions.filter(t => !pendingIndividualBill(t)).map(t => accountingDate(t).slice(0,7)))].sort();
     if (fil.mode === "range") {
       return months.filter((ym) => (!fil.from || ym >= fil.from.slice(0, 7)) && (!fil.to || ym <= fil.to.slice(0, 7)));
     }
@@ -694,7 +698,7 @@ const Dashboard = (() => {
 
   function renderCharts() {
     const palette = themePalette();
-    const posted = ds.transactions.filter(t => !isPendingBill(t) && inCats(t));
+    const posted = ds.transactions.filter(t => !pendingIndividualBill(t) && inCats(t));
     if (posted.some((t) => !Number.isFinite(dispAmount(t)))) {
       ["chart-cat", "chart-evo", "chart-saldo", "chart-conta"].forEach((id) => {
         if (charts[id]) { charts[id].destroy(); delete charts[id]; }
@@ -835,7 +839,7 @@ const Dashboard = (() => {
     const ym = refMonth();
     const spentByCat = Object.create(null);
     ds.transactions
-      .filter((t) => t.type === "despesa" && !isPendingBill(t) && inPeriod(t, p))
+      .filter((t) => t.type === "despesa" && !pendingIndividualBill(t) && inPeriod(t, p))
       .forEach((t) => {
         const k = stripAccents(t.category);
         spentByCat[k] = (spentByCat[k] ?? 0) + dispAmount(t);
@@ -972,7 +976,7 @@ const Dashboard = (() => {
       const k = stripAccents(m.category);
       let owed = 0, paid = 0;
       ds.transactions.forEach((t) => {
-        if (isPendingBill(t) || stripAccents(t.category) !== k) return;
+        if (pendingIndividualBill(t) || stripAccents(t.category) !== k) return;
         if (t.type === "despesa") owed += dispAmount(t); else paid += dispAmount(t);
       });
       const target = Math.round(owed * 100) / 100;
@@ -1065,7 +1069,7 @@ const Dashboard = (() => {
       const k = stripAccents(cat);
       let owed = 0, paid = 0;
       ds.transactions.forEach((t) => {
-        if (isPendingBill(t) || stripAccents(t.category) !== k) return;
+        if (pendingIndividualBill(t) || stripAccents(t.category) !== k) return;
         if (t.type === "despesa") owed += dispAmount(t); else paid += dispAmount(t);
       });
       if (!Number.isFinite(owed) || !Number.isFinite(paid)) return empty("Cotação indisponível para calcular o progresso dessa categoria");
@@ -1359,36 +1363,70 @@ const Dashboard = (() => {
   function billPayButton(t, confirming = false) {
     if (confirming) return `<button type="button" class="bill-pay is-paid" aria-disabled="true">${uiIcon("check", 15)} Pago</button>`;
     const pending = isPendingBill(t);
-    const label = (pending ? "Marcar como paga" : "Reabrir conta") + " · " + t.desc;
+    const label = (pending ? "Marcar como paga" : "Reabrir conta") + " · " + t.desc + (t.invoice ? " · " + fmtMonthLong(t.invoice.month) : "");
     return `<button type="button" class="bill-pay ${pending ? "is-open" : "is-paid"}" data-bill-action="${pending ? "pay" : "reopen"}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">${uiIcon("check", 15)} ${pending ? "Marcar como paga" : "Pago"}</button>`;
+  }
+
+  function invoiceBill(invoice, today) {
+    const payment = ds.c6InvoicePayments?.[invoice.month];
+    const remaining = {};
+    for (const currency of CURRENCY_CODES) {
+      const amount = (invoice.totals[currency] || 0) - (payment?.totals[currency] || 0);
+      const rounded = Number(amount.toFixed(curFrac(currency)));
+      if (rounded) remaining[currency] = rounded;
+    }
+    const open = Object.values(remaining).some(amount => amount > 0);
+    const current = invoice.startDate <= today && today <= invoice.closingDate;
+    if (!open && !payment && !current) return null;
+    const paidOn = payment?.paidOn;
+    const version = [paidOn, ...CURRENCY_CODES.map(c => `${invoice.totals[c] || 0}/${payment?.totals[c] || 0}`)].join("|");
+    return {
+      id:"c6-invoice:" + invoice.month, type:"despesa", desc:"Cartão de crédito C6",
+      date:invoice.dueDate, paidOn, paymentStatus:open ? "pending" : payment ? "paid" : "empty",
+      invoice, version, amounts:open || !payment ? remaining : payment.totals,
+      status:!open && payment ? "Paga" : (current ? "Aberta" : "Fechada") + (payment ? " · Saldo a pagar" : ""),
+    };
   }
 
   function billRow(t, today, confirming = false) {
     const pending = isPendingBill(t);
-    const date = pending || confirming ? t.date : accountingDate(t);
+    const empty = t.paymentStatus === "empty";
+    const date = pending || empty || confirming ? t.date : accountingDate(t);
     const [year, month, day] = date.split("-");
     const monthLabel = MESES_ABREV[Number(month) - 1] + (year === today.slice(0,4) ? "" : "/" + year);
-    const when = (pending || confirming ? "Vencimento em " : "Pago em ") + fmtDate(date);
-    const detail = [t.account, t.category, t.installment && "Parcela " + t.installment].filter(Boolean).join(" · ");
-    return `<div class="bill-row ${pending ? "bill-open" : "bill-settled"}" data-id="${escapeHtml(t.id)}"${pending ? ' title="Dois cliques ou dois toques para marcar como paga"' : ""}>
+    const when = (pending || empty || confirming ? "Vencimento em " : "Pago em ") + fmtDate(date);
+    const invoice = t.invoice;
+    const detail = invoice
+      ? [fmtMonthLong(invoice.month), t.status, (invoice.dueDateObserved ? "Vencimento " : "Vencimento previsto ") + fmtDate(t.date)].join(" · ")
+      : [t.account, t.category, t.installment && "Parcela " + t.installment].filter(Boolean).join(" · ");
+    const period = invoice ? (invoice.closingDateObserved ? "Período" : "Período previsto") + " de " +
+      fmtDate(invoice.startDate).slice(0,5) + " a " + fmtDate(invoice.closingDate).slice(0,5) : "";
+    const amount = invoice ? Object.entries(t.amounts).filter(([,v]) => v).map(([c,v]) =>
+      c === "BRL" ? fmtBRL(v) : fmtTxAmount({amount:v, currency:c})).join(" / ") || fmtBRL(0) : fmtTxAmount(t);
+    const invoiceData = invoice ? ` data-invoice-month="${invoice.month}" data-invoice-version="${escapeHtml(t.version)}" data-folder="${escapeHtml(ds.id)}"` : "";
+    return `<div class="bill-row ${pending ? "bill-open" : empty ? "bill-current" : "bill-settled"}" data-id="${escapeHtml(t.id)}"${invoiceData}${pending ? ' title="Dois cliques ou dois toques para marcar como paga"' : ""}>
       <time class="bill-date" datetime="${date}" title="${when}" aria-label="${when}"><b>${day}</b><span>${monthLabel}</span></time>
-      <div class="bill-title"><strong>${escapeHtml(t.desc)}</strong>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</div>
-      <b class="bill-amount">${escapeHtml(fmtTxAmount(t))}</b><div class="bill-actions">${billPayButton(t, confirming)}</div>
+      <div class="bill-title"><strong>${escapeHtml(t.desc)}</strong>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}${period ? `<small>${escapeHtml(period)}</small>` : ""}</div>
+      <b class="bill-amount">${escapeHtml(amount)}</b><div class="bill-actions">${empty ? '<small>Sem valor a pagar</small>' : billPayButton(t, confirming)}</div>
     </div>`;
   }
 
   let billMidnightTimer;
   const billConfirmations = new Map(); // Só a apresentação espera. O pagamento já está salvo.
-  function renderBillBoard() {
+  function renderBillBoard(invoiceCycles) {
     const panel = $("#dash-bills");
     if (!ds || !panel) return;
-    const active = ds.transactions.filter(isPendingBill);
-    const settled = ds.transactions.filter(t => t.type === "despesa" && t.paymentStatus === "paid")
+    const today = todayISO();
+    const cycles = invoiceCycles || InstallmentSchedule.c6Invoices(ds.transactions, today);
+    const started = cycles.filter(i => i.month >= "2026-11" && i.startDate <= today);
+    const invoices = started.map(i => invoiceBill(i, today)).filter(Boolean);
+    const bills = ds.transactions.filter(t => !groupedC6Ids.has(t.id)).concat(invoices);
+    const active = bills.filter(isPendingBill);
+    const settled = bills.filter(t => t.type === "despesa" && t.paymentStatus === "paid")
       .sort((a,b) => accountingDate(b).localeCompare(accountingDate(a)));
     const confirmingInAgenda = t => billConfirmations.get(t.id)?.source === "agenda";
     const visible = [...active, ...settled.filter(confirmingInAgenda)].sort((a,b) => a.date.localeCompare(b.date));
     const historyItems = settled.filter(t => !confirmingInAgenda(t));
-    const today = todayISO();
     const count = active.length;
     const header = `<div class="bill-head"><div class="bill-heading"><span class="bill-emblem">${uiIcon("calendar", 24)}</span><div><h2>Contas a pagar</h2>
       <p>${count ? (count === 1 ? "1 conta em aberto" : count + " contas em aberto") : "Nenhuma pendente"}</p></div></div>
@@ -1397,6 +1435,7 @@ const Dashboard = (() => {
       ["late", "Em atraso", visible.filter(t => t.date < today)],
       ["today", "Vencem hoje", visible.filter(t => t.date === today)],
       ["upcoming", "Próximos vencimentos", visible.filter(t => t.date > today)],
+      ["cycle", "Fatura em andamento", invoices.filter(t => t.paymentStatus === "empty")],
     ];
     const agenda = groups.filter(([, , items]) => items.length).map(([key, label, items]) =>
       `<section class="bill-group" data-due="${key}"><h3>${label}</h3>${items.map(t => billRow(t, today, t.paymentStatus === "paid")).join("")}</section>`).join("");
@@ -1419,11 +1458,38 @@ const Dashboard = (() => {
       (next || panel.querySelector(".bill-add")).focus({preventScroll:true});
     }
     clearTimeout(billMidnightTimer);
-    if (count) {
+    if (count || cycles.length) {
       const midnight = new Date();
       midnight.setHours(24, 0, 0, 0);
       billMidnightTimer = setTimeout(renderBillBoard, Math.max(1, midnight.getTime() - Date.now()));
     }
+  }
+
+  function changeAgendaBill(row, action) {
+    if (!row.dataset.invoiceMonth) {
+      changeBill(row.dataset.id, action, "agenda");
+      return;
+    }
+    if (row.dataset.folder !== ds?.id || !refreshImportTarget()) return;
+    const today = todayISO();
+    const month = row.dataset.invoiceMonth;
+    const invoice = InstallmentSchedule.c6Invoices(ds.transactions, today).find(i => i.month === month);
+    if (!invoice || month < "2026-11" || invoice.startDate > today) return;
+    const bill = invoiceBill(invoice, today);
+    if (!bill || bill.paymentStatus === "empty" || action !== (isPendingBill(bill) ? "pay" : "reopen")) return;
+    if (bill.version !== row.dataset.invoiceVersion) {
+      renderBillBoard();
+      toast("O valor da fatura mudou. Confira o saldo atualizado.");
+      return;
+    }
+    if (action === "pay") {
+      ds.c6InvoicePayments ||= {};
+      ds.c6InvoicePayments[month] = {paidOn:today, totals:{...invoice.totals}};
+    } else {
+      delete ds.c6InvoicePayments[month];
+    }
+    finishBillChange(bill.id, action, "agenda");
+    toast(action === "pay" ? "Fatura C6 marcada como paga." : "Fatura C6 reaberta.");
   }
 
   function changeBill(id, action, source) {
@@ -1431,9 +1497,14 @@ const Dashboard = (() => {
     const t = ds.transactions.find(tx => tx.id === id);
     if (!t) { toast("Esta conta não está mais na pasta."); return; }
     const previous = {pay:"pending", reopen:"paid"};
-    if (t.type !== "despesa" || !Object.hasOwn(previous, action) || previous[action] !== t.paymentStatus) return;
+    if (groupedC6Ids.has(id) || t.type !== "despesa" || !Object.hasOwn(previous, action) || previous[action] !== t.paymentStatus) return;
     t.paymentStatus = action === "pay" ? "paid" : "pending";
     if (action === "pay") t.paidOn = todayISO(); else delete t.paidOn;
+    finishBillChange(id, action, source);
+    toast(action === "pay" ? "Conta paga. Despesa contabilizada." : "Conta em aberto. O valor só entra nas despesas após o pagamento.");
+  }
+
+  function finishBillChange(id, action, source) {
     saveCur();
     clearTimeout(billConfirmations.get(id)?.timer);
     billConfirmations.delete(id);
@@ -1449,7 +1520,6 @@ const Dashboard = (() => {
       const selector = source === "agenda" ? "#dash-bills .bill-agenda .bill-row" : "#tx-tbody tr";
       $$(selector).find(row => row.dataset.id === id)?.classList.add("bill-just-paid");
     }
-    toast(action === "pay" ? "Conta paga. Despesa contabilizada." : "Conta em aberto. O valor só entra nas despesas após o pagamento.");
   }
 
   function transactionDateCell(t) {
@@ -1490,10 +1560,10 @@ const Dashboard = (() => {
     const visible = list.slice(0, rowLimit);
     tbody.innerHTML = visible.map((t) => {
       const sel = selectedTx.has(t.id);
-      const paid = t.type === "despesa" && t.paymentStatus === "paid";
+      const paid = !groupedC6Ids.has(t.id) && t.type === "despesa" && t.paymentStatus === "paid";
       const title = `<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.creditKind === "card_payment" ? '<small class="hint">Pg recebido</small>' : ""}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span>`;
       return `
-      <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${t.paymentStatus === "paid" ? " bill-settled" : ""}">
+      <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${paid ? " bill-settled" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
         <td style="white-space:nowrap">${transactionDateCell(t)}</td>
         <td><span class="tx-desc-cell">${catAvatar(t.category)}${paid
@@ -1504,7 +1574,7 @@ const Dashboard = (() => {
         <td>${t.installment ? escapeHtml(t.installment) + (t.advance ? '<br><span class="fixa-chip">Adiantada</span>' : '') : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
         <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtTxAmount(t)}</td>
         <td class="tx-actions">
-          ${isPendingBill(t) ? billPayButton(t) : ""}
+          ${pendingIndividualBill(t) ? billPayButton(t) : ""}
           <button class="btn-icon" data-action="edit" title="Editar" aria-label="Editar transação">${uiIcon("edit")}</button>
           ${installmentTotal(t) > 1 ? `<button class="btn-icon" data-action="advance" title="Adiantar parcelas" aria-label="Adiantar parcelas">${uiIcon("advance")}</button>` : ""}
           <button class="btn-icon" data-action="delete" title="Excluir" aria-label="Excluir transação">${uiIcon("trash")}</button>
@@ -1708,7 +1778,7 @@ const Dashboard = (() => {
       ds.transactions.map((t) => t.account).filter((a) => a && !CARDS.includes(a))
     )).sort();
     const sel = $("#tx-account-sel");
-    const opts = CARDS.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`);
+    const opts = CARDS.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c === "C6" ? "C6 · Crédito" : c)}</option>`);
     extras.forEach((a) => opts.push(`<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`));
     opts.unshift(`<option value="">Sem conta/cartão</option>`);
     opts.push(`<option value="__other__">+ Outra conta ou cartão</option>`);
@@ -1744,8 +1814,6 @@ const Dashboard = (() => {
     const paidBox = $("#tx-paid"), trackBox = $("#tx-payable");
     trackBox.checked = trackBox.defaultChecked = isEdit ? !!tx.paymentStatus : !!opts.pending;
     paidBox.checked = paidBox.defaultChecked = tx?.paymentStatus === "paid";
-    updateTypeToggle();
-
     // Reseta o leitor de comprovante
     $("#apikey-wrap").classList.add("hidden");
     const rs = $("#receipt-status");
@@ -1762,12 +1830,14 @@ const Dashboard = (() => {
 
     $("#tx-amount").value = isEdit ? fmtMoneyInput(tx.amount, txCurCode) : "";
     $("#tx-desc").value = isEdit ? tx.desc : (opts.desc || "");
-    populateAccountSelect(isEdit ? (tx.account || "") : null);
+    populateAccountSelect(isEdit && tx.account === "C6" && tx.c6Section === "transfer"
+      ? C6_CHECKING : isEdit ? tx.account : null);
 
     // Data padrão: hoje se estiver no mês filtrado, senão o dia 1º do mês filtrado
     let defDate = todayISO();
     if (!isEdit && fil.mode === "month" && fil.month && defDate.slice(0, 7) !== fil.month) defDate = fil.month + "-01";
     $("#tx-date").value = isEdit ? tx.date : defDate;
+    updateTypeToggle();
 
     // Categorias
     const catSel = $("#tx-cat");
@@ -1792,9 +1862,21 @@ const Dashboard = (() => {
     setTimeout(() => $("#tx-amount").focus(), 50);
   }
 
+  function formUsesC6Invoice() {
+    const selected = $("#tx-account-sel").value;
+    const account = selected === "__other__" ? $("#tx-account-other").value.trim() : selected;
+    if (txType !== "despesa" || !account || account === C6_CHECKING) return false;
+    const original = editingId && ds.transactions.find(t => t.id === editingId);
+    const creditSelected = account === "C6" && (!original || original.account !== account || original.c6Section === "transfer");
+    return InstallmentSchedule.isC6InvoicePayable({
+      ...original, account, date:$("#tx-date").value, type:txType, desc:$("#tx-desc").value,
+      ...(creditSelected && {c6Section:"card"}),
+    }, ds.transactions);
+  }
+
   function updateTypeToggle() {
     $$("#tx-type-toggle button").forEach((b) => b.classList.toggle("active", b.dataset.type === txType));
-    const expense = txType === "despesa";
+    const expense = txType === "despesa" && !formUsesC6Invoice();
     const tracked = expense && $("#tx-payable").checked;
     $("#tx-bill-options").classList.toggle("hidden", !expense);
     $("#tx-paid-wrap").classList.toggle("hidden", !tracked || !editingId);
@@ -1912,14 +1994,20 @@ const Dashboard = (() => {
 
     const edited = editingId ? ds.transactions.find(t => t.id === editingId) : null;
     if (editingId && !edited) { toast("Esta transação não está mais disponível. Abra a lista novamente."); return; }
+    // Imported transfers retain the statement account for matching on a later import.
+    const previousSelection = edited?.account === "C6" && edited.c6Section === "transfer" ? C6_CHECKING : edited?.account;
+    const accountChanged = !!edited && account !== previousSelection;
+    if (edited && !accountChanged) account = edited.account || "";
     const startFixed = !parts && $("#tx-fixa").checked &&
       (!edited || (txType === "despesa" && !edited.fixed && !edited.installment));
     if (startFixed && !isValidISODate(monthlyDate(FIXA_MESES-1))) { toast("Escolha uma data que permita criar a série mensal."); return; }
     ensureCat(ds, category);
-    const fields = { amount: Math.abs(amount), date, desc, category, account, type: txType, currency };
+    const section = !edited || accountChanged ? (account === "C6" ? "card" : undefined) : edited.c6Section;
+    const fields = { amount: Math.abs(amount), date, desc, category, type: txType, currency,
+      ...InstallmentSchedule.c6AccountFields(account, section) };
     const paidBox = $("#tx-paid"), trackBox = $("#tx-payable");
     // Controles intocados mantêm o último pagamento salvo, inclusive por outra tela.
-    const tracked = edited && trackBox.checked === trackBox.defaultChecked ? !!edited.paymentStatus : trackBox.checked;
+    const tracked = !formUsesC6Invoice() && (edited && trackBox.checked === trackBox.defaultChecked ? !!edited.paymentStatus : trackBox.checked);
     const paid = edited && paidBox.checked === paidBox.defaultChecked ? edited.paymentStatus === "paid" : paidBox.checked;
     const paymentStatus = tracked ? (paid ? "paid" : "pending") : undefined;
     let paidOn = edited?.paidOn;
@@ -1929,6 +2017,10 @@ const Dashboard = (() => {
     const nextBill = bill.paymentStatus ? {paymentStatus:"pending"} : {};
     if (edited) {
       const dateChanged = txDateEdited || date !== edited.date;
+      if (accountChanged) {
+        delete edited.c6Section;
+        delete edited.creditKind;
+      }
       delete edited.paymentStatus; delete edited.paidOn;
       Object.assign(edited, fields, evidence, bill);
       if (dateChanged) { delete edited.dateEstimated; delete edited.dateEstimate; }
@@ -1950,11 +2042,9 @@ const Dashboard = (() => {
       const groupId = uid();
       for (let i = 0; i < n; i++) {
         ds.transactions.push({
-          id: uid(), groupId,
+          ...fields, id: uid(), groupId,
           date: monthlyDate(i),
-          desc, category, account, type: txType,
           amount: parts[i],
-          currency,
           installment: `${i + 1}/${n}`,
           totalValue: amount,
           ...(i === 0 ? {...evidence, ...bill} : nextBill),
@@ -1963,8 +2053,7 @@ const Dashboard = (() => {
       message = `Parcelamento criado: ${n} lançamentos ✔`;
     } else {
       ds.transactions.push({
-        id: uid(), date, desc, category, account, type: txType,
-        amount: Math.abs(amount), currency, installment: null, totalValue: null,
+        id: uid(), ...fields, installment: null, totalValue: null,
         ...evidence, ...bill,
       });
       message = "Transação adicionada ✔";
@@ -2037,6 +2126,7 @@ const Dashboard = (() => {
     const exact = CARDS.find((c) => stripAccents(c) === inst);
     const matches = inst ? CARDS.filter((c) => inst.includes(stripAccents(c)) || stripAccents(c).includes(inst)) : [];
     populateAccountSelect(exact || (matches.length === 1 ? matches[0] : ""));
+    updateTypeToggle();
   }
 
   /* ---------- Eventos ---------- */
@@ -2210,7 +2300,7 @@ const Dashboard = (() => {
       if (button) {
         lastBillTap = null;
         if (button.dataset.billAction === "new") openTxModal(null, {pending:true, title:"Nova conta a pagar"});
-        else changeBill(button.closest("[data-id]").dataset.id, button.dataset.billAction, "agenda");
+        else changeAgendaBill(button.closest("[data-id]"), button.dataset.billAction);
         return;
       }
       // Alguns celulares enviam dois cliques simples e nenhum evento dblclick.
@@ -2223,12 +2313,12 @@ const Dashboard = (() => {
       lastBillTap = {row, time:ev.timeStamp, x:ev.clientX, y:ev.clientY};
       if (previous?.row === row && ev.timeStamp - previous.time <= 400 && Math.hypot(ev.clientX-previous.x, ev.clientY-previous.y) <= 26) {
         lastBillTap = null;
-        changeBill(row.dataset.id, "pay", "agenda");
+        changeAgendaBill(row, "pay");
       }
     });
     billPanel.addEventListener("dblclick", ev => {
       const row = ev.target.closest(".bill-row.bill-open");
-      if (row && !ev.target.closest("button, a")) changeBill(row.dataset.id, "pay", "agenda");
+      if (row && !ev.target.closest("button, a")) changeAgendaBill(row, "pay");
     });
     $("#tx-tbody").addEventListener("click", (ev) => {
       const tr = ev.target.closest("tr[data-id]");
@@ -2332,8 +2422,8 @@ const Dashboard = (() => {
     $("#btn-add-tx").addEventListener("click", () => openTxModal(null));
     $("#btn-tx-save").addEventListener("click", saveTxModal);
     $("#btn-tx-cancel").addEventListener("click", () => { $("#modal-tx").classList.add("hidden"); editingId = null; });
-    $("#tx-date").addEventListener("input", () => { txDateEdited = true; });
-    $("#tx-date").addEventListener("change", () => { txDateEdited = true; });
+    $("#tx-date").addEventListener("input", () => { txDateEdited = true; updateTypeToggle(); });
+    $("#tx-date").addEventListener("change", () => { txDateEdited = true; updateTypeToggle(); });
     $$("#tx-type-toggle button").forEach((b) => {
       b.addEventListener("click", () => {
         txType = b.dataset.type; updateTypeToggle();
@@ -2348,7 +2438,9 @@ const Dashboard = (() => {
       const other = ev.target.value === "__other__";
       $("#tx-account-other-wrap").classList.toggle("hidden", !other);
       if (other) $("#tx-account-other").focus();
+      updateTypeToggle();
     });
+    $("#tx-account-other").addEventListener("input", updateTypeToggle);
     // Trocar a moeda da transação reformata o campo de valor e os avisos
     $("#tx-currency").addEventListener("change", (ev) => { applyTxCurrency(ev.target.value); updateTxHints(); });
     // Parcelada e fixa são mutuamente exclusivas

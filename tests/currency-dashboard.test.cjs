@@ -68,6 +68,7 @@ function harness() {
   }
   const ctx = vm.createContext({
     console, Blob, Event, Chart, window:win, localStorage, Rates:rates,
+    InstallmentSchedule:require('../js/installment-schedule.js'),
     URL:{createObjectURL(blob) { csvBlob = blob; return 'blob:synthetic'; }, revokeObjectURL() {}},
     document:{
       body:new Element(), documentElement:new Element(), createElement:() => new Element(),

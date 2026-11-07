@@ -45,6 +45,7 @@ function batchEnv() {
   const confirmations = [];
   const env = environment({
     askConfirm(title, text, callback, options) { confirmations.push({ title, text, callback, options }); },
+    InstallmentSchedule: require('../js/installment-schedule.js'),
     Dashboard: {
       getCats: () => ['Outros'], resolveImportDate: (s) => s || '2026-01-01',
       existingTxKeys: () => new Set(), existingSeriesKeys: () => new Set(),

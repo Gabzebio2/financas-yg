@@ -521,6 +521,93 @@ test('agenda separa vencimentos pelo dia local e deixa o histórico de pagamento
   assert.match(board,/Contas pagas \(1\)/);assert.match(board,/3 contas em aberto/);
 });
 
+test('fatura C6 acompanha o ciclo, confirma pelo card e reabre apenas o saldo de novas compras',()=>{
+  const originalToday=ctx.todayISO;
+  const board=get('#dash-bills');
+  const month='2026-11';
+  const ds=dataset();
+  ds.displayCurrency='USD';
+  const cycle={account:'C6',date:'2026-11-03',billClosingDate:'2026-11-29',billDueDate:'2026-12-05',billDateObserved:true};
+  ds.transactions=[
+    tx('buy00001',{...cycle,amount:100}),tx('buy00002',{...cycle,amount:50}),
+    tx('refund01',{...cycle,type:'receita',desc:'Estorno da compra',creditKind:'refund',amount:20}),
+    tx('prevpaid',{...cycle,type:'receita',desc:'Inclusão de pagamento',creditKind:'card_payment',amount:200}),
+    tx('other001',{date:'2026-11-03',account:'Itaú',amount:90}),
+    tx('old00001',{...cycle,date:'2026-10-03',billClosingDate:'2026-10-29',billDueDate:'2026-11-05'}),
+    tx('future01',{...cycle,date:'2027-02-01',billClosingDate:'2027-02-26',billDueDate:'2027-03-05',billDateObserved:false}),
+  ];
+  const row=()=>{
+    const match=board.innerHTML.match(/data-invoice-month="2026-11" data-invoice-version="([^"]+)" data-folder="([^"]+)"/);
+    assert(match,'Fatura de novembro visível');
+    return {dataset:{invoiceMonth:month,invoiceVersion:match[1],folder:match[2]}};
+  };
+  function mark(action,shown=row()){
+    const button={dataset:{billAction:action},closest:()=>shown};
+    board.listeners.get('click')({target:{closest:()=>button}});
+  }
+  const timers=[], originalTimeout=ctx.setTimeout;
+  try {
+    ctx.todayISO=()=> '2026-11-07';
+    ctx.setTimeout=(fn,delay)=>{ if(delay===1600) timers.push(fn); return 0; };
+    saveBase(ds);api.setFilters({month});api.renderAll();
+    assert.equal((board.innerHTML.match(/data-invoice-month=/g)||[]).length,1);
+    assert.match(board.innerHTML,/Novembro de 2026 · Aberta · Vencimento 05\/12\/2026/);
+    assert.match(board.innerHTML,/R\$\s*130,00/);assert.match(board.innerHTML,/1 conta em aberto/);
+    assert.match(get('#tx-tbody').innerHTML,/buy00001/);
+    const expenses=get('#hero-desp').textContent;
+    ctx.todayISO=()=> '2026-12-06';api.renderAll();
+    assert.match(board.innerHTML,/data-due="late"/);assert.match(board.innerHTML,/Novembro de 2026 · Fechada/);
+    const firstRow=row();
+    board.listeners.get('dblclick')({target:{closest:selector=>selector==='.bill-row.bill-open'?firstRow:null}});
+    assert.match(board.innerHTML,/bill-settled/);assert.match(board.innerHTML,/aria-disabled="true"/);
+    assert.equal(api.getDataset().c6InvoicePayments[month].totals.BRL,130);
+    assert.equal(api.getDataset().c6InvoicePayments[month].paidOn,'2026-12-06');
+    assert.equal(get('#hero-desp').textContent,expenses);
+    const saved=JSON.parse(storage.get('fyg:ds:'+ds.id));
+    assert.equal(saved.transactions.length,7);assert(saved.transactions.every(t=>!t.paymentStatus&&!t.paidOn));
+    timers.splice(0).forEach(callback=>callback());api.refreshFromStore({force:true});
+    assert.match(board.innerHTML,/Contas pagas \(1\)/);
+    assert.match(board.innerHTML,/data-bill-action="reopen"/);
+
+    saved.transactions.push(tx('latechg1',{...cycle,amount:12.35}));
+    storage.set('fyg:ds:'+ds.id,JSON.stringify(saved));api.refreshFromStore({force:true});
+    assert.match(board.innerHTML,/Saldo a pagar/);assert.match(board.innerHTML,/R\$\s*12,35/);
+    const stale=row();
+    saved.transactions.at(-1).amount=14;
+    storage.set('fyg:ds:'+ds.id,JSON.stringify(saved));
+    mark('pay',stale);
+    assert.equal(api.getDataset().c6InvoicePayments[month].totals.BRL,130);
+    assert.match(board.innerHTML,/R\$\s*14,00/);
+    mark('pay');mark('pay');
+    assert.equal(api.getDataset().c6InvoicePayments[month].totals.BRL,144);
+    timers.splice(0).forEach(callback=>callback());
+    mark('reopen');assert.match(board.innerHTML,/R\$\s*144,00/);
+    assert.equal(api.getDataset().c6InvoicePayments?.[month],undefined);
+    assert.equal(api.getDataset().transactions.length,8);
+  } finally { ctx.todayISO=originalToday;ctx.setTimeout=originalTimeout; }
+});
+
+test('na virada, a fatura fechada e a nova zerada coexistem e a primeira compra atualiza o mesmo card',()=>{
+  const ds=dataset(), originalToday=ctx.todayISO, panel=get('#dash-bills');
+  const row=month=>panel.innerHTML.split('<div class="bill-row ').slice(1).find(s=>s.includes('data-invoice-month="'+month+'"'));
+  const cycle={account:'C6',date:'2026-11-03',billClosingDate:'2026-11-29',billDueDate:'2026-12-05',billDateObserved:true};
+  try {
+    ds.transactions=[tx('buy00001',{...cycle,amount:80})];ctx.todayISO=()=> '2026-11-29';
+    saveBase(ds);api.renderAll();
+    assert(row('2026-11'));assert.equal(row('2026-12'),undefined);
+    ctx.todayISO=()=> '2026-11-30';api.renderAll();
+    assert.match(row('2026-11'),/Fechada/);
+    assert.match(row('2026-12'),/Aberta/);assert.match(row('2026-12'),/R\$\s*0,00/);
+    assert.match(row('2026-12'),/Vencimento previsto/);assert.doesNotMatch(row('2026-12'),/data-bill-action="pay"/);
+    assert.match(panel.innerHTML,/1 conta em aberto/);
+    ds.transactions.push(tx('decbuy01',{account:'C6',desc:'Compra no cartão',date:'2026-11-30',amount:25}));
+    api.renderAll();
+    assert.equal((panel.innerHTML.match(/data-invoice-month="2026-12"/g)||[]).length,1);
+    assert.match(row('2026-12'),/R\$\s*25,00/);assert.match(row('2026-12'),/data-bill-action="pay"/);
+    assert.match(panel.innerHTML,/2 contas em aberto/);
+  } finally {ctx.todayISO=originalToday;}
+});
+
 test('confirmações visuais simultâneas só movem os cards e nunca repetem a baixa',()=>{
   const ds=dataset();ds.transactions=[tx('firstpay',{paymentStatus:'pending'}),tx('nextpay1',{paymentStatus:'pending'})];saveBase(ds);
   const original=ctx.setTimeout, timers=[];
@@ -539,6 +626,24 @@ test('confirmações visuais simultâneas só movem os cards e nunca repetem a b
   } finally {ctx.setTimeout=original;}
 });
 
+test('compra C6 de novembro segue para a fatura e a conta de débito permite acompanhamento individual',()=>{
+  saveBase(dataset());
+  function create(account) {
+    api.openTxModal(null,{pending:true});
+    get('#tx-date').value='2026-11-12';get('#tx-desc').value='Papelaria';
+    get('#tx-amount').value='25,00';get('#tx-currency').value='BRL';get('#tx-cat').value='Mercado';
+    const sel=get('#tx-account-sel');sel.value=account;sel.listeners.get('change')({target:sel});
+    const hidden=get('#tx-bill-options').classList.contains('hidden');
+    api.saveTxModal();
+    return hidden;
+  }
+  assert.equal(create('C6'),true);
+  assert.equal(create('C6 · Conta/débito'),false);
+  const [card,debit]=api.getDataset().transactions;
+  assert.equal(card.c6Section,'card');assert.equal(card.paymentStatus,undefined);
+  assert.equal(debit.paymentStatus,'pending');assert.equal(debit.account,'C6');assert.equal(debit.c6Section,'transfer');
+  api.openTxModal(debit.id);assert.equal(get('#tx-account-sel').value,'C6 · Conta/débito');
+});
 test('nova conta em aberto e suas repetições sobrevivem à sincronização e ao backup',()=>{
   saveBase(dataset());api.openTxModal(null,{pending:true});assert.equal(get('#tx-paid').checked,false);
   get('#tx-amount').value='25,00';get('#tx-date').value='2026-01-31';get('#tx-desc').value='Internet';

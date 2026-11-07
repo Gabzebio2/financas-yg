@@ -53,6 +53,22 @@ function dataset(h, id = "folder0001") {
   return ds;
 }
 
+test("baixa mensal do C6 passa por armazenamento, backup e nuvem sem criar lançamento", () => {
+  const h = harness(), ds = dataset(h);
+  assert.equal(h.sanitizeDataset(ds).c6InvoicePayments, undefined);
+  ds.c6InvoicePayments = {"2026-11":{paidOn:"2026-12-05", totals:{BRL:164.90, USD:12, USDC:-0.000004}}};
+  h.Store.saveDataset(ds);
+  const snapshot = h.buildSyncPayload().datasets.find(folder => folder.id === ds.id);
+  for (const result of [h.Store.loadDataset(ds.id), h.sanitizeDataset(snapshot, {preserveIds:true}), h.sanitizeDataset(snapshot)]) {
+    assert.deepEqual(JSON.parse(JSON.stringify(result.c6InvoicePayments)), ds.c6InvoicePayments);
+    assert.equal(result.transactions.length, 1);
+  }
+  for (const invalid of [null, [], {"2026-13":ds.c6InvoicePayments["2026-11"]},
+      {"2026-11":{paidOn:"2026-12-32", totals:{BRL:24}}}, {"2026-11":{paidOn:"2026-12-05",totals:{BRL:"20"}}}]) {
+    assert.equal(h.sanitizeDataset({...snapshot, c6InvoicePayments:invalid}), null);
+  }
+});
+
 test("identificação da série C6 e data da compra sobrevivem à sincronização e restauração", () => {
   const h = harness(), ds = dataset(h);
   Object.assign(ds.transactions[0], {installment:"2/5",purchaseDate:"2025-12-02",seriesKey:"c6:v1:exemplo"});

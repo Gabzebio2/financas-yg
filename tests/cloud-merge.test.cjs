@@ -3,6 +3,20 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const Merge = require("../js/cloud-merge.js");
 const clone = (value) => JSON.parse(JSON.stringify(value));
+
+test("baixas C6 de ciclos distintos sincronizam inclusive se outro aparelho reabrir a anterior", () => {
+  const b = base();
+  const november = {paidOn:"2026-12-05",totals:{BRL:120}}, december = {paidOn:"2027-01-05",totals:{BRL:40}};
+  b.c6InvoicePayments = {"2026-11":november};
+  const l = clone(b), r = clone(b);
+  delete l.c6InvoicePayments;
+  r.c6InvoicePayments["2026-12"] = december;
+  const merged = Merge.merge(b,l,r);
+  assert.equal(merged.ok,true);
+  assert.deepEqual(Object.entries(merged.dataset.c6InvoicePayments), [["2026-12",december]]);
+  r.c6InvoicePayments["2026-11"].totals.BRL = 150;
+  assert.deepEqual(Merge.merge(b,l,r).conflicts, ["c6InvoicePayments:2026-11"]);
+});
 const base = () => ({ id: "folder001", name: "Casa", initialBalance: 234.56, categories: [{ name: "Outros" }], custom: { preserved: true }, updatedAt: "2026-10-01T00:00:00Z", transactions: [{ id: "base1", amount: 25, currency: "BRL", desc: "Base" }], whatsappRevision: 0 });
 
 test("três versões mesclam inclusões distintas sem somar saldos ou alterar campos desconhecidos", () => {

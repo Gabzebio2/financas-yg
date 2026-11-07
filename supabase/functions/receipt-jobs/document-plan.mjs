@@ -60,21 +60,24 @@ function observedRow(item, page, index, categories, defaultCategory, statement) 
   const badPart = declared && !hasPart || marker && suffix && (a!==+suffix[1] || b!==+suffix[2]);
   if (hasPart && suffix && !badPart) desc=desc.slice(0,suffix.index).trim() || desc;
   const c6 = page.result.statementCheck?.source==='c6_invoice';
+  const physicalLine=(item.sourceLines || item.linhas || [])[0];
+  const section=c6 && page.result.statementCheck.movements?.find(m=>m.line===physicalLine)?.section;
+  const source=schedule.c6AccountFields(account,section);
   const sourceEvidence = text(item.evidencia).slice(0,300);
   const verifiedLine = !!sourceEvidence || item.sourceLines?.some(n=>Number.isSafeInteger(n) && n>0);
   return {
-    date: text(item.data), desc, amount:item.valor, currency:item.moeda, type:item.tipo, account, category,
+    date: text(item.data), desc, amount:item.valor, currency:item.moeda, type:item.tipo, ...source, category,
     installment:hasPart ? a+'/'+b : null, fixed:false, totalValue:null,
     referenceId:text(item.referencia).slice(0,160), sourcePage:pageNo, sourceEvidence,
     ...(item.cashback?.valor>0 && Number.isFinite(item.cashback.valor) && currencies.has(item.cashback.moeda)
       ? {cashback:{amount:item.cashback.valor,currency:item.cashback.moeda}} : {}),
     sourceDocumentId:page.document_id, receiptMonth:item.billingMonth || '', order:pageNo*1000+index, grupoSemData:item.grupoSemData===true,
-    c6, physicalLine:(item.sourceLines || item.linhas || [])[0],
+    c6, physicalLine,
     dueDate:item.dueDate || page.result.statementCheck?.dueDate || statement?.dueDate,
     closingDate:item.closingDate || page.result.statementCheck?.closingDate || statement?.closingDate,
     bestPurchaseDay:item.bestPurchaseDay || page.result.statementCheck?.bestPurchaseDay || statement?.bestPurchaseDay,
     creditKind:item.creditKind==='card_payment'?'card_payment':null,
-    c6Purchase:c6 && hasPart && item.reversedFee!==true,
+    c6Purchase:c6 && source.c6Section!=='transfer' && hasPart && item.reversedFee!==true,
     invalid:!!(item.invalid || badPart || !verifiedLine || c6 && !account), issues,
   };
 }
@@ -94,6 +97,7 @@ function transaction(row) {
   if (row.cashback) tx.cashback=row.cashback;
   if (row.dateEstimated) Object.assign(tx,{dateEstimated:true,dateEstimate:row.dateEstimate});
   if (row.creditKind) tx.creditKind=row.creditKind;
+  if (row.c6Section) tx.c6Section=row.c6Section;
   if (row.c6 && validDate(row.dueDate)) Object.assign(tx,{billDueDate:row.dueDate,billDateObserved:true});
   if (row.c6 && validDate(row.closingDate)) Object.assign(tx,{billClosingDate:row.closingDate,billDateObserved:true});
   if (row.c6 && Number.isInteger(row.bestPurchaseDay) && row.bestPurchaseDay>=1 && row.bestPurchaseDay<=31) tx.cardBestPurchaseDay=row.bestPurchaseDay;
@@ -118,6 +122,7 @@ function findMatch(tx, options, used) {
   for (const candidate of options || []) {
     if (used.has(candidate)) continue;
     const otherAccount = accountKey(candidate.account), ref = fold(candidate.referenceId);
+    if (tx.c6Section && candidate.c6Section && tx.c6Section!==candidate.c6Section) continue;
     if (account && otherAccount && account!==otherAccount || reference && ref && reference!==ref) continue;
     if (tx.billDateObserved && candidate.billDateObserved && candidate.billClosingDate && tx.billClosingDate &&
         candidate.billClosingDate.slice(0,7)!==tx.billClosingDate.slice(0,7)) continue;
@@ -175,7 +180,7 @@ export function planDocumentImport({pages,existing,categories=[],defaultCategory
   const matchById = new Map();
   function matchTx(id,tx,observed) {
     const m={id,date:tx.date,desc:tx.desc,type:tx.type,currency:tx.currency,amount:tx.amount,account:tx.account,installment:tx.installment,
-      purchaseDate:tx.purchaseDate,seriesKey:tx.seriesKey,billDueDate:tx.billDueDate,billClosingDate:tx.billClosingDate,cardBestPurchaseDay:tx.cardBestPurchaseDay,creditKind:tx.creditKind,observed};
+      purchaseDate:tx.purchaseDate,seriesKey:tx.seriesKey,billDueDate:tx.billDueDate,billClosingDate:tx.billClosingDate,cardBestPurchaseDay:tx.cardBestPurchaseDay,creditKind:tx.creditKind,c6Section:tx.c6Section,observed};
     if (!matchById.has(id) || observed) matchById.set(id,m);
   }
   let upperBound = 0;

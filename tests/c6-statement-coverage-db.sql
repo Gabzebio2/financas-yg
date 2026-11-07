@@ -21,9 +21,14 @@ begin
  avulso:='{"date":"2026-10-05","amount":6145.28,"account":"C6","type":"receita","currency":"BRL","desc":"Inclusão de pagamento","category":"Outros","billClosingDate":"2026-10-29","billDateObserved":true}';
  row_a:='{"sourceLines":[9],"data":"2026-05-30","descricao":"Loja","valor":340,"instituicao":"C6","tipo":"despesa","moeda":"BRL","parcela":"5/5"}';
  row_b:='{"sourceLines":[10],"data":"2026-10-05","descricao":"Inclusão de pagamento","valor":6145.28,"instituicao":"C6","tipo":"receita","moeda":"BRL"}';
- update public.receipt_job_pages set result=jsonb_build_object('statementCheck',jsonb_build_object('source','c6_invoice','closingDate','2026-10-29','version',2),'itens',jsonb_build_array(row_a,row_b)) where job_id in(j,j2);
+ observed:=observed||'{"c6Section":"card"}'; avulso:=avulso||'{"c6Section":"card_payment"}';
+ update public.receipt_job_pages set result=jsonb_build_object('statementCheck',jsonb_build_object('source','c6_invoice','closingDate','2026-10-29','version',2,'movements','[{"line":9,"section":"card"},{"line":10,"section":"card_payment"}]'::jsonb),'itens',jsonb_build_array(row_a,row_b)) where job_id in(j,j2);
  notice:=jsonb_build_object('requireFullCoverage',true,'duplicates',1,'matches',jsonb_build_array(observed),'sourceRefs','[{"document":"d","page":1,"line":9,"id":"old-position"},{"document":"d","page":1,"line":10,"index":0}]'::jsonb);
  -- Omitting a real printed row or using its index for a different amount rolls back the whole operation.
+ begin
+   perform public.receipt_finish_auto_document(u,j,stamp,jsonb_build_array(avulso),jsonb_set(notice,'{matches,0,c6Section}','"transfer"'));
+   raise exception 'TEST wrong statement section accepted';
+ exception when raise_exception then if sqlerrm<>'c6_coverage_mismatch' then raise; end if;end;
  begin
    perform public.receipt_finish_auto_document(u,j,stamp,jsonb_build_array(avulso),jsonb_set(notice,'{sourceRefs}',(notice->'sourceRefs')-1));
    raise exception 'TEST missing row accepted';
@@ -55,6 +60,7 @@ begin
  select document_notice into saved from public.receipt_jobs where id=j;
  if jsonb_array_length(updated->'transactions')<>2 or updated->'transactions'->0->>'date'<>'2026-09-30' or
    updated->'transactions'->0->>'id'<>'old-position' or updated->'transactions'->0->>'custom'<>'conservar' or
+   updated->'transactions'->0->>'c6Section' is distinct from 'card' or
    updated->'transactions'->0->>'billDueDate'<>'2026-11-05' or updated->'transactions'->0->>'purchaseDate'<>'2026-05-30' or
    saved->'printedIds'<>jsonb_build_array('old-position','receipt_'||j::text||'_0') or saved->'matchedIds'<>'["old-position"]'::jsonb or saved ? 'matches' then raise exception 'TEST evidence/due date';end if;
  -- Another invoice may project the same existing slot; it must not overwrite its actual due date.
@@ -67,5 +73,16 @@ begin
    perform public.receipt_finish_auto_document(u,j2,stamp,'[]',jsonb_set(notice,'{sourceRefs,1}','{"document":"d","page":1,"line":10,"id":"old-position"}'));
    raise exception 'TEST same id accepted twice';
  exception when raise_exception then if sqlerrm<>'c6_coverage_mismatch' then raise; end if;end;
+ -- A November card purchase already tracked individually must link once and
+ -- move to invoice tracking even when the old entry is still pending.
+ original:='{"id":"pending-nov","date":"2026-11-02","desc":"Loja N","amount":17,"currency":"BRL","account":"C6","type":"despesa","paymentStatus":"pending"}';
+ update public.pastas set data=jsonb_set(data,'{transactions}',jsonb_build_array(original)) where user_id=u and id=f returning updated_at into stamp;
+ update public.receipt_job_pages set result='{"statementCheck":{"source":"c6_invoice","version":2,"closingDate":"2026-11-27","movements":[{"line":9,"section":"card"}]},"itens":[{"sourceLines":[9],"data":"2026-11-02","descricao":"Loja N","valor":17,"instituicao":"C6","tipo":"despesa","moeda":"BRL"}]}' where job_id=j2;
+ notice:=jsonb_build_object('requireFullCoverage',true,'matches',jsonb_build_array(original||'{"observed":true,"c6Section":"card","billClosingDate":"2026-11-27","billDueDate":"2026-12-05"}'),
+   'sourceRefs','[{"document":"d","page":1,"line":9,"id":"pending-nov"}]'::jsonb);
+ perform public.receipt_finish_auto_document(u,j2,stamp,'[]',notice);
+ select data->'transactions' into updated from public.pastas where user_id=u and id=f;
+ if jsonb_array_length(updated)<>1 or updated->0->>'id' is distinct from 'pending-nov' or updated->0 ? 'paymentStatus'
+   or updated->0->>'billDueDate' is distinct from '2026-12-05' then raise exception 'TEST legacy duplicate pending'; end if;
 end $test$;
 rollback;

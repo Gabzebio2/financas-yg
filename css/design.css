@@ -1207,6 +1207,8 @@ body.hide-money .weekly-result-value,body.hide-money .weekly-card-value,body.hid
 .bill-group .bill-row + .bill-row { margin-top:5px; border-top:0; }
 .bill-open { touch-action:manipulation; border-radius:10px; padding-inline:10px; background:var(--due-soft); background:color-mix(in srgb,var(--due-color) 12%,var(--due-soft)); box-shadow:inset 4px 0 var(--due-color); }
 .bill-row.bill-settled { border-radius:10px; padding-inline:10px; background:var(--green-soft); box-shadow:inset 4px 0 var(--green); }
+.bill-row.bill-current { border:1px solid var(--border); border-radius:10px; padding-inline:10px; background:var(--card-2); }
+.bill-current .bill-actions small { color:var(--text-soft); font-size:.8rem; }
 .bill-row.bill-settled + .bill-row.bill-settled { margin-top:4px; }
 .bill-agenda .bill-row.bill-settled { background:color-mix(in srgb,var(--green) 18%,var(--green-soft)); }
 #tx-tbody tr.bill-settled:not(.tx-selected) { background:var(--green-soft); }

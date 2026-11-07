@@ -56,7 +56,8 @@ const PALETTE = ["#8b5cf6","#45c483","#f5a524","#f06a5f","#38bdf8","#2dd4bf","#f
 const DEFAULT_CATS = ["Essencial","Lazer","Viagem","Moradia","Saúde","Transporte","Salário","Outros"];
 
 // Cartões/contas disponíveis no seletor; novas transações começam sem conta.
-const CARDS = ["C6","Nubank Yara","Nubank Gab","Picpay","Wise","Payoneer","Lily","Inter","Ether.fi","Ugly Cash","Ueno","Mercury","Itaú"];
+const C6_CHECKING = "C6 · Conta/débito";
+const CARDS = ["C6",C6_CHECKING,"Nubank Yara","Nubank Gab","Picpay","Wise","Payoneer","Lily","Inter","Ether.fi","Ugly Cash","Ueno","Mercury","Itaú"];
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -648,6 +649,7 @@ function cleanCardCycle(t) {
   if (fields.billClosingDate || fields.billDueDate) fields.billDateObserved=t.billDateObserved===true;
   if (fields.billDateObserved && Number.isInteger(t.cardBestPurchaseDay) && t.cardBestPurchaseDay>=1 && t.cardBestPurchaseDay<=31) fields.cardBestPurchaseDay=t.cardBestPurchaseDay;
   if (t.creditKind==="card_payment" && t.type==="receita") fields.creditKind=t.creditKind;
+  if (["card","transfer","card_payment"].includes(t.c6Section)) fields.c6Section=t.c6Section;
   return fields;
 }
 function cleanBillFields(t) {
@@ -658,6 +660,16 @@ function cleanBillFields(t) {
   else if (t.billPinned === true) result.paymentStatus = "paid";
   if (!isPendingBill(t) && isValidISODate(t.paidOn)) result.paidOn = t.paidOn;
   return result;
+}
+function validC6InvoicePayments(payments) {
+  const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
+  return record(payments) && Object.entries(payments).every(([month, payment]) => {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || !record(payment) ||
+        !isValidISODate(payment.paidOn) || !record(payment.totals)) return false;
+    const amounts = Object.entries(payment.totals);
+    return amounts.length > 0 && amounts.every(([currency, amount]) =>
+      CURRENCY_CODES.includes(currency) && Number.isFinite(amount) && Math.abs(amount) <= Number.MAX_SAFE_INTEGER);
+  });
 }
 function cleanCashback(t) {
   const c=t?.cashback;
@@ -690,6 +702,7 @@ function cleanDateEstimate(transaction) {
 // Só preenche campos adicionados em versões novas e protege a renderização.
 function normalizeStoredDataset(raw) {
   if (!raw || !Array.isArray(raw.transactions)) return null;
+  if (raw.c6InvoicePayments !== undefined && !validC6InvoicePayments(raw.c6InvoicePayments)) return null;
   if (raw.whatsappRevision != null && (!Number.isSafeInteger(raw.whatsappRevision) || raw.whatsappRevision < 0)) return null;
   if ([raw.categories, raw.metas, raw.limits].some((value) => value != null && !Array.isArray(value))) return null;
   const validRecord = (value) => value && typeof value === "object" && !Array.isArray(value);
@@ -705,7 +718,7 @@ function normalizeStoredDataset(raw) {
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: raw.transactions.map((t) => {
-      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, purchaseDate, seriesKey, billDueDate, billDateObserved, billClosingDate, cardBestPurchaseDay, creditKind, ...fields } = t;
+      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, purchaseDate, seriesKey, billDueDate, billDateObserved, billClosingDate, cardBestPurchaseDay, creditKind, c6Section, ...fields } = t;
       return {
         ...fields,
         id: typeof t.id === "string" && t.id ? t.id : uid(),
@@ -739,6 +752,7 @@ function normalizeStoredDataset(raw) {
 
 function sanitizeDataset(raw, opts) {
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.transactions) || raw.transactions.length > 100000) return null;
+  if (raw.c6InvoicePayments !== undefined && !validC6InvoicePayments(raw.c6InvoicePayments)) return null;
   if (raw.whatsappRevision != null && (!Number.isSafeInteger(raw.whatsappRevision) || raw.whatsappRevision < 0)) return null;
   if (opts?.rejectInvalidTransactions && [raw.categories, raw.metas, raw.limits].some((value) => value != null && !Array.isArray(value))) return null;
   const preserve = !!(opts && opts.preserveIds);
@@ -747,6 +761,8 @@ function sanitizeDataset(raw, opts) {
   const now = new Date().toISOString();
   const ds = {
     id: keepOrNewId(raw.id, preserve),
+    ...(raw.c6InvoicePayments && {c6InvoicePayments:Object.fromEntries(Object.entries(raw.c6InvoicePayments)
+      .map(([month, payment]) => [month, {paidOn:payment.paidOn, totals:{...payment.totals}}]))}),
     name: text(raw.name, 80).trim() || "Backup importado",
     createdAt: cleanISO(raw.createdAt, now),
     updatedAt: cleanISO(raw.updatedAt, now),

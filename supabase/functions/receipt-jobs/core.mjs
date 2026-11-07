@@ -29,6 +29,7 @@ export function cleanTransactions(txs){
   if(out.billDueDate || out.billClosingDate)out.billDateObserved=t.billDateObserved===true;
   if(out.billDateObserved && Number.isInteger(t.cardBestPurchaseDay) && t.cardBestPurchaseDay>=1 && t.cardBestPurchaseDay<=31)out.cardBestPurchaseDay=t.cardBestPurchaseDay;
   if(t.creditKind==='card_payment' && t.type==='receita')out.creditKind=t.creditKind;
+  if(['card','transfer','card_payment'].includes(t.c6Section))out.c6Section=t.c6Section;
   if (t.seriesKey != null || t.purchaseDate != null) {
    const key=t.seriesKey, date=t.purchaseDate, parts=(out.installment || '').split('/').map(Number);
    if (typeof key!=='string' || !key.startsWith('c6:v1:') || key.length>2000 || !parts[0] || parts[0]>parts[1] ||

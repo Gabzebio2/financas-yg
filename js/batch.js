@@ -198,7 +198,7 @@ const Batch = (() => {
     return JSON.stringify([t.date, t.purchaseDate || "", t.desc, t.amount, t.type, t.currency, t.account,
       t.cat || $("#batch-cat").value, t.installment || null, t.fixed === true,
       t.totalValue, t.referenceId || "", t.sourceEvidence || "", t.sourcePage || null, t.cashback || null,
-      t.billDueDate || "", t.billClosingDate || "", t.billDateObserved ?? null, t.creditKind || ""]);
+      t.billDueDate || "", t.billClosingDate || "", t.billDateObserved ?? null, t.creditKind || "", t.c6Section || ""]);
   }
   function autoVerified(r) { return !r.gen && !r.dateEstimated && !!r.verifiedSnapshot && r.verifiedSnapshot === reviewSnapshot(r); }
   function needsReview(r) { return !!r.reviewRequired && !autoVerified(r); }
@@ -504,6 +504,9 @@ const Batch = (() => {
         sourceLabel: metadata.sourceLabel || "", sourcePage: r.sourcePage && metadata.pageStart ? r.sourcePage + metadata.pageStart - 1 : r.sourcePage };
       if (!c6Invoice) return row;
       const it = itens[r.sourceIndex], statement = metadata.statementCheck;
+      const line = (it.sourceLines || it.linhas || [])[0];
+      const movement = statement.movements?.find(m => m.line === line);
+      if (movement) row.c6Section = movement.section;
       const due = it.dueDate || statement.dueDate, closing = it.closingDate || statement.closingDate;
       const day = it.bestPurchaseDay || statement.bestPurchaseDay;
       if (isValidISODate(due)) Object.assign(row,{dueDate:due,billDueDate:due});
@@ -511,7 +514,7 @@ const Batch = (() => {
       if (row.billClosingDate || row.billDueDate) row.billDateObserved=true;
       row.c6Cycle = {dueDate:row.dueDate, closingDate:row.closingDate, bestPurchaseDay:Number.isInteger(day) && day>=1 && day<=31 ? day : null};
       if (it.creditKind === "card_payment") row.creditKind = it.creditKind;
-      if (r.installment && it.reversedFee !== true) Object.assign(row,{c6Original:true,receiptMonth:it.billingMonth || statement.billingMonth || ""});
+      if (r.installment && row.c6Section !== "transfer" && it.reversedFee !== true) Object.assign(row,{c6Original:true,receiptMonth:it.billingMonth || statement.billingMonth || ""});
       return row;
     });
     normalized.forEach((r) => { r.order = (r.sourcePage || metadata.pageStart || 1) * 10000 + (metadata.orderOffset || 0) + r.sourceIndex; });
@@ -1009,7 +1012,7 @@ const Batch = (() => {
       const t = effectiveRow(r);
       return {
         date: t.date, ...(t.c6SeriesKey ? {purchaseDate:t.purchaseDate, seriesKey:t.c6SeriesKey} : {}), desc: t.desc, amount: t.amount, type: t.type,
-        category: t.cat || $("#batch-cat").value, currency: t.currency, account: t.account,
+        category: t.cat || $("#batch-cat").value, currency: t.currency, ...InstallmentSchedule.c6AccountFields(t.account,t.c6Section),
         groupId: t.serie || t.groupId || null, installment: t.installment || null,
         totalValue: t.totalValue, fixed: t.fixed === true,
         ...(t.billDueDate ? {billDueDate:t.billDueDate} : {}),
