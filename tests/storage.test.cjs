@@ -324,7 +324,36 @@ test("backup preserva coleções longas em vez de truncar silenciosamente", () =
   ds.metas = Array.from({ length: 120 }, (_, i) => ({ id: "meta" + String(i).padStart(5, "0"), name: "Meta " + i, target: 1000, saved: 1 }));
   const clean = h.sanitizeDataset(ds);
   assert.equal(clean.metas.length, 120);
-  assert.equal(clean.categories.length, 121);
+  const names = new Set(clean.categories.map(c => c.name));
+  assert.ok(ds.categories.every(c => names.has(c.name)));
+  for (const name of ["Essencial", "Mercado", "Receita"]) assert.ok(names.has(name));
+  assert.equal(names.size, 123);
+});
+
+test("Salário passa a Receita em pastas pessoais com as cores, metas e versões dos limites", () => {
+  const h = harness(), ds = dataset(h);
+  ds.categories = [{name:"Salário",color:"#146238"},{name:"Mercado da Vila",color:"#123456"}];
+  Object.assign(ds.transactions[0], {category:"Salário", categoryEdited:true, type:"receita"});
+  ds.limits = [{id:"limit001",name:"Limite mensal",categories:["Salário"],amount:100,versions:[
+    {from:"2026-01",categories:["Salário","Receita"],amount:100}]}];
+  ds.metas = [{id:"goal0001",name:"Pagamento",category:"Salário"}];
+  h.Store.saveDataset(ds);
+  for (const migrated of [h.Store.loadDataset(ds.id), h.sanitizeDataset(ds, {preserveIds:true})]) {
+    assert.equal(migrated.transactions[0].category,"Receita");
+    assert.equal(migrated.transactions[0].categoryEdited,true);
+    assert.equal(migrated.categories.find(c => c.name === "Receita").color,"#146238");
+    assert.equal(migrated.metas[0].category,"Receita");
+    assert.equal(migrated.limits[0].categories.join(","),"Receita");
+    assert.equal(migrated.limits[0].versions[0].categories.join(","),"Receita");
+    assert.ok(migrated.categories.some(c => c.name === "Mercado"));
+    assert.ok(migrated.categories.some(c => c.name === "Mercado da Vila"));
+  }
+  ds.categories.push({name:"Receita",color:"#112233"});
+  const result = h.sanitizeDataset(ds, {preserveIds:true});
+  assert.equal(result.categories.filter(c => c.name === "Receita").length,1);
+  assert.equal(result.categories.find(c => c.name === "Receita").color,"#112233");
+  ds.profile = "pj";
+  assert.equal(h.sanitizeDataset(ds, {preserveIds:true}).transactions[0].category,"Salário");
 });
 
 test("nuvem mantém updatedAt original e compara instantes com fusos distintos", () => {

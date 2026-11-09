@@ -213,7 +213,6 @@ const Importer = (() => {
 
       const purchaseDay = date ? Number(date.slice(8, 10)) : 1;
       if (!date) warnings.add("Sem data de compra em algumas linhas: foi sugerido o dia 01 do mês. Confira as datas.");
-      const category = rawCat || "Outros";
       const totalValue = cols.totalValue != null ? parseMoney(row[cols.totalValue], currency) : null;
 
       // "Recorrente"/"Fixa"/"Mensal" na coluna de parcelas = despesa fixa
@@ -243,7 +242,7 @@ const Importer = (() => {
           fixed: isFixed,
           date: `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
           desc: rawDesc || "(sem descrição)",
-          category, account,
+          category: rawCat, account,
           type: v.value < 0 ? "receita" : "despesa",
           amount: Math.abs(v.value),
           ...(cols.currency != null ? { currency } : {}),
@@ -303,7 +302,7 @@ const Importer = (() => {
         date,
         desc: rawDesc || "(sem descrição)",
         category: cols.category != null && row[cols.category] != null && String(row[cols.category]).trim() !== ""
-          ? String(row[cols.category]).trim() : "Outros",
+          ? String(row[cols.category]).trim() : "",
         account: cols.account != null && row[cols.account] != null ? String(row[cols.account]).trim() : "",
         ...(cols.referenceId != null && row[cols.referenceId] != null ? { referenceId: String(row[cols.referenceId]).trim().slice(0, 160) } : {}),
         installment: null,
@@ -410,8 +409,29 @@ const Importer = (() => {
   }
 
   /* ---------- Pré-visualização ---------- */
+  function classifySheetRows(txs, currentFolder) {
+    const categories = currentFolder ? Dashboard.getCats() : DEFAULT_CATS;
+    const byName = new Map(categories.map(name => [stripAccents(name), name]));
+    const profile = currentFolder ? Dashboard.currentProfile?.() : "pf";
+    for (const t of txs) {
+      if (!t.category) continue;
+      const label = folderCategoryName(t.category, profile);
+      const key = stripAccents(label);
+      if (!byName.has(key)) byName.set(key, label);
+      t.category = byName.get(key);
+      t.categoryEdited = true;
+    }
+    const previous = currentFolder ? Dashboard.existingTransactions?.() || [] : [];
+    const history = TransactionCategories.buildHistory(previous.concat(txs.filter(t => t.categoryEdited)));
+    const allowed = [...byName.values()];
+    for (const t of txs) {
+      if (!t.category) t.category = TransactionCategories.classify(t, {categories:allowed, history}) || "Outros";
+    }
+  }
+
   function showPreview(results) {
     const txs = results.flatMap((r) => r.txs);
+    classifySheetRows(txs, addToCurrent);
     txs.sort((a, b) => a.date.localeCompare(b.date));
     const notes = [];
     results.forEach((r) => {
@@ -565,10 +585,9 @@ const Importer = (() => {
     }
 
     const name = $("#import-name").value.trim() || fileName || "Minhas finanças";
-    const now = new Date().toISOString();
-    const ds = { id: uid(), name, createdAt: now, updatedAt: now, displayCurrency: "DEFAULT", categories: [], transactions: selected };
+    const ds = Store.createDataset(name);
+    ds.transactions = selected;
     ds.transactions.forEach((t) => ensureCat(ds, t.category));
-    ensureCat(ds, "Outros");
     Store.saveDataset(ds);
     pending = null;
     toast(`Pasta "${name}" salva com ${ds.transactions.length} transações ✔`);
@@ -688,13 +707,14 @@ const Importer = (() => {
             amount: Math.abs(amt), type: amt < 0 ? "receita" : "despesa",
             currency: itemCurrency,
             account: sl.cols.account != null ? String(row[sl.cols.account] || "").trim() : "",
-            category: sl.cols.category != null ? String(row[sl.cols.category] || "").trim() : "Outros",
+            category: sl.cols.category != null ? String(row[sl.cols.category] || "").trim() : "",
             ...(sl.cols.referenceId != null ? { referenceId: String(row[sl.cols.referenceId] || "").trim().slice(0, 160) } : {}),
             installment: null, totalValue: null,
           });
         }
       } else report.unknownSheets.push(name);
     }
+    classifySheetRows(txs, true);
     const result = txs.map((t) => ({ ...t, currency: t.currency || currency }));
     result.readReport = report;
     return result;

@@ -1,10 +1,12 @@
 // Net new entries for one confirmed folder snapshot. No network, model calls or writes.
 import * as scheduleModule from '../../../js/installment-schedule.js';
 import * as datesModule from '../../../js/import-dates.js';
+import * as categoriesModule from '../../../js/transaction-categories.js';
 import {checkC6Subtotals} from './c6-subtotals.mjs';
 
 const schedule = scheduleModule.default || globalThis.InstallmentSchedule;
 const dates = datesModule.default || globalThis.ImportDates;
+const transactionCategories = categoriesModule.default || globalThis.TransactionCategories;
 const currencies = new Set(['BRL','PYG','CLP','USD','EUR','GBP','USDT','USDC']);
 const maxTransactions = 10000;
 const text = value => typeof value === 'string' ? value.trim() : '';
@@ -13,7 +15,7 @@ const accountKey = value => ['c6 bank','banco c6'].includes(fold(value)) ? 'c6' 
 const validDate = value => /^\d{4}-\d{2}-\d{2}$/.test(value) && value.slice(0,4)!=='0000' &&
   Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,10)===value;
 const operational = result => result.excluded.filter(e=>e.operacao!==false && e.motivo!=='resumo').length;
-const categoryIssue = reason => /categor/i.test(reason) && !/valor|moeda|data|conta|tipo|parcela|duplic|opera[çc][aã]o/i.test(reason);
+const categoryIssue = transactionCategories.isCategoryOnlyWarning;
 
 function issueForDocument(pages) {
   const total = pages[0]?.context?.totalPages;
@@ -45,12 +47,10 @@ function issueForDocument(pages) {
   return null;
 }
 
-function observedRow(item, page, index, categories, defaultCategory, statement) {
+function observedRow(item, page, index, categories, defaultCategory, statement, history) {
   const pageNo = page.context.pageStart;
   const account = text(item.instituicao) || text(page.result.cartao);
   const issues = Array.isArray(item.revisar) ? item.revisar : [];
-  const category = categories.find(c=>fold(c)===fold(defaultCategory)) ||
-    (!issues.some(categoryIssue) && categories.find(c=>fold(c)===fold(item.categoria))) || 'Outros';
   let desc = text(item.descricao).slice(0,1000);
   const suffix = /(?:^|[\s(–—-]+)(?:parcela|cuota|parc\.?)\s*(\d{1,2})\s*(?:\/|de|of)\s*(\d{1,2})\s*\)?$/i.exec(desc);
   const declared = text(item.parcela);
@@ -59,6 +59,9 @@ function observedRow(item, page, index, categories, defaultCategory, statement) 
   const hasPart = a>=1 && a<=b && b>=2;
   const badPart = declared && !hasPart || marker && suffix && (a!==+suffix[1] || b!==+suffix[2]);
   if (hasPart && suffix && !badPart) desc=desc.slice(0,suffix.index).trim() || desc;
+  const category = transactionCategories.classify({...item, descricao:desc}, {
+    categories, preferred:defaultCategory, suggested:issues.some(categoryIssue)?'':item.categoria, history
+  });
   const c6 = page.result.statementCheck?.source==='c6_invoice';
   const physicalLine=(item.sourceLines || item.linhas || [])[0];
   const section=c6 && page.result.statementCheck.movements?.find(m=>m.line===physicalLine)?.section;
@@ -168,6 +171,7 @@ export function planDocumentImport({pages,existing,categories=[],defaultCategory
     return report;
   }
   const docs = new Map(), index = new Map(), series = [];
+  const history = transactionCategories.buildHistory(existing);
   indexRows(index,existing);
   for (const page of pages) {
     if (!docs.has(page.document_id)) docs.set(page.document_id,[]);
@@ -192,7 +196,7 @@ export function planDocumentImport({pages,existing,categories=[],defaultCategory
     if (statement) report.statements.push(statement);
     const issue = issueForDocument(parts);
     if (issue) {report.blockedDocuments.push({label,reason:issue});continue;}
-    const rows = dates.estimate(parts.flatMap(p=>p.result.itens.map((item,i)=>observedRow(item,p,i,categories,defaultCategory,statement))));
+    const rows = dates.estimate(parts.flatMap(p=>p.result.itens.map((item,i)=>observedRow(item,p,i,categories,defaultCategory,statement,history))));
     const positions = rows.reduce((n,r)=>n+(r.c6Purchase ? Number(r.installment.split('/')[1]) : 1),0);
     if (positions>maxTransactions-upperBound) {
       report.blockedDocuments.push({label,reason:'O lote ultrapassa o limite de lançamentos por inclusão.'});continue;

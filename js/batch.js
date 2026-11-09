@@ -15,6 +15,7 @@ const Batch = (() => {
   let installmentPlanKey = "";
   let rows = [];          // [{ date, desc, amount, type, currency, on, src, dup, cat, installment, fixa... }]
   let presetCat = null;   // categoria destino sugerida (ex: amigo)
+  const sheetCategories = new Set();
   let srcSeq = 0;         // nº do arquivo de origem de cada linha (p/ detectar sobreposição)
   let detectedCard = null;  // cartão identificado pela IA na fatura (ex: "Nubank Gab")
   let chosenAccount = null; // cartão escolhido à mão pelo usuário (prevalece)
@@ -83,6 +84,7 @@ const Batch = (() => {
     $("#btn-batch-delete").classList.add("hidden");
     $("#btn-batch-delete").disabled = false;
     presetCat = opts.category || null;
+    sheetCategories.clear();
     rows = [];
     documentTasks = []; documentExclusions = []; documentFailure = false;
     serverStatementError = ""; statementError = "";
@@ -180,7 +182,7 @@ const Batch = (() => {
 
   /* ---------- Renderização da lista para conferência ---------- */
   function availableCats() {
-    return [...new Set([...Dashboard.getCats(), "Outros"])];
+    return [...new Set([...Dashboard.getCats(), ...sheetCategories, "Outros"])];
   }
 
   function rowReview(r) {
@@ -405,7 +407,13 @@ const Batch = (() => {
   }
 
   // Normaliza itens vindos da IA/Excel para o formato interno
-  function normalize(items, c6Invoice = false) {
+  function normalize(items, c6Invoice = false, sheet = false) {
+    if (sheet) for (const it of items) {
+      if (it?.categoryEdited && it.category) sheetCategories.add(it.category);
+    }
+    const categories = availableCats();
+    const preset = presetCat && categories.find(c => stripAccents(c) === stripAccents(presetCat));
+    const history = sheet ? null : TransactionCategories.buildHistory(Dashboard.existingTransactions?.() || []);
     return (Array.isArray(items) ? items : []).map((it, sourceIndex) => {
       if (!it || typeof it !== "object") { excludedCount++; return null; }
       // A IA devolve o campo como "data" (pt); o Excel devolve "date". Aceita os dois.
@@ -417,13 +425,11 @@ const Batch = (() => {
       const currency = typeof (it.moeda ?? it.currency) === "string" ? (it.moeda ?? it.currency).trim().toUpperCase() : "";
       const review = Array.isArray(it.revisar) ? it.revisar.filter((v) => typeof v === "string" && v.trim()).map((v) => v.slice(0, 180)) : [];
 
-      // Categoria sugerida pela IA por item (validada contra as da pasta).
-      // Na cobrança de amigo (presetCat) tudo vai para a categoria do amigo —
-      // a sugestão da IA é ignorada de propósito.
-      const rawCat = presetCat || it.categoria || it.category || "";
-      const cat = availableCats().find((c) => stripAccents(c) === stripAccents(rawCat)) || "Outros";
-      // "Outros" is a valid default; categorization is optional editing, not a
-      // financial ambiguity that should block an otherwise clear receipt.
+      const preferred = sheet && it.categoryEdited ? it.category : "";
+      const extractedCategory = sheet && categories.includes(it.category) ? it.category : TransactionCategories.classify(it, {
+        categories, history, suggested:it.categoria || it.category,
+      });
+      const cat = preset || extractedCategory;
 
       let desc = String(it.desc ?? it.descricao ?? "").slice(0, 120);
       const printed = desc.match(/(?:^|[\s(–—-]+)(?:parcela|cuota|parc\.?)\s*(\d{1,2})\s*(?:\/|de|of)\s*(\d{1,2})\s*\)?$/i);
@@ -444,6 +450,7 @@ const Batch = (() => {
       }
 
       return { date, desc, amount, type, currency, on: true, cat, parcNum, parcTotal, fixa, review, sourceIndex,
+        extractedCategory, categoryEdited: Boolean(preferred || preset),
         grupoSemData: it.grupoSemData===true,
         cashback: it.cashback && Number.isFinite(it.cashback.valor) && it.cashback.valor>0 ? {amount:it.cashback.valor,currency:it.cashback.moeda} : null,
         account: typeof (it.account ?? it.instituicao) === "string" ? (it.account ?? it.instituicao).trim().slice(0, 80) : "",
@@ -525,9 +532,7 @@ const Batch = (() => {
         r.src = src;
         r.reviewRequired = metadata.reviewRequired === true;
         r.auditReasons = [metadata.additional ? "Item encontrado somente na segunda leitura. Confira no documento." : "Aguardando a segunda leitura do documento."];
-        const rawCategory = itens[r.sourceIndex]?.categoria || itens[r.sourceIndex]?.category || "";
-        const extractedCategory = availableCats().find((c) => stripAccents(c) === stripAccents(rawCategory)) || "Outros";
-        r.extractedSnapshot = reviewSnapshot({ ...r, cat: extractedCategory }, true);
+        r.extractedSnapshot = reviewSnapshot({ ...r, cat: r.extractedCategory }, true);
       });
       rows.push(...novos);
     }
@@ -977,7 +982,7 @@ const Batch = (() => {
         if (report) reviewWarnings.push(...report.warnings);
         progress.status = report && (report.skipped || report.unknownSheets.length || report.warnings.length) ? "partial" : "complete";
         progress.message = "linhas/abas não reconhecidas ou dados estimados; compare com a planilha e confira os avisos";
-        const novos = normalize(txs);
+        const novos = normalize(txs, false, true);
         if (!novos.length) { falhas.push(`"${file.name}" sem transações reconhecidas`); progress.status = "failed"; continue; }
         progress.count = novos.length;
         const src = srcSeq++;
@@ -1013,6 +1018,7 @@ const Batch = (() => {
       return {
         date: t.date, ...(t.c6SeriesKey ? {purchaseDate:t.purchaseDate, seriesKey:t.c6SeriesKey} : {}), desc: t.desc, amount: t.amount, type: t.type,
         category: t.cat || $("#batch-cat").value, currency: t.currency, ...InstallmentSchedule.c6AccountFields(t.account,t.c6Section),
+        ...(t.categoryEdited && {categoryEdited:true}),
         groupId: t.serie || t.groupId || null, installment: t.installment || null,
         totalValue: t.totalValue, fixed: t.fixed === true,
         ...(t.billDueDate ? {billDueDate:t.billDueDate} : {}),
@@ -1120,7 +1126,7 @@ const Batch = (() => {
     // Trocar a moeda do lote reformata os valores das linhas e o total
     $("#batch-cur").addEventListener("change", renderPreview);
     // Trocar a categoria geral aplica a TODAS as linhas (elas voltam a segui-la)
-    $("#batch-cat").addEventListener("change", () => { rows.forEach((r) => { r.cat = null; }); renderPreview(); });
+    $("#batch-cat").addEventListener("change", () => { rows.forEach((r) => { r.cat = null; r.categoryEdited = true; }); renderPreview(); });
     // Cartão escolhido à mão prevalece sobre o detectado pela IA
     $("#batch-acc").addEventListener("change", () => { chosenAccount = $("#batch-acc").value; renderPreview(); });
     $("#batch-include-generated").addEventListener("change", () => {
@@ -1157,7 +1163,7 @@ const Batch = (() => {
       else if (f === "cat") rows[i].cat = el.value;
       else if (f === "type") rows[i].type = el.value;
       else if (f === "currency") rows[i].currency = el.value;
-      if (rows[i].c6SeriesKey && f === "cat") rows[i].categoryEdited = true;
+      if (f === "cat") rows[i].categoryEdited = true;
       if (rows[i].c6SeriesKey && ["date","desc","amount","type","currency"].includes(f)) {
         for (const line of rows[i].c6PurchaseLines) {
           line[f] = rows[i][f]; line.verifiedSnapshot = "";

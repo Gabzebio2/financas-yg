@@ -14,6 +14,18 @@ function c6(id,itens) {
 function saved(overrides={}) {
   return {id:'existing',date:'2026-08-11',desc:'Compra',amount:164.9,type:'despesa',currency:'BRL',account:'C6',...overrides};
 }
+test('PDF aplica finalidade, histórico da pasta e escolha explícita sem alterar valores e direção',async()=>{
+  const {planDocumentImport}=await planner();
+  const categories=['Mercado','Saúde','Receita','Casa','Outros'];
+  const existing=[saved({desc:'Mercado Modelo',category:'Casa',categoryEdited:true,date:'2026-01-02'})];
+  const pages=[page('doc',[item({descricao:'Mercado Modelo',categoria:'Outros'}),item({descricao:'Farmácia Central'}),
+    item({descricao:'Transferencia recibida SPI',tipo:'receita',categoria:'Outros'})])];
+  const plan=planDocumentImport({pages,existing,categories});
+  assert.deepEqual(plan.transactions.map(t=>[t.category,t.type,t.amount]),[
+    ['Casa','despesa',164.9],['Saúde','despesa',164.9],['Receita','receita',164.9]]);
+  const preset=planDocumentImport({pages,existing,categories,defaultCategory:'Mercado'});
+  assert(preset.transactions.every(t=>t.category==='Mercado'));
+});
 test('cada linha do cartão, inclusive pagamento recebido e parcela legada, tem um destino verificável',async()=>{
  const {planDocumentImport}=await planner();
  const txs=[item({data:'2026-05-30',descricao:'Loja A',valor:340,parcela:'5/5',sourceLines:[4]}),

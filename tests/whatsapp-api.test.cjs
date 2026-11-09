@@ -54,6 +54,7 @@ function harness(options = {}) {
       if (name === "node:crypto") return crypto;
       if (name === "node:async_hooks") return require("node:async_hooks");
       if (name === "../server/whatsapp-core.cjs") return load("server/whatsapp-core.cjs");
+      if (name === "../js/transaction-categories.js") return load("js/transaction-categories.js");
       if (name === "../server/receipt-platforms.cjs") return load("server/receipt-platforms.cjs");
       if (name === "../server/statement-table.cjs") return load("server/statement-table.cjs");
       if (name === "../api/receipt.js" && options.receiptActual) return load("api/receipt.js");
@@ -88,6 +89,15 @@ function coreFetch(options = {}) {
     throw new Error("Unexpected simulated route: " + new URL(call.url).pathname);
   };
 }
+test('WhatsApp usa a descrição no rascunho e dá prioridade à categoria que o remetente escolheu',async()=>{
+  const categories=['Mercado','Lazer','Outros'];
+  for (const [body,expected] of [['Paguei R$ 20 no Mercado Modelo','Mercado'],['Paguei R$ 20 no Mercado Modelo, categoria: Lazer','Lazer']]) {
+    const h=harness({fetch:coreFetch({claim:claim({categories}),parsed:tx({desc:'Mercado Modelo',category:'Outros'})})});
+    await h.request('whatsapp',{payload:payload([message({text:{body}})])});
+    const draft=h.calls.find(c=>c.url.includes('/rpc/wa_finish_draft'));
+    assert.equal(draft.json.p_transaction.category,expected);
+  }
+});
 const byPath = (e, match) => e.calls.filter(c => c.url.includes(match));
 
 test("diagnóstico de entrega mantém telefones, textos e identificadores fora dos logs", async () => {

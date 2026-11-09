@@ -48,6 +48,7 @@ function setup(extra = {}) {
     },
     Dashboard: { getCats: () => ['Essencial', 'Outros'], existingTxKeys: () => new Set(), existingSeriesKeys: () => new Set(), appendImported(rows) { savedCount++; saved = JSON.parse(JSON.stringify(rows)); return rows.length; } },
     Receipt: { prepareFile: async () => ({ mediaType: 'image/png', data: 'fake' }) },
+    TransactionCategories: require('../js/transaction-categories.js'),
     Cloud: { getToken: () => 'test-token' },
     ...extra,
   };
@@ -142,6 +143,17 @@ test('falha ao excluir mantém prévia utilizável e confirmação antiga não a
 function select(env, index, checked) { env.node('#batch-tbody').fire('change', { dataset: { i: String(index) }, checked, classList: { contains: () => true }, closest: () => ({ classList: { toggle() {} } }) }); }
 function projections(env, on = true) { env.node('#batch-include-generated').checked = on; env.node('#batch-include-generated').fire('change'); }
 function ingest(env, items, card = 'C6', metadata = {}) { env.batch.ingestAiResult(items, card, metadata); env.batch.refreshPreview(); }
+
+test('lote usa o comerciante, respeita correção individual e grava a preferência', () => {
+  const env = setup();
+  env.context.Dashboard.getCats = () => ['Saúde', 'Mercado', 'Receita', 'Outros'];
+  ingest(env, [item({descricao:'Farmácia Modelo', categoria:'Outros'}), item({descricao:'Supermercado Central', categoria:'Outros'}),
+    item({descricao:'Transferencia recibida', categoria:'Mercado', tipo:'receita'})]);
+  edit(env, 1, 'cat', 'Outros');
+  env.batch.save(); env.confirm();
+  assert.deepEqual(env.saved().map(t => [t.category, !!t.categoryEdited]),
+    [['Saúde', false], ['Outros', true], ['Receita', false]]);
+});
 
 test('plataforma única fica pré-selecionada e é salva; lote misto preserva conta por arquivo', () => {
   const env = setup({CARDS:['Ether.fi','Ueno','Itaú','Ugly Cash']});

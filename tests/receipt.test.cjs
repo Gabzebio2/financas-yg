@@ -62,6 +62,7 @@ function browserEnvironment(payload, options = {}) {
   };
   const context = vm.createContext({
     console: { error() {} }, AbortSignal, setTimeout: (fn) => { fn(); return 1; }, $, toast() {},
+    TransactionCategories: require('../js/transaction-categories.js'),
     CURRENCY_CODES: ['BRL', 'CLP', 'PYG', 'USD', 'EUR', 'GBP', 'USDT', 'USDC'],
     curFrac: (c) => ['USDT', 'USDC'].includes(c) ? 6 : ['CLP', 'PYG'].includes(c) ? 0 : 2,
     askConfirm: (_, __, fn) => fn(),
@@ -85,6 +86,14 @@ function browserEnvironment(payload, options = {}) {
   return { context, $, calls, filled, storage, receipt: context.receipt, close() { $('#modal-tx').classList.add('hidden'); observer(); }, analyze: () => context.receipt.analyze({ type: 'application/pdf', name: 'synthetic.pdf', size: 8 }) };
 }
 
+test('API classifica o comprovante individual e o lote com as mesmas categorias', async () => {
+  const categories=['Mercado','Lazer','Transporte','Outros'];
+  const input={descricao:'Posto de gasolina',categoria:'Lazer'};
+  const direct=await apiEnvironment(single(input)).request({multi:false,categories});
+  assert.equal(direct.body.categoria,'Transporte');
+  const batch=await apiEnvironment({cartao:'',itens:[line(input),line({descricao:'Mercado Central',categoria:'Lazer'})]}).request({categories});
+  assert.deepEqual(batch.body.itens.map(i=>i.categoria),['Transporte','Mercado']);
+});
 test('API preserva moedas, estorno e categorias canônicas sem inferir direção pelo sinal', async () => {
   const env = apiEnvironment({ cartao: 'C6', itens: [line({ categoria: 'alimentacao' }), line({ valor: -12.5, moeda: 'USD', tipo: 'receita', descricao: 'Estorno' }), line({ valor: 3000, moeda: 'CLP' }), line({ valor: 12000, moeda: 'PYG' })] });
   const { status, body } = await env.request();

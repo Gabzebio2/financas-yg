@@ -8,6 +8,7 @@ const { accountName, sourceAccount, platformPrompt } = require('./receipt-platfo
 const {header,tableLines,parseTable,reconcile,STATEMENT_PROMPT}=require('./statement-table.cjs');
 const {imageContext,visualReading,checkFirstRows}=require('./image-groups.cjs');
 const c6Invoice=require('./c6-invoice.cjs');
+const transactionCategories = require('../js/transaction-categories.js');
 const object = properties => ({type:"object",additionalProperties:false,properties,required:Object.keys(properties)});
 const string={type:"string"}, number={type:["number","null"]}, strings={type:"array",items:string}, lines={type:"array",items:{type:"integer"}};
 const rowSchema=object({data:string,descricao:string,valor:number,moeda:string,tipo:{type:"string",enum:["despesa","receita",""]},categoria:string,parcela:string,instituicao:string,referencia:string,evidencia:string,incertezas:strings,linhas:lines,cobranca:object({valor:number,moeda:string,origem:{type:'string',enum:['debito_explicito','usd_abaixo_local','unica_moeda','incerta']}}),cashback:object({valor:number,moeda:string})});
@@ -57,14 +58,15 @@ Em listas de Movimientos/Movimentações, um cabeçalho como “Hoy, 3 de noviem
 valor é magnitude positiva, preservando casas decimais e moeda; tipo despesa/receita só com evidência. parcela "n/total" apenas se explícita. Categoria permitida, caso ambíguo Outros. Não gere meses futuros.
 SILÊNCIO ÚTIL: incertezas/avisos somente para dúvida material em valor, moeda, data, direção ou completude. Categoria sugerida, cartão não identificado, cashback separado, conversão local ignorada e moeda do débito resolvida pelas regras acima NÃO são avisos. Use Outros e instituição vazia sem pedir intervenção. Dúvida de uma linha fica em incertezas daquela linha, não em avisos da página inteira.
 Categorias permitidas: ${JSON.stringify(categories)}. Contas/cartões: ${JSON.stringify(cards)}. cartao/instituicao só do titular, não banco da contraparte.
+${transactionCategories.prompt}
 ${platformPrompt(cards)}
 ${STATEMENT_PROMPT}
 ${c6Invoice.instructions}
 ESCOPO: apenas esta página/trecho ${JSON.stringify(context)}. Outras páginas NÃO estão faltando neste envio. contagemOperacoes é contagem impressa INEQUÍVOCA do documento inteiro (se houver), incluindo recusadas/cashback conforme o documento; null se não há. Nunca use quantidade de compras como total de operações. completo só true depois de percorrer todas as linhas recebidas. Avisos devem ser específicos; não use avisos genéricos de conferir tudo.`;
 }
-function normalize(raw,ledger,first=null,cards) {
+function normalize(raw,ledger,first=null,cards,categories) {
   if(!raw||!Array.isArray(raw.itens)||!Array.isArray(raw.excluidos)||raw.itens.length>500||raw.excluidos.length>500)throw Error('invalid_result');
-  const warnings=Array.isArray(raw.avisos)?raw.avisos.filter(x=>typeof x==='string').slice(0,30):[];
+  const warnings=Array.isArray(raw.avisos)?raw.avisos.filter(x=>typeof x==='string'&&!transactionCategories.isCategoryOnlyWarning(x)).slice(0,30):[];
   const covered=new Set(),used=new Map(),max=ledger.lines.length;
   for(const r of [...raw.itens,...raw.excluidos]) {
     if(!Array.isArray(r.linhas))throw Error('missing_evidence');
@@ -86,7 +88,12 @@ function normalize(raw,ledger,first=null,cards) {
       if(charge.origem==='usd_abaixo_local'&&r.cashback?.valor>0&&!r.cashback.moeda)r.cashback={...r.cashback,moeda:'USD'};
     }
     if(charge?.origem==='incerta'){r.valor=null;r.moeda='';}
-    const issues=Array.isArray(r.incertezas)?r.incertezas.filter(x=>typeof x==='string'):[];
+    const reported=Array.isArray(r.incertezas)?r.incertezas.filter(x=>typeof x==='string'):[];
+    if(Array.isArray(categories)){
+      const suggested=reported.some(transactionCategories.isCategoryOnlyWarning)?'':r.categoria;
+      r.categoria=transactionCategories.classify(r,{categories,suggested});
+    }
+    const issues=reported.filter(x=>!transactionCategories.isCategoryOnlyWarning(x));
     const valid=typeof r.valor==='number'&&Number.isFinite(r.valor)&&r.valor>0&&CURRENCIES.includes(r.moeda)&&['receita','despesa'].includes(r.tipo);
     if(!valid)issues.push('Informe valor, moeda debitada e tipo antes de incluir.');
     return {...r, pagina:1,fixa:false,revisar:issues,sourceLine:i+1,sourceLines:r.linhas,invalid:!valid};
@@ -120,7 +127,7 @@ async function readPage({image,categories,cards,context,first,mode,sourceHeader,
   const invoiceResult=raw=>{
     const evidence=c6Invoice.evidence(invoice);
     const moneyLines=[...invoice.rows.map(r=>r.line),...invoice.excluded.flatMap(r=>r.linhas),...invoice.unresolved];
-    const result=normalize(c6Invoice.reconcile(raw,invoice,categories),{...ledger,moneyLines},first,cards);
+    const result=normalize(c6Invoice.reconcile(raw,invoice,categories),{...ledger,moneyLines},first,cards,categories);
     return {...result,statementCheck:evidence,readingMode:'full',reviewMode:first?'compared':'pending'};
   };
   // On stage two, re-open the original PDF and enumerate its table again.
@@ -144,7 +151,7 @@ async function readPage({image,categories,cards,context,first,mode,sourceHeader,
   if(invoice)return invoiceResult(extracted);
   const raw=reconcile(extracted,statement,categories);
   const visual=isImage?visualReading(raw,context,previousHeading):null;
-  const result=normalize(visual?visual.raw:raw,ledger,first,cards);
+  const result=normalize(visual?visual.raw:raw,ledger,first,cards,categories);
   if(visual){
     result.visualContext=visual.visualContext;result.visualAudit=visual.audit;
     const discrepancy=first?.itens?.length && checkFirstRows(first,result,raw.leituraVisual?.correcoes);

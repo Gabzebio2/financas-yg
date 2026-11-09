@@ -64,6 +64,35 @@ test('worker only stores drafts; it never calls the financial commit or writes p
  const ai=calls.find(c=>c.url.endsWith('/api/receipt-worker'));assert.equal(ai.opt.headers.Authorization,'Bearer scoped');assert(!JSON.stringify(ai).includes('private'));
  const finish=calls.find(c=>c.url.endsWith('/receipt_finish'));assert.deepEqual(JSON.parse(finish.opt.body).p_result,result);assert.equal(JSON.parse(finish.opt.body).p_lease,id);
 });
+test('foto concluída recupera preferências só da pasta do envio e não envia o histórico ao leitor',async()=>{
+ const {createBackend,digest,cleanTransactions}=await core(),bytes=new TextEncoder().encode('foto');
+ const p={job_id:id,page_index:0,object_path:user+'/'+id+'/0',byte_size:bytes.length,sha256:await digest(bytes),
+   media_type:'image/png',context:{photoAuto:true,pageStart:1,pageEnd:1,totalPages:1},quick:true,lease_token:id};
+ const tx={desc:'Mercado Modelo',date:'2026-11-02',amount:8,type:'despesa',currency:'BRL',category:'Mercado'};
+ const result={reviewMode:'automatic',itens:[{categoria:'Mercado'}],photoPlan:{entries:[{tx}]}};
+ const calls=[];
+ const b=createBackend({url:'https://db.test',serviceKey:'private',publicKey:'public',fetcher:async(raw,opt={})=>{
+  const url=new URL(raw);calls.push({url,opt});
+  if(url.pathname.endsWith('/receipt_claim_auto_document')||url.searchParams.has('expires_at'))return json([]);
+  if(url.pathname.endsWith('/receipt_claim'))return json({page:p,categories:['Mercado','Obra','Outros'],cards:[]});
+  if(url.pathname.includes('/storage/v1/object/'))return new Response(bytes);
+  if(url.pathname.endsWith('/receipt_worker_config'))return json([{token:'scoped'}]);
+  if(url.pathname.endsWith('/receipt-worker'))return json(result);
+  if(url.pathname.endsWith('/receipt_jobs')){assert.equal(url.searchParams.get('id'),'eq.'+id);return json([{user_id:user,folder_id:'pasta'}]);}
+  if(url.pathname.endsWith('/pastas')){
+   assert.equal(url.searchParams.get('user_id'),'eq.'+user);assert.equal(url.searchParams.get('id'),'eq.pasta');
+   return json([{transactions:[{...tx,categoryEdited:true,category:'Obra',sourceEvidence:'privado-do-historico'}]}]);
+  }
+  return json(true);
+ }});
+ await b.work();
+ const final=JSON.parse(calls.find(c=>c.url.pathname.endsWith('/receipt_finish')).opt.body).p_result;
+ assert.deepEqual(final.photoPlan.entries[0].tx,{...tx,category:'Obra'});
+ assert.equal(final.itens[0].categoria,'Obra');
+ assert(!calls.find(c=>c.url.pathname.endsWith('/receipt-worker')).opt.body.includes('privado-do-historico'));
+ assert.equal(cleanTransactions([{...tx,categoryEdited:true}])[0].categoryEdited,true);
+ assert.equal(cleanTransactions([{...tx,categoryEdited:'false'}])[0].categoryEdited,undefined);
+});
 test('worker failure records retryable error and never reports success',async()=>{
  const {createBackend,digest}=await core(),bytes=new TextEncoder().encode('image'),calls=[];
  const b=createBackend({url:'https://db.test',serviceKey:'private',publicKey:'public',fetcher:async(url,opt={})=>{

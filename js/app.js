@@ -53,7 +53,7 @@ const MESES_ABREV = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out"
 
 const PALETTE = ["#8b5cf6","#45c483","#f5a524","#f06a5f","#38bdf8","#2dd4bf","#f472b6","#a3e635","#fb923c","#4ade80","#818cf8","#c084fc","#facc15","#94a3b8","#0ea5e9","#e879f9"];
 
-const DEFAULT_CATS = ["Essencial","Lazer","Viagem","Moradia","Saúde","Transporte","Salário","Outros"];
+const DEFAULT_CATS = ["Essencial","Lazer","Viagem","Moradia","Saúde","Transporte","Receita","Outros","Mercado"];
 
 // Cartões/contas disponíveis no seletor; novas transações começam sem conta.
 const C6_CHECKING = "C6 · Conta/débito";
@@ -442,9 +442,44 @@ const Store = {
   },
 };
 
+function folderCategoryName(name, profile = "pf") {
+  if (profile !== "pj" && ["salario", "receita"].includes(stripAccents(name))) return "Receita";
+  return name;
+}
+
+// Atualiza também os vínculos por nome de versões antigas de limites e metas.
+function applyPersonalCategories(ds) {
+  if (ds.profile === "pj") return ds;
+  const receita = ds.categories.find(c => stripAccents(c.name) === "receita");
+  const salario = ds.categories.find(c => stripAccents(c.name) === "salario");
+  if (receita || salario) {
+    const retained = receita || salario;
+    ds.categories = ds.categories.filter(c => folderCategoryName(c.name) !== "Receita" || c === retained)
+      .map(c => c === retained ? {...c, name:"Receita"} : c);
+  }
+  ensureCat(ds, "Mercado");
+  ensureCat(ds, "Receita");
+  const renameList = names => {
+    if (!names.some(name => folderCategoryName(name) !== name)) return names;
+    let hasReceita = false;
+    return names.map(name => folderCategoryName(name)).filter(name => {
+      if (name !== "Receita") return true;
+      if (hasReceita) return false;
+      hasReceita = true;
+      return true;
+    });
+  };
+  ds.limits = ds.limits.map(limit => ({
+    ...limit, categories:renameList(limit.categories),
+    ...(limit.versions && {versions:limit.versions.map(v => ({...v, categories:renameList(v.categories)}))})
+  }));
+  ds.metas = ds.metas.map(meta => meta.category ? {...meta, category:folderCategoryName(meta.category)} : meta);
+  return ds;
+}
+
 // Garante que a categoria existe no dataset, com cor fixa
 function ensureCat(ds, name) {
-  name = String(name || "Outros").trim() || "Outros";
+  name = folderCategoryName(String(name || "Outros").trim() || "Outros", ds.profile);
   let c = ds.categories.find((x) => stripAccents(x.name) === stripAccents(name));
   if (!c) {
     c = { name, color: PALETTE[ds.categories.length % PALETTE.length] };
@@ -725,7 +760,7 @@ function normalizeStoredDataset(raw) {
         date: t.date,
         amount: Number(t.amount),
         desc: String(t.desc ?? ""),
-        category: String(t.category || "Outros"),
+        category: folderCategoryName(String(t.category || "Outros"), raw.profile),
         account: String(t.account || ""),
         currency: normCur(t.currency),
         type: t.type === "receita" ? "receita" : "despesa",
@@ -746,6 +781,7 @@ function normalizeStoredDataset(raw) {
     if (!validRecord(c) || typeof c.name !== "string" || !c.name.trim()) return;
     ds.categories.push({ ...c, color: RE_COLOR.test(c.color) ? c.color : PALETTE[ds.categories.length % PALETTE.length] });
   });
+  applyPersonalCategories(ds);
   ds.transactions.forEach((t) => ensureCat(ds, t.category));
   return ds;
 }
@@ -839,7 +875,8 @@ function sanitizeDataset(raw, opts) {
       date,
       ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t), ...cleanPurchaseSchedule(t), ...cleanCardCycle(t),
       desc: text(t.desc, 120).trim() || "(sem descrição)",
-      category: text(t.category, 40).trim() || "Outros",
+      category: folderCategoryName(text(t.category, 40).trim() || "Outros", ds.profile),
+      ...(t.categoryEdited === true ? {categoryEdited:true} : {}),
       account: text(t.account, 40).trim(),
       ...(typeof t.referenceId === "string" && t.referenceId.trim() ? { referenceId: text(t.referenceId, 160).trim() } : {}),
       ...(typeof t.sourceEvidence === "string" && t.sourceEvidence.trim() ? { sourceEvidence: text(t.sourceEvidence, 300).trim() } : {}),
@@ -857,8 +894,6 @@ function sanitizeDataset(raw, opts) {
     });
   });
   if (opts?.rejectInvalidTransactions && ds.transactions.length !== raw.transactions.length) return null;
-  ds.transactions.forEach((t) => ensureCat(ds, t.category));
-
   // Limites: valores numéricos, meses no formato AAAA-MM
   if (Array.isArray(raw.limits)) {
     raw.limits.forEach((L) => {
@@ -889,6 +924,8 @@ function sanitizeDataset(raw, opts) {
     });
   }
   if (opts?.rejectInvalidTransactions && ((Array.isArray(raw.metas) && raw.metas.length !== ds.metas.length) || (Array.isArray(raw.limits) && raw.limits.length !== ds.limits.length))) return null;
+  applyPersonalCategories(ds);
+  ds.transactions.forEach((t) => ensureCat(ds, t.category));
   return ds;
 }
 

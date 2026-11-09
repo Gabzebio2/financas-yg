@@ -46,6 +46,7 @@ let ratesAvailable = true;
 const ctx = vm.createContext({
   console, Blob, Event, URL: { createObjectURL(blob) { csvBlob = blob; return 'blob:test'; }, revokeObjectURL() {} },
   window: win, localStorage: memoryStorage, InstallmentSchedule: require('../js/installment-schedule.js'),
+  TransactionCategories: require('../js/transaction-categories.js'),
   document: {
     body: new Element(), createElement: () => new Element(),
     querySelector: get, querySelectorAll: selector => selectorGroups.get(selector) || [],
@@ -87,6 +88,28 @@ function acceptReceiptConfirmation() {
   assert.equal(typeof cb,'function','Deve haver confirmação pendente');
   vm.runInContext('closeConfirmModal()',ctx);cb();
 }
+
+test('digitar sugere a categoria e respeita escolhas explícitas, inclusive em leituras posteriores', () => {
+  const ds = dataset();
+  for (const name of ['Saúde', 'Lazer', 'Receita', 'Outros']) ds.categories.push({name, color:'#123456'});
+  saveBase(ds);
+  const description = get('#tx-desc'), category = get('#tx-cat');
+  const type = value => { description.value = value; description.listeners.get('input')(); };
+  api.openTxModal(null);
+  type('Farmácia Modelo'); assert.equal(category.value,'Saúde');
+  type('Supermercado Central'); assert.equal(category.value,'Mercado');
+  category.value = 'Lazer'; category.listeners.get('change')({target:category});
+  api.fillTxFromReceipt(receipt({descricao:'Supermercado Central', categoria:'Mercado'}));
+  assert.equal(category.value,'Lazer');
+  api.saveTxModal();
+  const saved = api.getDataset().transactions[0];
+  assert.equal(saved.category,'Lazer'); assert.equal(saved.categoryEdited,true);
+  api.openTxModal(null);
+  type('Supermercado Central'); assert.equal(category.value,'Lazer');
+  api.openTxModal(null, {type:'receita'}); assert.equal(category.value,'Receita');
+  api.openTxModal(saved.id);
+  type('Farmácia Modelo'); assert.equal(category.value,'Lazer');
+});
 
 test('importação mantém indicador de data aproximada e o apresenta na tabela', () => {
   saveBase(dataset());

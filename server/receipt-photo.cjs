@@ -1,5 +1,6 @@
 'use strict';
 const ImportDates = require('../js/import-dates.js');
+const transactionCategories = require('../js/transaction-categories.js');
 const {c6AccountFields} = require('../js/installment-schedule.js');
 const currencies = new Set(['BRL','PYG','CLP','USD','EUR','GBP','USDT','USDC']);
 
@@ -16,7 +17,9 @@ function photoPlan(result, context, categories) {
   const entries = result.itens.map((item, index) => {
     const date = item.grupoSemData ? {date:''} : rows[index];
     const desc = (item.descricao || '').trim();
-    const issues = (item.revisar || []).filter(msg => !(date.dateEstimated && /data/i.test(msg) && !/moeda|valor|tipo/i.test(msg)));
+    const warnings = item.revisar || [];
+    const issues = warnings.filter(msg => !transactionCategories.isCategoryOnlyWarning(msg) &&
+      !(date.dateEstimated && /data/i.test(msg) && !/moeda|valor|tipo/i.test(msg)));
     const installment = (item.parcela || '').trim();
     const valid = /^\d{4}-\d{2}-\d{2}$/.test(date.date || '') && date.date.slice(0,4) !== '0000' &&
       Number.isFinite(Date.parse(date.date)) && new Date(date.date).toISOString().slice(0,10) === date.date &&
@@ -24,7 +27,8 @@ function photoPlan(result, context, categories) {
       currencies.has(item.moeda) && ['despesa','receita'].includes(item.tipo) && (!installment || /^\d{1,2}\/\d{1,2}$/.test(installment));
     if (incomplete || !valid || issues.length) return {name: desc, reason: incomplete ? 'Leitura incompleta' : issues[0] || 'Dados incompletos'};
     const account = item.instituicao || result.cartao || '';
-    const category = [context.photoCategory, item.categoria].find(c => categories.includes(c)) || 'Outros';
+    const suggested = warnings.some(transactionCategories.isCategoryOnlyWarning) ? '' : item.categoria;
+    const category = transactionCategories.classify(item, {categories, preferred:context.photoCategory, suggested});
     const tx = {desc, date:date.date, amount:item.valor, currency:item.moeda, type:item.tipo, ...c6AccountFields(account), category,
       referenceId:item.referencia || '', sourceEvidence:item.evidencia || '', sourcePage:context.pageStart,
       installment:installment || null, groupId:null, fixed:false, totalValue:null};

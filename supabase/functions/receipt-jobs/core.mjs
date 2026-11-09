@@ -1,5 +1,7 @@
 import {checkC6Subtotals} from './c6-subtotals.mjs';
 import {planDocumentImport} from './document-plan.mjs';
+import * as categoryModule from '../../../js/transaction-categories.js';
+const transactionCategories = categoryModule.default || globalThis.TransactionCategories;
 export const BUCKET='receipt-documents';
 export const CURRENCIES=['BRL','PYG','CLP','USD','EUR','GBP','USDT','USDC'];
 export const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v);
@@ -29,6 +31,7 @@ export function cleanTransactions(txs){
   if(out.billDueDate || out.billClosingDate)out.billDateObserved=t.billDateObserved===true;
   if(out.billDateObserved && Number.isInteger(t.cardBestPurchaseDay) && t.cardBestPurchaseDay>=1 && t.cardBestPurchaseDay<=31)out.cardBestPurchaseDay=t.cardBestPurchaseDay;
   if(t.creditKind==='card_payment' && t.type==='receita')out.creditKind=t.creditKind;
+  if(t.categoryEdited===true && typeof t.category==='string' && t.category.trim())out.categoryEdited=true;
   if(['card','transfer','card_payment'].includes(t.c6Section))out.c6Section=t.c6Section;
   if (t.seriesKey != null || t.purchaseDate != null) {
    const key=t.seriesKey, date=t.purchaseDate, parts=(out.installment || '').split('/').map(Number);
@@ -128,6 +131,21 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
    }
    return true;
  }
+ async function applyPhotoHistory(page,result,categories) {
+   const entries=result.photoPlan?.entries;
+   if(page.context?.photoAuto!==true || page.context.photoCategory || !['automatic','compared'].includes(result.reviewMode) ||
+      !Array.isArray(entries) || !entries.some(entry=>entry.tx)) return;
+   const [job]=await admin('/rest/v1/receipt_jobs?id=eq.'+encodeURIComponent(page.job_id)+'&select=user_id,folder_id');
+   if(!job)return;
+   const [folder]=await admin('/rest/v1/pastas?user_id=eq.'+encodeURIComponent(job.user_id)+'&id=eq.'+encodeURIComponent(job.folder_id)+'&select=transactions:data->transactions');
+   if(!Array.isArray(folder?.transactions))return;
+   const history=transactionCategories.buildHistory(folder.transactions);
+   for(const [index,entry] of entries.entries()){
+     if(!entry.tx)continue;
+     entry.tx.category=transactionCategories.classify(entry.tx,{categories,suggested:entry.tx.category,history});
+     if(result.itens[index])result.itens[index].categoria=entry.tx.category;
+   }
+ }
  async function work(){
   // A cleanup outage must not stop reading; the next cron run retries deletion.
   await cleanup().catch(()=>console.warn('receipt_cleanup_retry'));
@@ -158,6 +176,7 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
    if(body.length>4400000)throw Error('page_too_dense');
    const read=await fetcher('https://financas-yg.vercel.app/api/receipt-worker',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body,signal:AbortSignal.timeout(115000),redirect:'error'});
    const result=await read.json();if(!read.ok)throw Error(result.error||'leitura_indisponivel');
+   await applyPhotoHistory(p,result,task.categories);
    await rpc('receipt_finish',{p_job:p.job_id,p_index:p.page_index,p_lease:p.lease_token,p_result:result});
   }catch(e){
    const allowed=['saldo_ia','configuracao_ia','resposta_incompleta','tempo_ia','page_too_dense','arquivo_indisponivel','arquivo_invalido'];

@@ -17,3 +17,12 @@ test('foto cuja contagem não fecha ou que contém só exclusões nunca cria um 
   assert(!plan([row],{expectedCount:2}).entries[0].tx);
   assert.deepEqual(plan([],{expectedCount:1,excluded:[{motivo:'cashback',operacao:true}]}),{entries:[],excluded:1});
 });
+test('foto usa a finalidade ou a categoria escolhida no envio e preserva dúvidas sobre o valor',()=>{
+  const item={...row,descricao:'Ferrex',categoria:'Lazer',revisar:['Categoria incerta']};
+  const result={itens:[item],excluded:[],coverage:{complete:true}};
+  const categories=['Lazer','Essencial','Outros'];
+  assert.equal(photoPlan(result,{pageStart:1},categories).entries[0].tx.category,'Essencial');
+  assert.equal(photoPlan(result,{pageStart:1,photoCategory:'Lazer'},categories).entries[0].tx.category,'Lazer');
+  item.revisar=['Valor e categoria incertos'];
+  assert.equal(photoPlan(result,{pageStart:1,photoCategory:'Lazer'},categories).entries[0].tx,undefined);
+});

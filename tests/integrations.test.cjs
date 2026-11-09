@@ -10,6 +10,7 @@ function environment(extra = {}) {
   const storage = new Map();
   const callbacks = [];
   const context = {
+    TransactionCategories: require('../js/transaction-categories.js'),
     console: { log() {}, warn() {}, error() {} }, AbortController, AbortSignal,
     setTimeout, clearTimeout, Date, Promise, Map, Set,
     localStorage: { getItem: (k) => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,v), removeItem: (k) => storage.delete(k) },
@@ -224,6 +225,7 @@ test('cache incompleto ou negativo de cotação é rejeitado e usa retorno valid
 test('importação de fatura respeita colunas explícitas de receita e despesa', async () => {
   const rows = [['Data', 'Descrição', 'Receita', 'Despesa'], ['2026-01-01', 'Entrada', 150, null], ['2026-01-02', 'Compra', null, 20]];
   const env = environment({
+    Dashboard: {getCats: () => ['Receita', 'Outros']},
     parseMoney: (n) => typeof n === 'number' ? n : null,
     parseDateCell: (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '') ? s : null,
     uid: (() => { let n=0; return () => `t${++n}`; })(),
@@ -239,7 +241,7 @@ function importerWithCore(rows, sheetName = 'Planilha') {
   const env = environment({
     window: { top: null, self: null, scrollTo() {} },
     setTimeout: () => 1, clearTimeout() {},
-    Dashboard: { open: (id) => { opened = id; } },
+    Dashboard: { open: (id) => { opened = id; }, getCats: () => ['Essencial', 'Mercado', 'Saúde', 'Receita', 'Outros'] },
     XLSX: { read: () => ({ SheetNames: [sheetName], Sheets: { [sheetName]: {} } }), utils: { sheet_to_json: () => rows } },
   });
   env.context.document.querySelector = env.context.$;
@@ -251,6 +253,23 @@ function importerWithCore(rows, sheetName = 'Planilha') {
   const importer = load(env, 'js/importer.js', 'Importer', (s) => s.replace('return { handleFile, readForBatch };', 'return { handleFile, readForBatch, savePending };'));
   return { ...env, store, importer, opened: () => opened, file: { name: 'moedas.xlsx', size: 100, arrayBuffer: async () => new ArrayBuffer(0) } };
 }
+
+test('planilha classifica campos vazios e mantém categorias explícitas e contas empresariais', async () => {
+  const env = importerWithCore([
+    ['Data','Descrição','Tipo','Valor','Categoria'],
+    ['2026-01-01','Farmácia Modelo','despesa',25,''],
+    ['2026-01-02','Supermercado Central','despesa',10,'Projeto Aurora'],
+    ['2026-01-03','Supermercado Central','despesa',20,'Outros'],
+    ['2026-01-04','Depósito recebido','receita',50,'Salário'],
+    ['2026-01-05','Depósito recebido','receita',80,''],
+  ]);
+  const items = await env.importer.readForBatch(env.file);
+  assert.deepEqual(Array.from(items, t => [t.category, !!t.categoryEdited]),
+    [['Saúde', false],['Projeto Aurora', true],['Outros', true],['Receita', true],['Receita', false]]);
+  env.context.Dashboard.currentProfile = () => 'pj';
+  const company = await env.importer.readForBatch(env.file);
+  assert.equal(company[3].category, 'Salário');
+});
 
 test('importador usa moeda por linha e parser real sem descartar microvalores ou assumir USD', async () => {
   const env = importerWithCore([

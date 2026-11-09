@@ -12,6 +12,9 @@ const Dashboard = (() => {
   const charts = {};
   let editingId = null;
   let txDateEdited = false;
+  let txCategoryChosen = false;
+  let txCategoryHistory = null;
+  let txInitialCategory = "";
   let receiptRead = null;
   let txModalRevision = 0;
   let editingLimitId = null;
@@ -1651,7 +1654,9 @@ const Dashboard = (() => {
     let n = 0;
     ds.transactions.forEach((t) => {
       if (!selectedTx.has(t.id)) return;
-      if (catMap && catMap[t.category]) t.category = catMap[t.category];
+      if (catMap && catMap[t.category] && t.category !== catMap[t.category]) {
+        t.category = catMap[t.category]; t.categoryEdited = true;
+      }
       Object.assign(t, common);
       n++;
     });
@@ -1806,6 +1811,9 @@ const Dashboard = (() => {
     const isEdit = !!txId;
     const tx = isEdit ? ds.transactions.find((t) => t.id === txId) : null;
     if (isEdit && !tx) return;
+    txCategoryChosen = !!opts.category && ds.categories.some(c => c.name === opts.category);
+    txInitialCategory = tx?.category || "";
+    txCategoryHistory = isEdit ? null : TransactionCategories.buildHistory(ds.transactions);
     receiptRead = null;
     txModalRevision++;
 
@@ -1848,6 +1856,7 @@ const Dashboard = (() => {
         : (ds.categories[0]?.name || "__new__"));
     $("#tx-newcat-wrap").classList.toggle("hidden", catSel.value !== "__new__");
     $("#tx-newcat").value = "";
+    if (!isEdit) suggestTxCategory();
 
     $("#tx-parc-wrap").classList.toggle("hidden", isEdit);
     $("#tx-parcelado").checked = false;
@@ -1860,6 +1869,15 @@ const Dashboard = (() => {
 
     $("#modal-tx").classList.remove("hidden");
     setTimeout(() => $("#tx-amount").focus(), 50);
+  }
+
+  function suggestTxCategory(suggested = "", clearMissing = false) {
+    if (editingId || txCategoryChosen || !ds?.categories.length) return;
+    const category = TransactionCategories.classify({ desc: $("#tx-desc").value, type: txType }, {
+      categories: ds.categories, history: txCategoryHistory, suggested,
+    });
+    if (ds.categories.some(c => c.name === category)) $("#tx-cat").value = category;
+    else if (clearMissing) $("#tx-cat").value = "";
   }
 
   function formUsesC6Invoice() {
@@ -1994,6 +2012,7 @@ const Dashboard = (() => {
 
     const edited = editingId ? ds.transactions.find(t => t.id === editingId) : null;
     if (editingId && !edited) { toast("Esta transação não está mais disponível. Abra a lista novamente."); return; }
+    if (edited && !txCategoryChosen && category === txInitialCategory) category = edited.category;
     // Imported transfers retain the statement account for matching on a later import.
     const previousSelection = edited?.account === "C6" && edited.c6Section === "transfer" ? C6_CHECKING : edited?.account;
     const accountChanged = !!edited && account !== previousSelection;
@@ -2001,9 +2020,10 @@ const Dashboard = (() => {
     const startFixed = !parts && $("#tx-fixa").checked &&
       (!edited || (txType === "despesa" && !edited.fixed && !edited.installment));
     if (startFixed && !isValidISODate(monthlyDate(FIXA_MESES-1))) { toast("Escolha uma data que permita criar a série mensal."); return; }
-    ensureCat(ds, category);
+    category = ensureCat(ds, category).name;
     const section = !edited || accountChanged ? (account === "C6" ? "card" : undefined) : edited.c6Section;
     const fields = { amount: Math.abs(amount), date, desc, category, type: txType, currency,
+      ...((edited ? edited.category !== category : txCategoryChosen) && {categoryEdited:true}),
       ...InstallmentSchedule.c6AccountFields(account, section) };
     const paidBox = $("#tx-paid"), trackBox = $("#tx-payable");
     // Controles intocados mantêm o último pagamento salvo, inclusive por outra tela.
@@ -2111,11 +2131,7 @@ const Dashboard = (() => {
     // parcelamento digitado antes da leitura de outro comprovante.
     $("#tx-date").value = isValidISODate(d.data) ? d.data : "";
     $("#tx-desc").value = String(d.descricao || "").slice(0, 120);
-    const categories = ds?.categories || [];
-    const category = categories.find((c) => stripAccents(c.name) === stripAccents(d.categoria || "")) || categories.find((c) => stripAccents(c.name) === "outros");
-    $("#tx-cat").value = category?.name || "";
-    $("#tx-newcat-wrap").classList.add("hidden");
-    $("#tx-newcat").value = "";
+    suggestTxCategory(d.categoria, true);
     $("#tx-parcelado").checked = false;
     $("#tx-fixa").checked = false;
     updateFixedOption(editingId ? ds.transactions.find(t=>t.id===editingId) : null);
@@ -2422,15 +2438,17 @@ const Dashboard = (() => {
     $("#btn-add-tx").addEventListener("click", () => openTxModal(null));
     $("#btn-tx-save").addEventListener("click", saveTxModal);
     $("#btn-tx-cancel").addEventListener("click", () => { $("#modal-tx").classList.add("hidden"); editingId = null; });
+    $("#tx-desc").addEventListener("input", () => suggestTxCategory());
     $("#tx-date").addEventListener("input", () => { txDateEdited = true; updateTypeToggle(); });
     $("#tx-date").addEventListener("change", () => { txDateEdited = true; updateTypeToggle(); });
     $$("#tx-type-toggle button").forEach((b) => {
       b.addEventListener("click", () => {
-        txType = b.dataset.type; updateTypeToggle();
+        txType = b.dataset.type; updateTypeToggle(); suggestTxCategory();
         updateFixedOption(editingId ? ds.transactions.find(t=>t.id===editingId) : null); updateTxHints();
       });
     });
     $("#tx-cat").addEventListener("change", (ev) => {
+      txCategoryChosen = true;
       $("#tx-newcat-wrap").classList.toggle("hidden", ev.target.value !== "__new__");
       if (ev.target.value === "__new__") $("#tx-newcat").focus();
     });
@@ -2557,6 +2575,7 @@ const Dashboard = (() => {
 
   function importEvidence(value) {
     const out = {...cleanDateEstimate(value),...cleanCashback(value),...cleanPurchaseSchedule(value),...cleanCardCycle(value)};
+    if (value?.categoryEdited === true) out.categoryEdited = true;
     for (const [key, max] of [["referenceId", 160], ["sourceEvidence", 300]]) {
       if (typeof value?.[key] === "string" && value[key].trim()) out[key] = value[key].trim().slice(0, max);
     }
@@ -2681,5 +2700,5 @@ const Dashboard = (() => {
     return n;
   }
 
-  return { open, openTxModal, closeFolder, createEmpresaDataset, refreshFromStore, showReceiptTransactions, receiptJobIds, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, isEditingTransaction: () => !!editingId, refitHero: fitHeroFlow };
+  return { open, openTxModal, closeFolder, createEmpresaDataset, refreshFromStore, showReceiptTransactions, receiptJobIds, fillTxFromReceipt, getCats, addBulk, appendImported, currentDatasetName, currentProfile: () => ds?.profile || "pf", getImportTargetId, existingTransactions, resolveImportDate, existingTxKeys, existingSeriesKeys, isEditingTransaction: () => !!editingId, refitHero: fitHeroFlow };
 })();
