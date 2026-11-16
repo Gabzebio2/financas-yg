@@ -65,7 +65,7 @@ source = source.replace('  return { open, openTxModal,', `
     openLimitModal, saveLimitModal, renderTable, renderSummary, parcSiblings, fixedSiblings,
     resolveImportDate, appendImported, addBulk, exportCSV, saveCur, undo, moneyTip, refreshFromStore,
     existingTxKeys, existingSeriesKeys, existingTransactions, getImportTargetId, renderAll, limitStats, metaStats, addToMeta, fillTxFromReceipt, changeBill, currencyBreakdown,
-    setDataset(value) { ds = value; }, getDataset() { return ds; },
+    setDataset(value) { ds = value; billCalendarDate = todayISO(); }, getDataset() { return ds; },
     setFilters(value) { fil = {mode:'month', month:'2026-10', from:'', to:'', cats:null, search:'', type:'all', account:'all', ...value}; },
     setSort(value) { sort = value; }, selectedTx, undoStack,
   };
@@ -507,20 +507,22 @@ test('cashback informativo sobrevive à gravação sem virar outra receita',()=>
  saveBase(dataset());assert.equal(api.appendImported([tx('cash',{cashback:{amount:0.65,currency:'USD'}})]),1);api.refreshFromStore();const saved=api.getDataset().transactions;assert.equal(saved.length,1);assert.equal(saved[0].type,'despesa');assert.equal(saved[0].cashback.amount,0.65);assert.match(get('#tx-tbody').innerHTML,/Cashback:.*informativo/);
 });
 
-test('conta de outro mês aparece no dashboard, contabiliza uma única vez no pagamento e pode ser reaberta',()=>{
+test('conta permanece no mês de vencimento e contabiliza uma única vez no mês de pagamento',()=>{
   const ds=dataset(), today=vm.runInContext('todayISO()',ctx);
   ds.transactions=[tx('oldpaid1',{date:today,amount:2}), tx('billopen',{date:'2020-02-03',amount:5,currency:'USD',billPinned:true,paymentStatus:'pending'})];
   ds.limits=[{name:'Alimentação',amount:50,currency:'BRL',categories:['Mercado']}];
   saveBase(ds);api.setFilters({month:today.slice(0,7)});api.renderAll();
   assert.equal(api.limitStats()[0].spent,2);assert.equal(api.currencyBreakdown().length,1);
   const panel=id=>get(id).innerHTML;
-  assert.match(panel('#dash-bills'),/billopen/);assert(!panel('#tx-tbody').includes('billopen'));
+  assert.doesNotMatch(panel('#dash-bills'),/billopen/);assert(!panel('#tx-tbody').includes('billopen'));
   api.changeBill('billopen','pay');api.changeBill('billopen','pay');
   let saved=api.getDataset().transactions;assert.equal(saved.length,2);assert.equal(saved[1].paidOn,today);
   assert.equal(saved[1].date,'2020-02-03');assert.equal(api.limitStats()[0].spent,27);
   assert.equal(api.currencyBreakdown().find(g=>g.currency==='USD').expense,5);
-  assert.match(panel('#dash-bills'),/data-bill-action="reopen"/);assert.match(panel('#tx-tbody'),/data-bill-action="reopen"/);
-  api.setFilters({month:'2020-02'});assert.equal(api.limitStats()[0].spent,0);assert.equal(api.tableTxs().length,0);
+  assert.doesNotMatch(panel('#dash-bills'),/billopen/);assert.match(panel('#tx-tbody'),/data-bill-action="reopen"/);
+  api.setFilters({month:'2020-02'});api.renderAll();assert.equal(api.limitStats()[0].spent,0);assert.equal(api.tableTxs().length,0);
+  assert.match(panel('#dash-bills'),/datetime="2020-02-03" title="Vencimento em 03\/02\/2020"/);
+  assert.match(panel('#dash-bills'),new RegExp('Mercado · Pago em '+today.split('-').reverse().join('/')));
   assert.match(panel('#dash-bills'),/Contas pagas \(1\)/);
   api.changeBill('billopen','reopen');api.changeBill('billopen','reopen');
   assert.equal(api.tableTxs().length,1);assert.equal(api.limitStats()[0].spent,0);assert.match(panel('#dash-bills'),/1 conta em aberto/);
@@ -532,16 +534,31 @@ test('conta de outro mês aparece no dashboard, contabiliza uma única vez no pa
   assert.equal(saved[0].paymentStatus,'pending');assert.equal(saved[1].paidOn,undefined);assert.equal(saved.length,2);
 });
 
-test('agenda separa vencimentos pelo dia local e deixa o histórico de pagamentos recolhido',()=>{
-  const today=vm.runInContext('todayISO()',ctx),ds=dataset();
-  ds.transactions=[tx('future01',{date:'2099-01-02',paymentStatus:'pending'}),tx('paid0001',{date:today,paymentStatus:'paid'}),
-    tx('debit001',{date:today}),tx('late0001',{date:'2020-01-02',paymentStatus:'pending'}),tx('today001',{date:today,paymentStatus:'pending'})];
-  saveBase(ds);api.renderAll();const board=get('#dash-bills').innerHTML;
-  const sections=[...board.matchAll(/<section class="bill-group" data-due="([^"]+)">([\s\S]*?)<\/section>/g)];
-  assert.deepEqual(sections.map(m=>m[1]),['late','today','upcoming']);
-  for(const [i,id] of ['late0001','today001','future01'].entries())assert(sections[i][2].includes(id));
-  assert.doesNotMatch(board,/debit001|<details[^>]*\bopen\b/);
-  assert.match(board,/Contas pagas \(1\)/);assert.match(board,/3 contas em aberto/);
+test('agenda exibe os vencimentos do mês e mostra a próxima recorrência quando o mês vira com o painel aberto',()=>{
+  const originalToday=ctx.todayISO, originalTimeout=ctx.setTimeout;
+  const ds=dataset(), board=()=>get('#dash-bills').innerHTML;
+  let midnight;
+  try {
+    ctx.todayISO=()=> '2026-11-16';
+    ctx.setTimeout=(callback,delay)=>{if(delay>1600) midnight=callback;return 0;};
+    ds.transactions=[tx('future01',{date:'2026-11-20',paymentStatus:'pending'}),tx('paid0001',{date:'2026-11-07',paymentStatus:'paid'}),
+      tx('debit001'),tx('late0001',{date:'2026-11-07',paymentStatus:'pending',desc:'Claro',fixed:true}),tx('today001',{date:'2026-11-16',paymentStatus:'pending'}),
+      tx('dec00001',{date:'2026-12-07',paymentStatus:'pending',desc:'Claro',fixed:true}),
+      tx('jan00001',{date:'2027-01-07',paymentStatus:'pending',desc:'Claro',fixed:true})];
+    saveBase(ds);api.setFilters({month:'2026-11'});api.renderAll();
+    const sections=[...board().matchAll(/<section class="bill-group" data-due="([^"]+)">([\s\S]*?)<\/section>/g)];
+    assert.deepEqual(sections.map(m=>m[1]),['late','today','upcoming']);
+    for(const [i,id] of ['late0001','today001','future01'].entries())assert(sections[i][2].includes(id));
+    assert.doesNotMatch(board(),/debit001|dec00001|jan00001|<details[^>]*\bopen\b/);
+    assert.match(board(),/Contas pagas \(1\)/);assert.match(board(),/3 contas em aberto/);
+    ctx.todayISO=()=> '2026-12-01';midnight();
+    assert.match(board(),/Dezembro de 2026 · 1 conta em aberto/);assert.match(board(),/dec00001/);
+    assert.doesNotMatch(board(),/late0001|paid0001|jan00001/);
+    api.setFilters({month:'2026-11'});api.renderAll();
+    ctx.todayISO=()=> '2027-01-01';midnight();
+    assert.match(board(),/Novembro de 2026/);assert.doesNotMatch(board(),/jan00001/);
+    api.setFilters({mode:'all',month:null});api.renderAll();assert.match(board(),/Janeiro de 2027 · 1 conta em aberto/);
+  } finally {ctx.todayISO=originalToday;ctx.setTimeout=originalTimeout;}
 });
 
 test('fatura C6 acompanha o ciclo, confirma pelo card e reabre apenas o saldo de novas compras',()=>{
@@ -577,8 +594,8 @@ test('fatura C6 acompanha o ciclo, confirma pelo card e reabre apenas o saldo de
     assert.match(board.innerHTML,/Novembro de 2026 · Aberta · Vencimento 05\/12\/2026/);
     assert.match(board.innerHTML,/R\$\s*130,00/);assert.match(board.innerHTML,/1 conta em aberto/);
     assert.match(get('#tx-tbody').innerHTML,/buy00001/);
-    const expenses=get('#hero-desp').textContent;
     ctx.todayISO=()=> '2026-12-06';api.renderAll();
+    const expenses=get('#hero-desp').textContent;
     assert.match(board.innerHTML,/data-due="late"/);assert.match(board.innerHTML,/Novembro de 2026 · Fechada/);
     const firstRow=row();
     board.listeners.get('dblclick')({target:{closest:selector=>selector==='.bill-row.bill-open'?firstRow:null}});
@@ -590,6 +607,8 @@ test('fatura C6 acompanha o ciclo, confirma pelo card e reabre apenas o saldo de
     assert.equal(saved.transactions.length,7);assert(saved.transactions.every(t=>!t.paymentStatus&&!t.paidOn));
     timers.splice(0).forEach(callback=>callback());api.refreshFromStore({force:true});
     assert.match(board.innerHTML,/Contas pagas \(1\)/);
+    assert.match(board.innerHTML,/datetime="2026-12-05" title="Vencimento em 05\/12\/2026"/);
+    assert.match(board.innerHTML,/Vencimento 05\/12\/2026 · Pago em 06\/12\/2026/);
     assert.match(board.innerHTML,/data-bill-action="reopen"/);
 
     saved.transactions.push(tx('latechg1',{...cycle,amount:12.35}));
@@ -616,7 +635,7 @@ test('na virada, a fatura fechada e a nova zerada coexistem e a primeira compra 
   const cycle={account:'C6',date:'2026-11-03',billClosingDate:'2026-11-29',billDueDate:'2026-12-05',billDateObserved:true};
   try {
     ds.transactions=[tx('buy00001',{...cycle,amount:80})];ctx.todayISO=()=> '2026-11-29';
-    saveBase(ds);api.renderAll();
+    saveBase(ds);api.setFilters({month:'2026-11'});api.renderAll();
     assert(row('2026-11'));assert.equal(row('2026-12'),undefined);
     ctx.todayISO=()=> '2026-11-30';api.renderAll();
     assert.match(row('2026-11'),/Fechada/);
@@ -689,6 +708,51 @@ test('editar valor não desfaz um pagamento recebido após a abertura do formul�
   storage.set('fyg:ds:audit001',JSON.stringify(newer));get('#tx-amount').value='16,00';api.saveTxModal();
   const t=api.getDataset().transactions[0];assert.equal(t.amount,16);assert.equal(t.paymentStatus,'paid');
   assert.equal(t.paidOn,'2026-11-01');assert.equal(t.billPinned,undefined);
+});
+
+test('ativar conta a pagar numa série existente acompanha as próximas ocorrências sem repetir a baixa',()=>{
+  const originalToday=ctx.todayISO;ctx.todayISO=()=>'2026-11-16';
+  try {
+    const ds=dataset();
+    const line=(id,date,overrides={})=>tx(id,{date,groupId:'seriepersonal',fixed:true,...overrides});
+    ds.transactions=[line('passada','2026-10-07'),line('novembro','2026-11-07'),line('dezembro','2026-12-03'),
+      line('pagoadiantado','2027-01-07',{paymentStatus:'paid',paidOn:'2026-11-10'}),
+      line('desacompanhada','2027-02-07',{paidOn:'2026-11-11'}),line('outraconta','2026-12-07',{groupId:'outraserie'})];
+    saveBase(ds);api.openTxModal('novembro');get('#tx-payable').checked=true;get('#tx-paid').checked=true;
+    get('#tx-payable').listeners.get('change')();assert.match(get('#tx-bill-hint').textContent,/próximos vencimentos/);
+    api.saveTxModal();
+    const [past,nov,dec,jan,feb,other]=api.getDataset().transactions;
+    assert.equal(nov.date,'2026-11-07');assert.equal(nov.paymentStatus,'paid');assert.equal(nov.paidOn,'2026-11-16');
+    assert.equal(dec.date,'2026-12-03');assert.equal(dec.paymentStatus,'pending');assert.equal(dec.paidOn,undefined);
+    assert.equal(jan.paymentStatus,'paid');assert.equal(jan.paidOn,'2026-11-10');
+    assert.equal(feb.paymentStatus,undefined);assert.equal(feb.paidOn,'2026-11-11');
+    assert.equal(past.paymentStatus,undefined);assert.equal(other.paymentStatus,undefined);
+    api.openTxModal('novembro');get('#tx-date').value='2026-11-13';api.saveTxModal();
+    assert.equal(api.getDataset().transactions[2].date,'2026-12-03');
+  } finally {ctx.todayISO=originalToday;}
+});
+
+test('uma edição de conta antiga já paga sem data de baixa conserva o histórico disponível',()=>{
+  const ds=dataset();ds.transactions=[tx('historica',{paymentStatus:'paid'})];saveBase(ds);
+  api.openTxModal('historica');get('#tx-desc').value='Conta antiga';api.saveTxModal();
+  assert.equal(api.getDataset().transactions[0].paymentStatus,'paid');assert.equal(api.getDataset().transactions[0].paidOn,undefined);
+});
+
+test('transações mostram, ordenam e contabilizam a conta paga pela data da baixa',()=>{
+  const ds=dataset();
+  ds.transactions=[tx('personal',{date:'2026-09-28',paidOn:'2026-10-12',paymentStatus:'paid'}),
+    tx('parcela',{date:'2026-09-29',paidOn:'2026-10-03',paymentStatus:'paid',installment:'2/3',purchaseDate:'2026-08-07',
+      advance:{scheduledDate:'2026-11-07',paidDate:'2026-09-29'}}),
+    tx('debito',{date:'2026-10-05'})];
+  saveBase(ds);api.setFilters({month:'2026-10'});api.setSort({key:'date',dir:1});api.renderTable();
+  const table=get('#tx-tbody').innerHTML;
+  const row=id=>table.match(new RegExp('<tr data-id="'+id+'"[\\s\\S]*?</tr>'))[0];
+  assert.match(row('personal'),/<td style="white-space:nowrap">12\/10\/2026<\/td>/);
+  assert.equal(row('personal').match(/12\/10\/2026/g).length,1);
+  assert.match(row('parcela'),/03\/10\/2026<br><span title="Data da compra">Cpr\. 07\/08\/2026/);
+  assert.doesNotMatch(table,/Pago em|28\/09\/2026|07\/11\/2026/);
+  assert.deepEqual(Array.from(api.sortTxs(api.tableTxs()),t=>t.id),['parcela','debito','personal']);
+  api.setFilters({month:'2026-09'});assert.equal(api.tableTxs().length,0);
 });
 
 test('fixações antigas preservam o valor contabilizado e receitas não entram em contas a pagar',()=>{

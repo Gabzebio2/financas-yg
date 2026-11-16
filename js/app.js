@@ -668,6 +668,8 @@ function isPendingBill(t) {
   return t.type === "despesa" && t.paymentStatus === "pending";
 }
 function accountingDate(t) {
+  // Uma parcela adiantada também pode ser reaberta e quitada em outro dia.
+  if (t.paymentStatus === "paid" && t.type === "despesa" && isValidISODate(t.paidOn)) return t.paidOn;
   if (isPendingBill(t) || t.advance) return t.date;
   if (t.type === "despesa" && isValidISODate(t.paidOn)) return t.paidOn;
   return t.billClosingDate ? InstallmentSchedule.statementDate(t) : t.date;

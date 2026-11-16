@@ -14,7 +14,7 @@
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261107-c6-invoices">
+<link rel="stylesheet" href="css/design.css?v=20261116-painel">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 <link rel="stylesheet" href="css/receipt-jobs.css?v=20261106-statement-coverage">
 </head>
@@ -386,14 +386,20 @@
       </div>
     </div>
 
-    <div class="section-heading"><div><h2>Um olhar mais atento</h2><p class="section-caption">Entenda os movimentos do seu dinheiro.</p></div><span class="section-tag">Análise financeira</span></div>
+    <div class="section-heading"><h2>Gráficos</h2></div>
     <div class="charts-grid">
-      <div class="card chart-card">
-        <h3>Gastos por categoria</h3><p class="chart-subtitle">Despesas por categoria no período selecionado</p>
-        <div class="chart-box"><canvas id="chart-cat">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
+      <div class="card chart-card category-chart-card">
+        <h3>Gastos por categoria</h3><p class="chart-subtitle">Total no período <strong class="chart-amount" id="chart-cat-total"></strong></p>
+        <div class="category-distribution">
+          <div class="chart-box category-ring">
+            <canvas id="chart-cat" role="img" aria-label="Distribuição das despesas pelas categorias visíveis"></canvas>
+            <div id="chart-cat-center" class="category-ring-center" aria-hidden="true" hidden><strong id="chart-cat-count"></strong><span id="chart-cat-unit"></span></div>
+          </div>
+          <ul class="category-chart-legend" id="chart-cat-legend" aria-label="Categorias e gastos no período"></ul>
+        </div>
       </div>
       <div class="card chart-card">
-        <h3>Entradas e saídas</h3><p class="chart-subtitle">Compare receitas e despesas ao longo dos meses</p>
+        <h3>Entradas e saídas</h3><p class="chart-subtitle">Receitas e despesas por mês</p>
         <div class="chart-box"><canvas id="chart-evo">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
       <div class="card chart-card">
@@ -401,7 +407,7 @@
         <div class="chart-box"><canvas id="chart-saldo">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
       <div class="card chart-card">
-        <h3>Cartões e contas</h3><p class="chart-subtitle">Distribuição das despesas no período selecionado</p>
+        <h3>Cartões e contas</h3><p class="chart-subtitle">Contas com maior gasto no período</p>
         <div class="receipt-cycle hidden" id="dashboard-card-cycle"></div>
         <div class="chart-box"><canvas id="chart-conta">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
@@ -830,12 +836,12 @@
 <script src="js/installment-schedule.js?v=20261107-c6-invoices"></script>
 <script src="js/import-dates.js?v=20261106-auto-document"></script>
 <script src="js/transaction-categories.js?v=20261109-categorias"></script>
-<script src="js/app.js?v=20261109-categorias"></script>
+<script src="js/app.js?v=20261116-pagamento"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
 <script src="js/importer.js?v=20261109-categorias"></script>
 <script src="js/weekly-revenue.js?v=20261103-week-cards"></script>
 <script src="js/business.js?v=20261103-bills"></script>
-<script src="js/dashboard.js?v=20261109-categorias"></script>
+<script src="js/dashboard.js?v=20261116-painel"></script>
 <script src="js/receipt.js?v=20261109-categorias"></script>
 <script src="js/batch.js?v=20261109-categorias"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>

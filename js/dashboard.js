@@ -124,10 +124,12 @@ const Dashboard = (() => {
       }
     });
     const months = allMonths();
-    const cur = todayISO().slice(0, 7);
+    billCalendarDate = todayISO();
+    const cur = billCalendarDate.slice(0, 7);
+    const hasBills = ds.transactions.some(t => t.paymentStatus || InstallmentSchedule.isC6InvoicePayable(t));
     fil = {
       mode: "month",
-      month: months.includes(cur) ? cur : (months.filter((ym) => ym <= cur).pop() || cur),
+      month: hasBills || months.includes(cur) ? cur : (months.filter((ym) => ym <= cur).pop() || cur),
       from: "", to: "", cats: null, search: "", type: "all", account: "all",
     };
     sort = { key: "date", dir: -1 };
@@ -323,7 +325,14 @@ const Dashboard = (() => {
     el.innerHTML=latest ? `<strong>Última fatura · ${escapeHtml(latest.account)}</strong><dl>${latest.billClosingDate ? '<div><dt>Fechamento</dt><dd>'+fmtDate(latest.billClosingDate)+'</dd></div>' : ''}<div><dt>Vencimento</dt><dd>${fmtDate(latest.billDueDate)}</dd></div><div><dt>Melhor dia para comprar</dt><dd>Dia ${latest.cardBestPurchaseDay}</dd></div></dl>` : "";
   }
   function renderAll() {
-    const cycles = InstallmentSchedule.c6Invoices(ds.transactions, todayISO());
+    const today = todayISO();
+    if (billCalendarDate && billCalendarDate.slice(0,7) !== today.slice(0,7) &&
+        fil.mode === "month" && fil.month === billCalendarDate.slice(0,7)) {
+      fil.month = today.slice(0,7);
+      rowLimit = 100;
+    }
+    billCalendarDate = today;
+    const cycles = InstallmentSchedule.c6Invoices(ds.transactions, today);
     groupedC6Ids = new Set(cycles.filter(i => i.month >= "2026-11").flatMap(i => i.transactionIds));
     $("#ds-name").textContent = ds.name;
     if (typeof BusinessPanel !== "undefined") BusinessPanel.render(ds);
@@ -634,19 +643,19 @@ const Dashboard = (() => {
   function applyChartTheme() {
     const palette = themePalette();
     Chart.defaults.font.family = "'Open Sans', 'Segoe UI', system-ui, sans-serif";
-    Chart.defaults.font.size = 12;
+    Chart.defaults.font.size = 11;
     Chart.defaults.font.weight = "500";
     Chart.defaults.color = palette.muted;
     Chart.defaults.borderColor = palette.grid;
     Object.assign(Chart.defaults.plugins.legend.labels, {
-      usePointStyle: true, pointStyle: "circle", boxWidth: 7, boxHeight: 7, padding: 18, color: palette.muted,
+      usePointStyle: true, boxWidth: 9, boxHeight: 9, padding: 14, color: palette.text,
     });
     Object.assign(Chart.defaults.plugins.tooltip, {
       backgroundColor: palette.card, titleColor: palette.text, bodyColor: palette.muted,
       borderColor: palette.border, borderWidth: 1, padding: 13, cornerRadius: 10,
       boxPadding: 5, usePointStyle: true,
     });
-    Chart.defaults.elements.line.borderWidth = 2.5;
+    Chart.defaults.elements.line.borderWidth = 3;
     Chart.defaults.elements.point.hoverRadius = 5;
   }
 
@@ -657,6 +666,7 @@ const Dashboard = (() => {
       return;
     }
     applyChartTheme();
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) config.options.animation = false;
     charts[canvasId] = new Chart($("#" + canvasId), config);
   }
 
@@ -685,10 +695,101 @@ const Dashboard = (() => {
       },
     },
   };
-  // Ticks compactos (sem casas decimais) na moeda de exibição
+  const compactMoney = new Intl.NumberFormat("pt-BR", {notation:"compact", maximumFractionDigits:1});
   const moneyTicks = {
-    callback: (v) => fmtMoney(Number(v) || 0, dispCur()),
+    callback: (v) => Math.abs(v) >= 1000
+      ? CURRENCIES[dispCur()].symbol + " " + compactMoney.format(v)
+      : fmtMoney(Number(v) || 0, dispCur()),
   };
+
+  function timeChartOptions(palette) {
+    return {
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:"index", axis:"x", intersect:false},
+      plugins:{legend:{position:"bottom", align:"start"}, tooltip:moneyTip},
+      scales:{
+        x:{grid:{display:false}, border:{display:false}, ticks:{
+          autoSkip:true, maxTicksLimit:6, maxRotation:0, padding:6,
+          callback(value) {
+            const labels = this.getLabels();
+            const [month, year] = this.getLabelForValue(value).split("/");
+            if (value && labels[0].slice(-4) === labels.at(-1).slice(-4)) return month;
+            return month + "/" + year.slice(-2);
+          },
+        }},
+        y:{border:{display:false, dash:[3, 4]}, grid:{color:chartTint(palette.muted,.2), drawTicks:false}, ticks:{...moneyTicks, maxTicksLimit:5, padding:8}},
+      },
+    };
+  }
+
+  // O guia acompanha o mês sob o dedo ou cursor nas duas séries.
+  const monthGuide = {
+    id:"monthGuide",
+    beforeDatasetsDraw(chart) {
+      const [active] = chart.getActiveElements();
+      if (!active) return;
+      const {ctx, chartArea} = chart;
+      ctx.save();
+      ctx.strokeStyle = chart.options.color;
+      ctx.globalAlpha = .5;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(active.element.x, chartArea.top);
+      ctx.lineTo(active.element.x, chartArea.bottom);
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
+
+  function trendLine(label, data, color, filled = false) {
+    return {
+      label, data, borderColor:color, cubicInterpolationMode:"monotone",
+      pointRadius:data.length === 1 ? 4 : 0, pointHitRadius:12, pointBackgroundColor:color, pointStyle:"line",
+      fill:filled, backgroundColor:filled ? ({chart}) => {
+        const area = chart.chartArea;
+        if (!area) return "transparent";
+        const fade = chart.ctx.createLinearGradient(0, area.top, 0, area.bottom);
+        fade.addColorStop(0, chartTint(color,.24));
+        fade.addColorStop(1, chartTint(color,.015));
+        return fade;
+      } : color,
+    };
+  }
+
+  function categoryLegend(entries) {
+    const legend = $("#chart-cat-legend");
+    const total = entries.reduce((sum, [, value]) => sum + value, 0);
+    const hasShares = entries.every(([, value]) => value >= 0);
+    const formatShare = (value, sum) => hasShares && sum > 0
+      ? (value / sum).toLocaleString("pt-BR",{style:"percent",maximumFractionDigits:1}) : "";
+    $("#chart-cat-total").textContent = entries.length ? fmtD(total) : "—";
+    $("#chart-cat-center").hidden = !entries.length;
+    const updateCount = count => {
+      $("#chart-cat-count").textContent = count;
+      $("#chart-cat-unit").textContent = count === 1 ? "categoria" : "categorias";
+    };
+    updateCount(entries.length);
+    legend.innerHTML = entries.map(([name, value], index) => {
+      return `<li><button type="button" aria-pressed="true" data-category-index="${index}" title="Mostrar ou ocultar ${escapeHtml(name)} no gráfico">
+        <i aria-hidden="true" style="background:${catColor(ds,name)}"></i><span class="chart-cat-name">${escapeHtml(name)}</span>
+        <strong class="chart-amount">${escapeHtml(fmtD(value))}</strong><small class="chart-share">${formatShare(value,total)}</small></button></li>`;
+    }).join("");
+    legend.onclick = event => {
+      const button = event.target.closest("button[data-category-index]");
+      if (!button) return;
+      const chart = charts["chart-cat"];
+      const index = Number(button.dataset.categoryIndex);
+      chart.toggleDataVisibility(index);
+      button.setAttribute("aria-pressed", chart.getDataVisibility(index));
+      const visible = entries.filter((_, i) => chart.getDataVisibility(i));
+      const sum = visible.reduce((acc, [, value]) => acc + value, 0);
+      legend.querySelectorAll(".chart-share").forEach((part, i) => {
+        part.textContent = chart.getDataVisibility(i) ? formatShare(entries[i][1],sum) : "";
+      });
+      updateCount(visible.length);
+      chart.update();
+    };
+  }
 
   // Meses exibidos nos gráficos de evolução
   function chartMonths() {
@@ -703,6 +804,7 @@ const Dashboard = (() => {
     const palette = themePalette();
     const posted = ds.transactions.filter(t => !pendingIndividualBill(t) && inCats(t));
     if (posted.some((t) => !Number.isFinite(dispAmount(t)))) {
+      categoryLegend([]);
       ["chart-cat", "chart-evo", "chart-saldo", "chart-conta"].forEach((id) => {
         if (charts[id]) { charts[id].destroy(); delete charts[id]; }
         setEmpty(id, true, "Cotação indisponível para comparar estas moedas. Os valores originais estão na lista de transações.");
@@ -710,6 +812,7 @@ const Dashboard = (() => {
       return;
     }
     if (typeof Chart === "undefined") {
+      categoryLegend([]);
       ["chart-cat", "chart-evo", "chart-saldo", "chart-conta"].forEach((id) => setEmpty(id, true, "Os gráficos estão indisponíveis. Seus valores e transações continuam acessíveis."));
       return;
     }
@@ -719,6 +822,7 @@ const Dashboard = (() => {
     const byCat = Object.create(null);
     txs.filter((t) => t.type === "despesa").forEach((t) => { byCat[t.category] = (byCat[t.category] || 0) + dispAmount(t); });
     const catEntries = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+    categoryLegend(catEntries);
     setEmpty("chart-cat", !catEntries.length, "Sem despesas no período selecionado");
     mkChart("chart-cat", {
       type: "doughnut",
@@ -727,13 +831,13 @@ const Dashboard = (() => {
         datasets: [{
           data: catEntries.map(([, v]) => v),
           backgroundColor: catEntries.map(([c]) => catColor(ds, c)),
-          borderWidth: 4, borderColor: palette.card, hoverOffset: 5, borderRadius: 3,
+          borderWidth: 0, spacing: 3, hoverOffset: 3, borderRadius: 4,
         }],
       },
       options: {
-        responsive: true, maintainAspectRatio: false, cutout: "72%",
+        responsive: true, maintainAspectRatio: false, cutout: "78%", layout:{padding:4},
         plugins: {
-          legend: { position: "right" },
+          legend: { display:false },
           tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${fmtD(ctx.parsed)}` } },
         },
       },
@@ -754,18 +858,15 @@ const Dashboard = (() => {
     setEmpty("chart-evo", !months.length, "Sem transações ainda");
     mkChart("chart-evo", {
       type: "line",
+      plugins:[monthGuide],
       data: {
         labels,
         datasets: [
-          { label: "Receitas", data: recData, borderColor: palette.revenue, backgroundColor: chartTint(palette.revenue, .10), fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: palette.card, pointBorderWidth: 2 },
-          { label: "Despesas", data: despData, borderColor: palette.expense, backgroundColor: chartTint(palette.expense, .08), fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: palette.card, pointBorderWidth: 2 },
+          trendLine("Receitas", recData, palette.revenue, true),
+          { ...trendLine("Despesas", despData, palette.expense), borderDash:[6,3] },
         ],
       },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: "bottom" }, tooltip: moneyTip },
-        scales: { x: { grid: { display: false }, border: { display: false } }, y: { ticks: { ...moneyTicks, padding: 10 }, border: { display: false }, grid: { color: palette.grid } } },
-      },
+      options:timeChartOptions(palette),
     });
 
     // Saldo acumulado inclui meses anteriores à janela exibida
@@ -778,22 +879,19 @@ const Dashboard = (() => {
 
     setEmpty("chart-saldo", !months.length, "Sem transações ainda");
     mkChart("chart-saldo", {
+      plugins:[monthGuide],
       data: {
         labels,
         datasets: [
           {
             type: "bar", label: "Saldo do mês", data: saldoData,
             backgroundColor: saldoData.map((v) => chartTint(v >= 0 ? palette.revenue : palette.expense, .75)),
-            borderRadius: 5, maxBarThickness: 38,
+            borderRadius: 6, maxBarThickness: 24, pointStyle:"rectRounded", order:1,
           },
-          { type: "line", label: "Acumulado", data: cumData, borderColor: palette.balance, backgroundColor: palette.balance, tension: .3, pointRadius: 3, pointBackgroundColor: palette.card, pointBorderWidth: 2 },
+          { type:"line", ...trendLine("Acumulado", cumData, palette.balance), order:0 },
         ],
       },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: "bottom" }, tooltip: moneyTip },
-        scales: { x: { grid: { display: false }, border: { display: false } }, y: { ticks: { ...moneyTicks, padding: 10 }, border: { display: false }, grid: { color: palette.grid } } },
-      },
+      options:timeChartOptions(palette),
     });
 
     /* 4. Barras horizontais — gastos por cartão/conta */
@@ -810,13 +908,14 @@ const Dashboard = (() => {
         labels: accEntries.map(([a]) => a),
         datasets: [{
           label: "Despesas", data: accEntries.map(([, v]) => v),
-          backgroundColor: chartTint(palette.primary, .8), borderRadius: 5, maxBarThickness: 28,
+          backgroundColor: accEntries.map((_,i) => i === 0 ? palette.balance : chartTint(palette.balance,.55)),
+          borderRadius: 8, maxBarThickness: 14,
         }],
       },
       options: {
         indexAxis: "y", responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => ` ${fmtD(ctx.parsed.x)}` } } },
-        scales: { x: { ticks: { ...moneyTicks, padding: 10 }, border: { display: false }, grid: { color: palette.grid } }, y: { grid: { display: false }, border: { display: false } } },
+        scales: { x: { ticks: { ...moneyTicks, padding: 6, maxTicksLimit:4, maxRotation:0 }, border: { display: false, dash:[3,4] }, grid: { color:chartTint(palette.muted,.2), drawTicks:false } }, y: { grid: { display: false }, border: { display: false } } },
       },
     });
   }
@@ -1391,17 +1490,24 @@ const Dashboard = (() => {
     };
   }
 
+  function billDueDate(t) {
+    return t.advance?.scheduledDate || t.date;
+  }
+
   function billRow(t, today, confirming = false) {
     const pending = isPendingBill(t);
     const empty = t.paymentStatus === "empty";
-    const date = pending || empty || confirming ? t.date : accountingDate(t);
+    const date = billDueDate(t);
     const [year, month, day] = date.split("-");
     const monthLabel = MESES_ABREV[Number(month) - 1] + (year === today.slice(0,4) ? "" : "/" + year);
-    const when = (pending || empty || confirming ? "Vencimento em " : "Pago em ") + fmtDate(date);
+    const when = "Vencimento em " + fmtDate(date);
     const invoice = t.invoice;
-    const detail = invoice
-      ? [fmtMonthLong(invoice.month), t.status, (invoice.dueDateObserved ? "Vencimento " : "Vencimento previsto ") + fmtDate(t.date)].join(" · ")
-      : [t.account, t.category, t.installment && "Parcela " + t.installment].filter(Boolean).join(" · ");
+    const paidOn = t.paymentStatus === "paid" && (t.paidOn || t.advance?.paidDate);
+    const paidLabel = paidOn && "Pago em " + fmtDate(paidOn);
+    const details = invoice
+      ? [fmtMonthLong(invoice.month), t.status, (invoice.dueDateObserved ? "Vencimento " : "Vencimento previsto ") + fmtDate(date), paidLabel]
+      : [t.account, t.category, paidLabel, t.installment && "Parcela " + t.installment];
+    const detail = details.filter(Boolean).join(" · ");
     const period = invoice ? (invoice.closingDateObserved ? "Período" : "Período previsto") + " de " +
       fmtDate(invoice.startDate).slice(0,5) + " a " + fmtDate(invoice.closingDate).slice(0,5) : "";
     const amount = invoice ? Object.entries(t.amounts).filter(([,v]) => v).map(([c,v]) =>
@@ -1415,36 +1521,45 @@ const Dashboard = (() => {
   }
 
   let billMidnightTimer;
+  let billCalendarDate = "";
   const billConfirmations = new Map(); // Só a apresentação espera. O pagamento já está salvo.
   function renderBillBoard(invoiceCycles) {
     const panel = $("#dash-bills");
     if (!ds || !panel) return;
     const today = todayISO();
+    if (!invoiceCycles && billCalendarDate !== today) { renderAll(); return; }
+    const currentMonth = today.slice(0,7);
+    const month = fil.mode === "month" && fil.month ? fil.month : currentMonth;
     const cycles = invoiceCycles || InstallmentSchedule.c6Invoices(ds.transactions, today);
-    const started = cycles.filter(i => i.month >= "2026-11" && i.startDate <= today);
+    // Após o fechamento, a fatura a vencer e a nova em curso coexistem.
+    const started = cycles.filter(i => {
+      if (i.month < "2026-11" || i.startDate > today) return false;
+      const currentCycle = month === currentMonth && today <= i.closingDate;
+      return i.month === month || i.dueDate.slice(0,7) === month || currentCycle;
+    });
     const invoices = started.map(i => invoiceBill(i, today)).filter(Boolean);
-    const bills = ds.transactions.filter(t => !groupedC6Ids.has(t.id)).concat(invoices);
+    const bills = ds.transactions.filter(t => t.paymentStatus && !groupedC6Ids.has(t.id) && billDueDate(t).slice(0,7) === month).concat(invoices);
     const active = bills.filter(isPendingBill);
     const settled = bills.filter(t => t.type === "despesa" && t.paymentStatus === "paid")
       .sort((a,b) => accountingDate(b).localeCompare(accountingDate(a)));
     const confirmingInAgenda = t => billConfirmations.get(t.id)?.source === "agenda";
-    const visible = [...active, ...settled.filter(confirmingInAgenda)].sort((a,b) => a.date.localeCompare(b.date));
+    const visible = [...active, ...settled.filter(confirmingInAgenda)].sort((a,b) => billDueDate(a).localeCompare(billDueDate(b)));
     const historyItems = settled.filter(t => !confirmingInAgenda(t));
     const count = active.length;
     const header = `<div class="bill-head"><div class="bill-heading"><span class="bill-emblem">${uiIcon("calendar", 24)}</span><div><h2>Contas a pagar</h2>
-      <p>${count ? (count === 1 ? "1 conta em aberto" : count + " contas em aberto") : "Nenhuma pendente"}</p></div></div>
+      <p>${fmtMonthLong(month)} · ${count ? (count === 1 ? "1 conta em aberto" : count + " contas em aberto") : "Nenhuma pendente"}</p></div></div>
       <button type="button" class="btn bill-add" data-bill-action="new" aria-label="Nova conta a pagar">${uiIcon("plus", 16)} Nova conta</button></div>`;
     const groups = [
-      ["late", "Em atraso", visible.filter(t => t.date < today)],
-      ["today", "Vencem hoje", visible.filter(t => t.date === today)],
-      ["upcoming", "Próximos vencimentos", visible.filter(t => t.date > today)],
+      ["late", "Em atraso", visible.filter(t => billDueDate(t) < today)],
+      ["today", "Vencem hoje", visible.filter(t => billDueDate(t) === today)],
+      ["upcoming", "Próximos vencimentos", visible.filter(t => billDueDate(t) > today)],
       ["cycle", "Fatura em andamento", invoices.filter(t => t.paymentStatus === "empty")],
     ];
     const agenda = groups.filter(([, , items]) => items.length).map(([key, label, items]) =>
       `<section class="bill-group" data-due="${key}"><h3>${label}</h3>${items.map(t => billRow(t, today, t.paymentStatus === "paid")).join("")}</section>`).join("");
     const list = agenda ? `<div class="bill-list bill-agenda">${agenda}</div>` :
       `<div class="bill-empty"><span class="bill-empty-icon">${uiIcon("check", 17)}</span>
-        <p>${settled.length ? "Todas as contas acompanhadas estão pagas." : "Cadastre uma conta para acompanhar o vencimento."}</p></div>`;
+        <p>${settled.length ? "Todas as contas deste mês estão pagas." : "Nenhuma conta a pagar neste mês."}</p></div>`;
     const expanded = panel.querySelector("details")?.open;
     const history = historyItems.length ? `<details class="bill-history" ${expanded ? "open" : ""}><summary>${uiIcon("history", 17)} Contas pagas (${historyItems.length}) <span class="bill-chevron">${uiIcon("down", 16)}</span></summary>
       <div class="bill-list">${historyItems.map(t => billRow(t, today)).join("")}</div></details>` : "";
@@ -1461,11 +1576,9 @@ const Dashboard = (() => {
       (next || panel.querySelector(".bill-add")).focus({preventScroll:true});
     }
     clearTimeout(billMidnightTimer);
-    if (count || cycles.length) {
-      const midnight = new Date();
-      midnight.setHours(24, 0, 0, 0);
-      billMidnightTimer = setTimeout(renderBillBoard, Math.max(1, midnight.getTime() - Date.now()));
-    }
+    const midnight = new Date();
+    midnight.setHours(24, 0, 0, 0);
+    billMidnightTimer = setTimeout(() => { if (ds) renderAll(); }, Math.max(1, midnight.getTime() - Date.now()));
   }
 
   function changeAgendaBill(row, action) {
@@ -1899,9 +2012,14 @@ const Dashboard = (() => {
     $("#tx-bill-options").classList.toggle("hidden", !expense);
     $("#tx-paid-wrap").classList.toggle("hidden", !tracked || !editingId);
     $("#tx-date-label").textContent = tracked ? "Vencimento" : "Data";
-    $("#tx-bill-hint").textContent = tracked
-      ? "A conta aparece no dashboard. O valor entra nas despesas quando você marcar como paga."
-      : "Compras no débito já entram no total ao salvar. Selecione apenas se a conta ainda precisa ser paga.";
+    const tx = editingId && ds.transactions.find(t => t.id === editingId);
+    if (tracked && tx?.fixed && tx.groupId && !$("#tx-payable").defaultChecked) {
+      $("#tx-bill-hint").textContent = "Os próximos vencimentos desta série também ficarão em aberto. Cada mês entra nas despesas quando for pago.";
+    } else {
+      $("#tx-bill-hint").textContent = tracked
+        ? "A conta aparece no dashboard. O valor entra nas despesas quando você marcar como paga."
+        : "Compras no débito já entram no total ao salvar. Selecione apenas se a conta ainda precisa ser paga.";
+    }
   }
 
   function updateFixedOption(tx) {
@@ -1932,7 +2050,7 @@ const Dashboard = (() => {
       hint.classList.remove("hidden");
     } else if (fixaOn) {
       hint.textContent = editingId
-        ? ($("#tx-fixa").disabled ? "Este lançamento já faz parte de uma série mensal. As alterações valem só para este mês."
+        ? ($("#tx-fixa").disabled ? "Este lançamento já faz parte de uma série mensal. Valor e vencimento podem ser editados para este mês."
           : `Este lançamento será o primeiro da série. Ao salvar, serão adicionadas ${FIXA_MESES-1} repetições mensais a partir do mês seguinte.`)
         : `Serão criados ${FIXA_MESES} lançamentos mensais${total && total > 0 ? ` de ${f(total)}` : ""}, a partir da data escolhida. Para encerrar, exclua a partir de um mês.`;
       hint.classList.remove("hidden");
@@ -2031,11 +2149,21 @@ const Dashboard = (() => {
     const paid = edited && paidBox.checked === paidBox.defaultChecked ? edited.paymentStatus === "paid" : paidBox.checked;
     const paymentStatus = tracked ? (paid ? "paid" : "pending") : undefined;
     let paidOn = edited?.paidOn;
-    if (edited && isPendingBill(edited) && paymentStatus === "paid") paidOn = todayISO();
+    if (paymentStatus === "paid" && edited?.paymentStatus !== "paid" && !isValidISODate(paidOn)) paidOn = todayISO();
     if (edited && !tracked && !edited.paymentStatus && date !== edited.date) paidOn = undefined;
     const bill = cleanBillFields({ type:txType, paymentStatus, paidOn });
     const nextBill = bill.paymentStatus ? {paymentStatus:"pending"} : {};
     if (edited) {
+      if (bill.paymentStatus && edited.fixed && edited.groupId && trackBox.checked && !trackBox.defaultChecked) {
+        const today = todayISO(), anchorMonth = edited.date.slice(0,7);
+        for (const other of ds.transactions) {
+          if (other.groupId === edited.groupId && other.fixed && other.type === "despesa" &&
+              !other.paymentStatus && !other.paidOn && !other.installment && other.date >= today &&
+              other.date.slice(0,7) > anchorMonth && !InstallmentSchedule.isC6InvoicePayable(other,ds.transactions)) {
+            other.paymentStatus = "pending";
+          }
+        }
+      }
       const dateChanged = txDateEdited || date !== edited.date;
       if (accountChanged) {
         delete edited.c6Section;
@@ -2147,6 +2275,9 @@ const Dashboard = (() => {
 
   /* ---------- Eventos ---------- */
   document.addEventListener("DOMContentLoaded", () => {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && ds && billCalendarDate !== todayISO()) renderAll();
+    });
     document.addEventListener("fyg:themechange", () => {
       if (!ds) return;
       // Apenas os canvas precisam ser recriados. Cores inline de chips e
