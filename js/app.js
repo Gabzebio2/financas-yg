@@ -694,8 +694,8 @@ function shiftBillMonth(month, offset) {
   if (index < 12 || index >= 120000) return "";
   return String(Math.floor(index / 12)).padStart(4, "0") + "-" + String(index % 12 + 1).padStart(2, "0");
 }
-function printedBillMonth(t, dueMonth) {
-  for (const source of [t.desc, t.sourceEvidence]) {
+function printedBillMonth(sources, dueMonth) {
+  for (const source of sources) {
     if (!source) continue;
     const text = stripAccents(source);
     // "Vencimento", datas de pagamento e identificadores de referência bancária não indicam consumo.
@@ -724,15 +724,65 @@ function printedBillMonth(t, dueMonth) {
   }
   return "";
 }
-function billReferenceMonth(t) {
+function validBillMonth(value) {
+  return typeof value === "string" && isValidISODate(value + "-01");
+}
+function validBillOrigin(origin) {
+  return origin && validBillMonth(origin.dueMonth) && validBillMonth(origin.printedMonth);
+}
+function projectBillMonth(month, from, to) {
+  const diff = 12 * (Number(to.slice(0,4)) - Number(from.slice(0,4))) + Number(to.slice(5,7)) - Number(from.slice(5,7));
+  return shiftBillMonth(month,diff);
+}
+function billPrintedOrigin(t, dueMonth, inherited) {
+  const documentMonth = printedBillMonth([t.sourceEvidence], dueMonth);
+  if (documentMonth) return {dueMonth, printedMonth:documentMonth};
+  const origin = validBillOrigin(t.billReferenceOrigin) ? t.billReferenceOrigin : inherited;
+  if (validBillOrigin(origin)) {
+    const label = printedBillMonth([t.desc], origin.dueMonth);
+    if (!label || label === origin.printedMonth) return origin;
+  }
+  const printedMonth = printedBillMonth([t.desc], dueMonth);
+  return printedMonth ? {dueMonth, printedMonth} : null;
+}
+function legacyBillReferenceOrigins(transactions) {
+  const groups = new Map(), origins = new Map();
+  for (const t of transactions) {
+    if (!t.fixed || !t.groupId) continue;
+    if (!groups.has(t.groupId)) groups.set(t.groupId,[]);
+    groups.get(t.groupId).push(t);
+  }
+  const due = t => t.advance?.scheduledDate || t.date;
+  for (const rows of groups.values()) {
+    if (rows.length < 2 || !rows.some(t => t.paymentStatus) || rows.some(t => t.type !== "despesa" || !isValidISODate(due(t)))) continue;
+    rows.sort((a,b) => due(a).localeCompare(due(b)));
+    const first = rows[0], from = due(first).slice(0,7);
+    const printed = printedBillMonth([first.desc],from);
+    if (!printed || (printed !== from && printed !== shiftBillMonth(from,-1))) continue;
+    const desc = stripAccents(first.desc);
+    const credible = rows.every((t,i) => {
+      const month = due(t).slice(0,7), projected = shiftBillMonth(printed,i);
+      if (month !== shiftBillMonth(from,i) || stripAccents(t.desc) !== desc || t.account !== first.account || t.currency !== first.currency) return false;
+      const observed = printedBillMonth([t.sourceEvidence],month);
+      return (!observed || observed === projected) &&
+        (!validBillOrigin(t.billReferenceOrigin) || projectBillMonth(t.billReferenceOrigin.printedMonth,t.billReferenceOrigin.dueMonth,month) === projected);
+    });
+    if (credible) {
+      const origin = {dueMonth:from, printedMonth:printed};
+      for (const t of rows) if (!t.billReferenceOrigin) origins.set(t.id, origin);
+    }
+  }
+  return origins;
+}
+function billReferenceMonth(t, inherited) {
   if (t.type !== "despesa" || !["pending","paid"].includes(t.paymentStatus) || t.invoice ||
       (typeof InstallmentSchedule !== "undefined" && InstallmentSchedule.isC6InvoicePayable(t))) return "";
   const due = t.advance?.scheduledDate || t.date;
   if (!isValidISODate(due)) return "";
-  if (typeof t.billReferenceMonth === "string" && isValidISODate(t.billReferenceMonth + "-01")) return t.billReferenceMonth;
+  if (validBillMonth(t.billReferenceMonth)) return t.billReferenceMonth;
   const dueMonth = due.slice(0,7);
-  const printed = printedBillMonth(t, dueMonth);
-  if (printed) return printed;
+  const origin = billPrintedOrigin(t, dueMonth, inherited);
+  if (origin) return projectBillMonth(origin.printedMonth,origin.dueMonth,dueMonth);
   const desc = stripAccents(t.desc);
   const personal = /\bpersonal\b/.test(desc) &&
     (/^(?:telecom\s+)?personal(?:\s+(?:py|paraguay))?$/.test(desc) ||
@@ -740,27 +790,27 @@ function billReferenceMonth(t) {
     !/\b(?:recarga|prepago|pre[ -]pago|prestamo|emprestimo|credito personal|personal trainer)\b/.test(desc);
   return personal ? shiftBillMonth(dueMonth,-1) || dueMonth : dueMonth;
 }
-function expenseReportDate(t) {
+function expenseReportDate(t, inherited) {
   const actual = accountingDate(t);
-  const reference = t.paymentStatus === "paid" && billReferenceMonth(t);
+  const reference = t.paymentStatus === "paid" && billReferenceMonth(t,inherited);
   if (!reference || actual.slice(0,7) === reference) return actual;
   const due = t.advance?.scheduledDate || t.date;
   const [year, month] = reference.split("-").map(Number);
   const day = Math.min(Number(due.slice(8)), daysInMonth(year, month));
   return reference + "-" + String(day).padStart(2,"0");
 }
-function nextBillReferenceField(anchor, nextDueDate) {
+function nextBillReferenceField(anchor, nextDueDate, inherited) {
   const due = anchor.advance?.scheduledDate || anchor.date;
   if (!isValidISODate(due) || !isValidISODate(nextDueDate)) return {};
+  if (!["paid","pending"].includes(anchor.paymentStatus) || anchor.type !== "despesa") return {};
   const from = due.slice(0,7);
-  // Texto copiado, como “ref. nov/2026”, só prova a competência da primeira conta.
-  if (!anchor.billReferenceMonth && !printedBillMonth(anchor, from)) return {};
-  const reference = billReferenceMonth(anchor);
-  if (!reference) return {};
-  const diff = 12 * (Number(nextDueDate.slice(0,4)) - Number(due.slice(0,4))) +
-    Number(nextDueDate.slice(5,7)) - Number(due.slice(5,7));
-  const month = shiftBillMonth(reference, diff);
-  return month ? {billReferenceMonth:month} : {};
+  const origin = billPrintedOrigin(anchor,from,inherited);
+  const result = origin ? {billReferenceOrigin:{dueMonth:origin.dueMonth,printedMonth:origin.printedMonth}} : {};
+  if (validBillMonth(anchor.billReferenceMonth)) {
+    const month = projectBillMonth(anchor.billReferenceMonth, from, nextDueDate.slice(0,7));
+    if (month) result.billReferenceMonth = month;
+  }
+  return result;
 }
 function cleanPurchaseSchedule(t) {
   if (!isValidISODate(t.purchaseDate) || !RE_PARC.test(t.installment || "")) return {};
@@ -783,8 +833,12 @@ function cleanBillFields(t) {
   if (["pending", "paid"].includes(t.paymentStatus)) result.paymentStatus = t.paymentStatus;
   // As despesas antigas só fixadas já tinham sido contabilizadas.
   else if (t.billPinned === true) result.paymentStatus = "paid";
-  if (result.paymentStatus && typeof t.billReferenceMonth === "string" && isValidISODate(t.billReferenceMonth + "-01")) {
+  if (result.paymentStatus && validBillMonth(t.billReferenceMonth)) {
     result.billReferenceMonth = t.billReferenceMonth;
+  }
+  if (result.paymentStatus && validBillOrigin(t.billReferenceOrigin)) {
+    const {dueMonth, printedMonth} = t.billReferenceOrigin;
+    result.billReferenceOrigin = {dueMonth,printedMonth};
   }
   if (typeof t.repeatBillReferenceMonth === "string" && isValidISODate(t.repeatBillReferenceMonth + "-01") &&
       t.fixed === true && t.groupId && Number.isInteger(t.repeatMonthlyDay) && t.repeatMonthlyDay >= 1 && t.repeatMonthlyDay <= 31 &&
@@ -867,7 +921,7 @@ function normalizeStoredDataset(raw) {
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: raw.transactions.map((t) => {
-      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, billReferenceMonth, repeatBillReferenceMonth, purchaseDate, seriesKey, billDueDate, billDateObserved, billClosingDate, cardBestPurchaseDay, creditKind, c6Section, ...fields } = t;
+      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, billReferenceMonth, billReferenceOrigin, repeatBillReferenceMonth, purchaseDate, seriesKey, billDueDate, billDateObserved, billClosingDate, cardBestPurchaseDay, creditKind, c6Section, ...fields } = t;
       return {
         ...fields,
         id: typeof t.id === "string" && t.id ? t.id : uid(),

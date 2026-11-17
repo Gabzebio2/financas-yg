@@ -642,6 +642,13 @@ test('competência escrita acompanha cada vencimento da série até o 13º mês 
     ctx.todayISO=()=> '2027-12-01';api.renderAll();api.renderAll();
     assert.equal(references().length,13);assert.equal(references()[12],'2027-11');
     assert.equal(api.getDataset().transactions[12].paymentStatus,'pending');
+    const renewedId=api.getDataset().transactions[12].id;
+    api.openTxModal(renewedId);
+    get('#tx-reference-month').value='2027-10';api.saveTxModal();
+    assert.equal(references()[12],'2027-10');
+    api.openTxModal(renewedId);get('#tx-reference-auto').listeners.get('click')();
+    assert.match(get('#tx-reference-label').textContent,/Novembro de 2027/);
+    api.saveTxModal();assert.equal(references()[12],'2027-11');
   } finally {ctx.todayISO=originalToday;}
 });
 
@@ -925,10 +932,11 @@ test('correção opcional de uma série protege competências pagas, projeta o a
     get('#tx-amount').value='80';get('#tx-date').value='2026-01-13';get('#tx-desc').value='Serviço ref. dezembro de 2025';
     get('#tx-cat').value='Mercado';get('#tx-fixa').checked=true;get('#tx-renew').checked=true;api.saveTxModal();
     const rows=()=>api.getDataset().transactions;
-    assert.equal(rows()[1].billReferenceMonth,'2026-01');assert.equal(rows()[11].billReferenceMonth,'2026-11');
+    const ref=i=>ctx.billReferenceMonth(rows()[i]);
+    assert.equal(ref(1),'2026-01');assert.equal(ref(11),'2026-11');
     api.changeBill(rows()[2].id,'pay');
     api.openTxModal(rows()[1].id);get('#tx-reference-month').value='2026-02';get('#tx-reference-repeat').checked=true;api.saveTxModal();
-    assert.equal(rows()[1].billReferenceMonth,'2026-02');assert.equal(rows()[2].billReferenceMonth,'2026-02');
+    assert.equal(ref(1),'2026-02');assert.equal(ref(2),'2026-02');
     assert.equal(rows()[3].billReferenceMonth,'2026-04');assert.equal(rows()[11].repeatBillReferenceMonth,'2026-12');
     api.openTxModal(rows()[11].id);get('#tx-reference-month').value='2026-10';api.saveTxModal();
     assert.equal(rows()[11].billReferenceMonth,'2026-10');

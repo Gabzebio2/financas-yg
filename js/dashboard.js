@@ -4,8 +4,24 @@
 const Dashboard = (() => {
   let ds = null; // dataset aberto
   let groupedC6Ids = new Set();
+  const legacyBillOrigins = new Map();
+  function refreshBillOrigins() {
+    const origins = legacyBillReferenceOrigins(ds.transactions);
+    legacyBillOrigins.clear();
+    if (!origins.size) return;
+    for (const t of ds.transactions) {
+      const origin = origins.get(t.id);
+      if (origin) legacyBillOrigins.set(t.id, {origin, desc:t.desc, groupId:t.groupId, account:t.account});
+    }
+  }
+  function legacyBillOrigin(t) {
+    const saved = legacyBillOrigins.get(t.id);
+    return saved && saved.desc === t.desc && saved.groupId === t.groupId && saved.account === t.account
+      ? saved.origin : undefined;
+  }
+  function resolvedBillMonth(t) { return billReferenceMonth(t, legacyBillOrigin(t)); }
   function pendingIndividualBill(t) { return isPendingBill(t) && !groupedC6Ids.has(t.id); }
-  function reportDate(t) { return groupedC6Ids.has(t.id) ? accountingDate(t) : expenseReportDate(t); }
+  function reportDate(t) { return groupedC6Ids.has(t.id) ? accountingDate(t) : expenseReportDate(t, legacyBillOrigin(t)); }
   let fil = { mode: "month", month: null, from: "", to: "", cats: null, search: "", type: "all", account: "all" };
   let receiptFilter = null;
   let sort = { key: "date", dir: -1 };
@@ -101,6 +117,7 @@ const Dashboard = (() => {
     billConfirmations.forEach(({timer}) => clearTimeout(timer));
     billConfirmations.clear();
     ds = loaded;
+    legacyBillOrigins.clear();
     closeOriginReview();
     receiptFilter = null;
     // Lembra a última pasta pessoal aberta (usada no menu Pessoa física/Empresa)
@@ -148,6 +165,7 @@ const Dashboard = (() => {
 
   function closeFolder() {
     ds = null;
+    legacyBillOrigins.clear();
     closeOriginReview();
     receiptFilter = null;
     editingId = null;
@@ -321,7 +339,7 @@ const Dashboard = (() => {
         Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t),
         individualBill ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", groupedC6Ids.has(t.id) ? "" : t.paidOn || "",
         individualBill ? "Sim" : "Não", t.purchaseDate || "", t.billClosingDate?.slice(0,7) || "",
-        individualBill ? billReferenceMonth(t) : "", individualBill ? billDueDate(t) : "",
+        individualBill ? resolvedBillMonth(t) : "", individualBill ? billDueDate(t) : "",
       ]);
     }
     const csv = "\uFEFF" + rows.map((row) => row.map(cell).join(";")).join("\r\n");
@@ -346,7 +364,10 @@ const Dashboard = (() => {
   }
   function renderAll() {
     const today = todayISO();
+    const beforeRenewal = ds;
+    refreshBillOrigins();
     renewMonthlySeries(today.slice(0,7));
+    if (ds !== beforeRenewal) refreshBillOrigins();
     if (billCalendarDate && billCalendarDate.slice(0,7) !== today.slice(0,7) &&
         fil.mode === "month" && fil.month === billCalendarDate.slice(0,7)) {
       fil.month = today.slice(0,7);
@@ -994,6 +1015,10 @@ const Dashboard = (() => {
     const ids = new Set(latest.transactions.map(t => t.id));
     for (const anchor of anchors) {
       const months = new Set(latest.transactions.filter(t => t.fixed && t.groupId === anchor.groupId).map(t => t.repeatMonth || t.date.slice(0,7)));
+      const referenceAnchor = {...anchor, billReferenceOrigin:anchor.billReferenceOrigin || legacyBillOrigin(anchor)};
+      if (anchor.repeatBillReferenceMonth) Object.assign(referenceAnchor, {
+        date:(anchor.repeatMonth || anchor.date.slice(0,7))+"-01", advance:undefined, billReferenceMonth:anchor.repeatBillReferenceMonth,
+      });
       for (let month = nextCalendarMonth(anchor.repeatThrough); month.length === 7 && month <= through; month = nextCalendarMonth(month)) {
         const id = "mr" + anchor.repeatKey + "x" + month.replace("-","");
         if (months.has(month)) continue;
@@ -1003,9 +1028,6 @@ const Dashboard = (() => {
         const [year,number] = month.split("-").map(Number);
         const day = Math.min(anchor.repeatMonthlyDay,daysInMonth(year,number));
         const date = month+"-"+String(day).padStart(2,"0");
-        const referenceAnchor = anchor.repeatBillReferenceMonth
-          ? {...anchor, date:(anchor.repeatMonth || anchor.date.slice(0,7))+"-01", advance:undefined, billReferenceMonth:anchor.repeatBillReferenceMonth}
-          : anchor;
         latest.transactions.push({id,groupId:anchor.groupId,fixed:true,repeatMonth:month,date,
           amount:anchor.amount,currency:anchor.currency,type:anchor.type,desc:anchor.desc,category:anchor.category,account:anchor.account,
           installment:null,totalValue:null,...(anchor.c6Section && {c6Section:anchor.c6Section}),
@@ -1600,7 +1622,7 @@ const Dashboard = (() => {
     const invoice = t.invoice;
     const paidOn = t.paymentStatus === "paid" && (t.paidOn || t.advance?.paidDate);
     const paidLabel = paidOn && "Pago em " + fmtDate(paidOn);
-    const reference = invoice ? "" : billReferenceMonth(t);
+    const reference = invoice ? "" : resolvedBillMonth(t);
     const details = invoice
       ? [fmtMonthLong(invoice.month), t.status, (invoice.dueDateObserved ? "Vencimento " : "Vencimento previsto ") + fmtDate(date), paidLabel]
       : [t.account, t.category, paidLabel, reference && "Ref. " + fmtMonth(reference), t.installment && "Parcela " + t.installment];
@@ -2221,7 +2243,7 @@ const Dashboard = (() => {
     $("#tx-bill-reference").classList.toggle("hidden", !tracked);
     if (tracked) {
       const input = $("#tx-reference-month");
-      const reference = billReferenceMonth({...tx, ...receiptRead, type:txType, paymentStatus:"pending", date:$("#tx-date").value,
+      const reference = resolvedBillMonth({...tx, ...receiptRead, type:txType, paymentStatus:"pending", date:$("#tx-date").value,
         desc:$("#tx-desc").value, account:$("#tx-account-sel").value, billReferenceMonth:input.value});
       $("#tx-reference-label").textContent = reference ? "Mês da despesa · " + fmtMonthLong(reference) : "Mês da despesa";
       $("#tx-reference-auto").classList.toggle("hidden", !input.value);
@@ -2374,8 +2396,10 @@ const Dashboard = (() => {
     const referenceInput = $("#tx-reference-month");
     const reference = edited && referenceInput.value === referenceInput.defaultValue
       ? edited.billReferenceMonth : referenceInput.value;
-    const bill = cleanBillFields({...fields, paymentStatus, paidOn, billReferenceMonth:reference});
-    const sourceBill = {...edited, ...fields, ...evidence, ...bill, billReferenceMonth:bill.billReferenceMonth};
+    const draft = {...edited, ...fields, ...evidence, paymentStatus, paidOn, billReferenceMonth:reference};
+    const bill = cleanBillFields({...fields, paymentStatus, paidOn, billReferenceMonth:reference,
+      billReferenceOrigin:draft.billReferenceOrigin || legacyBillOrigin(draft)});
+    const sourceBill = {...draft, ...bill, billReferenceMonth:bill.billReferenceMonth};
     const nextBill = nextDate => bill.paymentStatus ? {paymentStatus:"pending", ...nextBillReferenceField(sourceBill,nextDate)} : {};
     if (edited) {
       const applyReference = bill.paymentStatus && edited.fixed && edited.groupId && $("#tx-reference-repeat").checked;
@@ -2403,11 +2427,11 @@ const Dashboard = (() => {
         if (anchor && applyReference) {
           // O modelo dos próximos meses é independente da despesa já lançada na âncora.
           const anchorDate = (anchor.repeatMonth || anchor.date.slice(0,7)) + "-01";
-          const rule = {...sourceBill, billReferenceMonth:billReferenceMonth(sourceBill)};
+          const rule = {...sourceBill, billReferenceMonth:resolvedBillMonth(sourceBill)};
           anchor.repeatBillReferenceMonth = nextBillReferenceField(rule,anchorDate).billReferenceMonth;
         } else if (anchor === edited && !anchor.repeatBillReferenceMonth && edited.paymentStatus) {
-          const previous = billReferenceMonth(edited);
-          if (previous && (previous !== billReferenceMonth(sourceBill) || billDueDate(edited) !== billDueDate(sourceBill))) {
+          const previous = resolvedBillMonth(edited);
+          if (previous && (previous !== resolvedBillMonth(sourceBill) || billDueDate(edited) !== billDueDate(sourceBill))) {
             const anchorDate = (anchor.repeatMonth || anchor.date.slice(0,7)) + "-01";
             anchor.repeatBillReferenceMonth = nextBillReferenceField({...edited,billReferenceMonth:previous},anchorDate).billReferenceMonth;
           }
@@ -2418,7 +2442,7 @@ const Dashboard = (() => {
         delete edited.c6Section;
         delete edited.creditKind;
       }
-      delete edited.paymentStatus; delete edited.paidOn; delete edited.billReferenceMonth;
+      delete edited.paymentStatus; delete edited.paidOn; delete edited.billReferenceMonth; delete edited.billReferenceOrigin;
       if (edited.weeklyRevenue) WeeklyRevenue.rememberSource(edited);
       Object.assign(edited, fields, evidence, bill);
       if (dateChanged) { delete edited.dateEstimated; delete edited.dateEstimate; }

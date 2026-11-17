@@ -41,7 +41,7 @@ function harness(extraCloud = {}) {
       readAsText(file) { this.result = file.content; this.onload(); }
     },
   });
-  vm.runInContext(source + "\nglobalThis.core = { Store, CURRENCY_CODES, normCur, normDisplayCur, curFrac, fmtMoney, fmtMoneyInput, maskMoneyEl, dupTxKey, parseMoney, parseDateCell, isValidISODate, sanitizeDataset, mergeCloudDatasets, buildSyncPayload, planBackupRestore, importBackup, setMoneyMaskCurrency, moneyInputValue, renderFolders, billReferenceMonth, expenseReportDate, accountingDate, nextBillReferenceField };", context);
+  vm.runInContext(source + "\nglobalThis.core = { Store, CURRENCY_CODES, normCur, normDisplayCur, curFrac, fmtMoney, fmtMoneyInput, maskMoneyEl, dupTxKey, parseMoney, parseDateCell, isValidISODate, sanitizeDataset, mergeCloudDatasets, buildSyncPayload, planBackupRestore, importBackup, setMoneyMaskCurrency, moneyInputValue, renderFolders, billReferenceMonth, expenseReportDate, accountingDate, nextBillReferenceField, legacyBillReferenceOrigins };", context);
   return { ...context.core, localStorage, values, nodes, notifications: () => notifyCount };
 }
 
@@ -95,7 +95,9 @@ test("competência corrigida sobrevive ao backup e a próximas ocorrências sem 
     assert.equal(copy.billReferenceMonth, "2026-11");
     assert.equal(copy.repeatBillReferenceMonth, "2026-10");
     assert.equal(h.nextBillReferenceField(copy,"2027-02-11").billReferenceMonth, "2027-01");
-    assert.equal(h.nextBillReferenceField({...copy,billReferenceMonth:undefined},"2027-02-11").billReferenceMonth, "2026-12");
+    const projected = h.nextBillReferenceField({...copy,billReferenceMonth:undefined},"2027-02-11");
+    assert.equal(projected.billReferenceMonth, undefined);
+    assert.equal(h.billReferenceMonth({...copy,billReferenceMonth:undefined,date:"2027-02-11",...projected}), "2026-12");
   }
   t.billReferenceMonth = ["2026-11"]; t.repeatBillReferenceMonth = "2026-13";
   h.Store.saveDataset(ds);
@@ -103,6 +105,39 @@ test("competência corrigida sobrevive ao backup e a próximas ocorrências sem 
     assert.equal(copy.billReferenceMonth, undefined);
     assert.equal(copy.repeatBillReferenceMonth, undefined);
     assert.equal(h.billReferenceMonth(copy),"2026-10");
+  }
+});
+
+test("referência impressa segue a série inclusive no 13º mês e reaparece ao remover só a exceção manual", () => {
+  const h = harness(), ds = dataset(h), base = ds.transactions[0];
+  Object.assign(base,{date:"2026-12-13",paymentStatus:"pending",desc:"Personal - Ref: novembro",billReferenceMonth:"2026-10"});
+  const next = {...base,...h.nextBillReferenceField(base,"2027-12-13"),date:"2027-12-13"};
+  assert.equal(h.billReferenceMonth(next),"2027-10");
+  delete next.billReferenceMonth;
+  assert.equal(h.billReferenceMonth(next),"2027-11");
+  assert.equal(h.billReferenceMonth({...next,sourceEvidence:"Factura de diciembre 2027"}),"2027-12");
+  assert.equal(h.billReferenceMonth({...next,desc:"Regra alterada - Ref: outubro de 2027"}),"2027-10");
+  ds.transactions[0] = next;
+  h.Store.saveDataset(ds);
+  for (const copy of [h.Store.loadDataset(ds.id), h.sanitizeDataset(h.buildSyncPayload().datasets[0])]) {
+    assert.equal(h.billReferenceMonth(copy.transactions[0]),"2027-11");
+    assert.equal(copy.transactions[0].billReferenceMonth,undefined);
+  }
+  const evidenceOnly = {...base,desc:"Energia",sourceEvidence:"Referência 11/2026",billReferenceMonth:undefined};
+  const second = {...evidenceOnly, ...h.nextBillReferenceField(evidenceOnly,"2027-01-13"),date:"2027-01-13",sourceEvidence:""};
+  assert.equal(h.billReferenceMonth(second),"2026-12");
+});
+
+test("histórico legado projeta só séries homogêneas consecutivas, sem editar os registros", () => {
+  const h = harness(), original = {type:"despesa",fixed:true,groupId:"ficticio",paymentStatus:"paid",desc:"Água ref. novembro/2026",account:"Banco",currency:"PYG"};
+  const rows = ["2027-02-13","2026-12-13","2027-01-13"].map((date,i) => ({...original,id:"linha"+i,date,paidOn:date}));
+  const old = JSON.stringify(rows), origins = h.legacyBillReferenceOrigins(rows);
+  assert.equal(JSON.stringify(rows),old);
+  assert.equal(h.billReferenceMonth(rows[0],origins.get("linha0")),"2027-01");
+  assert.equal(h.expenseReportDate(rows[0],origins.get("linha0")),"2027-01-13");
+  assert.equal(h.billReferenceMonth({...rows[0],billReferenceMonth:"2027-02"},origins.get("linha0")),"2027-02");
+  for (const change of [{date:"2027-06-13"},{date:rows[1].date},{account:"Outro"},{desc:"Outra fatura"},{sourceEvidence:"Competência 05/2026"}]) {
+    assert.equal(h.legacyBillReferenceOrigins([{...rows[0],...change},...rows.slice(1)]).size,0);
   }
 });
 
