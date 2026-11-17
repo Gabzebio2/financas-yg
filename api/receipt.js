@@ -27,7 +27,7 @@ const transactionCategories = require('../js/transaction-categories.js');
 
 const EVIDENCE_PROMPT = `\nPara conferir a extração, inclua em cada operação:
 - "referencia": identificador ÚNICO da operação impresso (ID Pix, NSU, hash etc.), sem inventar. Não use conta, agência, CPF, número do cartão ou valor como referência. Se ausente, "".
-- "evidencia": trecho literal curto da linha que sustenta data/valor/descrição, até 180 caracteres; não inclua dados pessoais desnecessários.
+- "evidencia": trecho literal curto da linha que sustenta data/valor/descrição, até 180 caracteres. Em contas de serviços, conserve também o rótulo e o mês/ano de referência ou competência quando impressos e aplicáveis àquela conta. Esse mês é distinto das datas da operação e do vencimento. Não inclua dados pessoais desnecessários.
 - "pagina": posição física LOCAL no arquivo enviado, contando de 1; se desconhecida, 0. Nunca use numeração impressa que se refira ao documento inteiro.
 - "instituicao": conta/cartão do titular daquela operação, se explícito; não use o banco da contraparte. Se ambíguo, "".
 - "incertezas": lista curta dos campos ilegíveis, ambíguos ou de baixa confiança; use [] apenas se legíveis. Não invente valores para completar a lista.

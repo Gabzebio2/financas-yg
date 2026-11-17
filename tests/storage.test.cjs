@@ -26,7 +26,7 @@ function harness(extraCloud = {}) {
     removeItem: (key) => values.delete(key),
   };
   const context = vm.createContext({
-    Date, Math, console, localStorage,
+    Date, Math, console, localStorage, InstallmentSchedule: require("../js/installment-schedule.js"),
     window: { top: null, self: null },
     document: {
       addEventListener() {},
@@ -41,7 +41,7 @@ function harness(extraCloud = {}) {
       readAsText(file) { this.result = file.content; this.onload(); }
     },
   });
-  vm.runInContext(source + "\nglobalThis.core = { Store, CURRENCY_CODES, normCur, normDisplayCur, curFrac, fmtMoney, fmtMoneyInput, maskMoneyEl, dupTxKey, parseMoney, parseDateCell, isValidISODate, sanitizeDataset, mergeCloudDatasets, buildSyncPayload, planBackupRestore, importBackup, setMoneyMaskCurrency, moneyInputValue, renderFolders };", context);
+  vm.runInContext(source + "\nglobalThis.core = { Store, CURRENCY_CODES, normCur, normDisplayCur, curFrac, fmtMoney, fmtMoneyInput, maskMoneyEl, dupTxKey, parseMoney, parseDateCell, isValidISODate, sanitizeDataset, mergeCloudDatasets, buildSyncPayload, planBackupRestore, importBackup, setMoneyMaskCurrency, moneyInputValue, renderFolders, billReferenceMonth, expenseReportDate, accountingDate, nextBillReferenceField };", context);
   return { ...context.core, localStorage, values, nodes, notifications: () => notifyCount };
 }
 
@@ -52,6 +52,59 @@ function dataset(h, id = "folder0001") {
   ds.transactions.push({ id: "transac001", date: "2026-01-02", desc: "Mercado", type: "despesa", amount: 1234.56, currency: "BRL", category: "Essencial" });
   return ds;
 }
+
+test("competência prioriza ajuste e mês da conta, distingue pós-pago e mantém mês e dia do pagamento no extrato", () => {
+  const h = harness();
+  const bill = {type:"despesa", desc:"Personal - Telefonia", date:"2027-01-13", paymentStatus:"paid", paidOn:"2027-01-10"};
+  for (const desc of ["Personal", "Pago de Servicio Personal - Internet", "Pos:personal pago de factura - personal"]) {
+    assert.equal(h.billReferenceMonth({...bill,desc}), "2026-12");
+  }
+  for (const desc of ["Recarga Personal", "Préstamo personal - factura", "Personal Trainer", "Claro", "Farmácia"]) {
+    assert.equal(h.billReferenceMonth({...bill,desc}), "2027-01");
+  }
+  const withText = {...bill,sourceEvidence:"Vencimento 13/01/2027. Competencia: noviembre de 2026."};
+  assert.equal(h.billReferenceMonth(withText), "2026-11");
+  assert.equal(h.billReferenceMonth({...withText,billReferenceMonth:"2026-10"}), "2026-10");
+  for (const sourceEvidence of ["referência: 11/2026", "Ref: 2026/11", "referente ao mês de nov/2026", "Período de facturación: 2026-11",
+      "Factura de noviembre", "PERÍODO DE CONSUMO de novembro de 2026", "Período de consumo: 01/11/2026 a 30/11/2026",
+      "Referência: novembro de 2026 - vencimento em janeiro"]) {
+    assert.equal(h.billReferenceMonth({...bill,sourceEvidence}), "2026-11", sourceEvidence);
+  }
+  for (const sourceEvidence of ["Pago em 05/10/2026", "Vencimento 05/11/2026", "Referencia bancaria 123123", "referência 2026-11-30", "referência: 05/11/2026",
+      "Período de consumo: 28/10/2026 a 27/11/2026", "Período: outubro de 2026 a novembro de 2026"]) {
+    assert.equal(h.billReferenceMonth({...bill,sourceEvidence}), "2026-12", sourceEvidence);
+  }
+  assert.equal(h.accountingDate(bill), "2027-01-10");
+  assert.equal(h.expenseReportDate(bill), "2026-12-13");
+  assert.equal(h.expenseReportDate({...bill,date:"2028-03-31"}), "2028-02-29");
+  assert.equal(h.expenseReportDate({...bill,paidOn:"2026-12-30"}), "2026-12-30");
+  assert.equal(h.expenseReportDate({...bill,advance:{scheduledDate:"2027-03-13",paidDate:"2027-01-10"}}), "2027-02-13");
+  for (const other of [{paymentStatus:undefined},{type:"receita"},{account:"C6",c6Section:"card"},{invoice:{}}]) {
+    assert.equal(h.billReferenceMonth({...bill,...other}), "");
+  }
+});
+
+test("competência corrigida sobrevive ao backup e a próximas ocorrências sem congelar o ano", () => {
+  const h = harness(), ds = dataset(h), t = ds.transactions[0];
+  Object.assign(t,{paymentStatus:"pending",date:"2026-12-11",desc:"Água • Ref. outubro/2026",billReferenceMonth:"2026-11",
+    fixed:true,groupId:"fixedgroup1",repeatMonth:"2026-12",repeatMonthlyDay:11,repeatThrough:"2027-12",repeatKey:"fixedkey1",
+    repeatBillReferenceMonth:"2026-10"});
+  h.Store.saveDataset(ds);
+  const restored = h.sanitizeDataset(h.buildSyncPayload().datasets[0], {preserveIds:true});
+  for (const copy of [restored.transactions[0], h.Store.loadDataset(ds.id).transactions[0]]) {
+    assert.equal(copy.billReferenceMonth, "2026-11");
+    assert.equal(copy.repeatBillReferenceMonth, "2026-10");
+    assert.equal(h.nextBillReferenceField(copy,"2027-02-11").billReferenceMonth, "2027-01");
+    assert.equal(h.nextBillReferenceField({...copy,billReferenceMonth:undefined},"2027-02-11").billReferenceMonth, "2026-12");
+  }
+  t.billReferenceMonth = ["2026-11"]; t.repeatBillReferenceMonth = "2026-13";
+  h.Store.saveDataset(ds);
+  for (const copy of [h.sanitizeDataset(ds).transactions[0],h.Store.loadDataset(ds.id).transactions[0]]) {
+    assert.equal(copy.billReferenceMonth, undefined);
+    assert.equal(copy.repeatBillReferenceMonth, undefined);
+    assert.equal(h.billReferenceMonth(copy),"2026-10");
+  }
+});
 
 test("baixa mensal do C6 passa por armazenamento, backup e nuvem sem criar lançamento", () => {
   const h = harness(), ds = dataset(h);

@@ -5,6 +5,7 @@ const Dashboard = (() => {
   let ds = null; // dataset aberto
   let groupedC6Ids = new Set();
   function pendingIndividualBill(t) { return isPendingBill(t) && !groupedC6Ids.has(t.id); }
+  function reportDate(t) { return groupedC6Ids.has(t.id) ? accountingDate(t) : expenseReportDate(t); }
   let fil = { mode: "month", month: null, from: "", to: "", cats: null, search: "", type: "all", account: "all" };
   let receiptFilter = null;
   let sort = { key: "date", dir: -1 };
@@ -231,7 +232,12 @@ const Dashboard = (() => {
 
   /* ---------- Filtros ---------- */
   function allMonths() {
-    const set = new Set(ds.transactions.map((t) => accountingDate(t).slice(0, 7)));
+    const set = new Set();
+    for (const t of ds.transactions) {
+      set.add(accountingDate(t).slice(0, 7));
+      if (t.paymentStatus && !groupedC6Ids.has(t.id)) set.add(billDueDate(t).slice(0, 7));
+      if (!pendingIndividualBill(t)) set.add(reportDate(t).slice(0, 7));
+    }
     return Array.from(set).sort();
   }
 
@@ -246,9 +252,9 @@ const Dashboard = (() => {
     return null; // tudo
   }
 
-  function inPeriod(t, p) {
+  function inPeriod(t, p, dateOf = reportDate) {
     if (!p) return true;
-    const date = accountingDate(t);
+    const date = dateOf(t);
     if (p.from && date < p.from) return false;
     if (p.to && date > p.to) return false;
     return true;
@@ -258,14 +264,14 @@ const Dashboard = (() => {
     return !fil.cats || fil.cats.has(stripAccents(t.category));
   }
 
-  function filteredTxs(includePending = false) {
+  function filteredTxs(dateOf = reportDate, includePending = false) {
     const p = periodRange();
-    return ds.transactions.filter((t) => (includePending || !pendingIndividualBill(t)) && inPeriod(t, p) && inCats(t));
+    return ds.transactions.filter((t) => (includePending || !pendingIndividualBill(t)) && inPeriod(t, p, dateOf) && inCats(t));
   }
 
   function tableTxs() {
     const q = stripAccents(fil.search);
-    let list = receiptFilter ? ds.transactions.filter(t => receiptFilter.ids.has(t.id) || (!receiptFilter.printedOnly && typeof t.id === "string" && t.id.startsWith(receiptFilter.prefix))) : filteredTxs(true);
+    let list = receiptFilter ? ds.transactions.filter(t => receiptFilter.ids.has(t.id) || (!receiptFilter.printedOnly && typeof t.id === "string" && t.id.startsWith(receiptFilter.prefix))) : filteredTxs(accountingDate, true);
     if (fil.type !== "all") list = list.filter((t) => t.type === fil.type);
     if (fil.account !== "all") list = list.filter((t) => "account:" + (t.account || "") === fil.account);
     if (q) {
@@ -305,8 +311,19 @@ const Dashboard = (() => {
       return '"' + s.replace(/"/g, '""') + '"';
     };
     const number = (v, currency) => Number(v).toFixed(curFrac(currency)).replace(".", ",");
-    const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição", "Pagamento", "Pago em", "Conta a pagar", "Data da compra", "Mês da fatura"]];
-    list.forEach((t) => rows.push([t.date, t.desc, t.category, t.account || "", t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não", number(t.amount, t.currency), normCur(t.currency), Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t), t.paymentStatus && !groupedC6Ids.has(t.id) ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", groupedC6Ids.has(t.id) ? "" : t.paidOn || "", t.paymentStatus && !groupedC6Ids.has(t.id) ? "Sim" : "Não", t.purchaseDate || "", t.billClosingDate?.slice(0,7) || ""]));
+    const rows = [["Data", "Descrição", "Categoria", "Conta", "Tipo", "Parcela", "Recorrente", "Valor original", "Moeda original", "Valor exibido", "Moeda de exibição", "Pagamento", "Pago em", "Conta a pagar", "Data da compra", "Mês da fatura", "Mês da despesa", "Vencimento da conta"]];
+    for (const t of list) {
+      const individualBill = t.paymentStatus && !groupedC6Ids.has(t.id);
+      rows.push([
+        individualBill ? accountingDate(t) : t.date, t.desc, t.category, t.account || "",
+        t.type === "receita" ? "Receita" : "Despesa", t.installment || "", t.fixed ? "Sim" : "Não",
+        number(t.amount, t.currency), normCur(t.currency),
+        Number.isFinite(txDisplayAmount(t)) ? number(txDisplayAmount(t), txDisplayCurrency(t)) : "", txDisplayCurrency(t),
+        individualBill ? (isPendingBill(t) ? "Em aberto" : "Pago") : "", groupedC6Ids.has(t.id) ? "" : t.paidOn || "",
+        individualBill ? "Sim" : "Não", t.purchaseDate || "", t.billClosingDate?.slice(0,7) || "",
+        individualBill ? billReferenceMonth(t) : "", individualBill ? billDueDate(t) : "",
+      ]);
+    }
     const csv = "\uFEFF" + rows.map((row) => row.map(cell).join(";")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
@@ -586,7 +603,11 @@ const Dashboard = (() => {
     const tAcc = $("#txs-acc");
     if (tAcc) { tAcc.textContent = fmtD(acumulado); tAcc.className = !Number.isFinite(acumulado) ? "" : acumulado >= 0 ? "pos" : "neg"; }
     const tSal = $("#txs-saldo");
-    if (tSal) { tSal.textContent = fmtD(saldo); tSal.className = !Number.isFinite(saldo) ? "" : saldo >= 0 ? "pos" : "neg"; }
+    if (tSal) {
+      const movementBalance = filteredTxs(accountingDate).reduce((sum, t) => sum + (t.type === "receita" ? 1 : -1) * dispAmount(t), 0);
+      tSal.textContent = fmtD(movementBalance);
+      tSal.className = !Number.isFinite(movementBalance) ? "" : movementBalance >= 0 ? "pos" : "neg";
+    }
     fitHeroFlow();
   }
 
@@ -797,8 +818,8 @@ const Dashboard = (() => {
   }
 
   // Meses exibidos nos gráficos de evolução
-  function chartMonths() {
-    const months = [...new Set(ds.transactions.filter(t => !pendingIndividualBill(t)).map(t => accountingDate(t).slice(0,7)))].sort();
+  function chartMonths(dateOf) {
+    const months = [...new Set(ds.transactions.filter(t => !pendingIndividualBill(t)).map(t => dateOf(t).slice(0,7)))].sort();
     if (fil.mode === "range") {
       return months.filter((ym) => (!fil.from || ym >= fil.from.slice(0, 7)) && (!fil.to || ym <= fil.to.slice(0, 7)));
     }
@@ -844,12 +865,16 @@ const Dashboard = (() => {
     });
 
     /* 2 e 3. Evolução mensal (linha) e saldo (barra + acumulado) */
-    const months = chartMonths();
+    const months = chartMonths(reportDate);
     const recM = Object.create(null), despM = Object.create(null);
+    const movementByMonth = Object.create(null);
     posted.forEach((t) => {
-      const ym = accountingDate(t).slice(0, 7);
+      const ym = reportDate(t).slice(0, 7);
       const group = t.type === "receita" ? recM : despM;
-      group[ym] = (group[ym] ?? 0) + dispAmount(t);
+      const amount = dispAmount(t);
+      group[ym] = (group[ym] ?? 0) + amount;
+      const movementMonth = accountingDate(t).slice(0, 7);
+      movementByMonth[movementMonth] = (movementByMonth[movementMonth] ?? 0) + (t.type === "receita" ? amount : -amount);
     });
     const labels = months.map(fmtMonth);
     const point = value => Number.isFinite(value) ? value : null;
@@ -872,20 +897,23 @@ const Dashboard = (() => {
     });
 
     // Saldo acumulado inclui meses anteriores à janela exibida
-    const allM = allMonths();
+    const movementMonths = chartMonths(accountingDate);
     let run = 0;
     const cumByMonth = Object.create(null);
-    const monthBalance = ym => (recM[ym] ?? 0) - (despM[ym] ?? 0);
-    allM.forEach((ym) => { run += monthBalance(ym); cumByMonth[ym] = run; });
-    const saldoData = months.map((ym) => point(monthBalance(ym)));
-    const cumData = months.map((ym) => point(cumByMonth[ym]));
+    const monthBalance = ym => movementByMonth[ym] ?? 0;
+    for (const ym of [...new Set([...Object.keys(movementByMonth), ...movementMonths])].sort()) {
+      run += monthBalance(ym);
+      cumByMonth[ym] = run;
+    }
+    const saldoData = movementMonths.map((ym) => point(monthBalance(ym)));
+    const cumData = movementMonths.map((ym) => point(cumByMonth[ym]));
     $("#chart-saldo-note").hidden = !saldoData.includes(null) && !cumData.includes(null);
 
-    setEmpty("chart-saldo", !months.length, "Sem transações ainda");
+    setEmpty("chart-saldo", !movementMonths.length, "Sem transações ainda");
     mkChart("chart-saldo", {
       plugins:[monthGuide],
       data: {
-        labels,
+        labels: movementMonths.map(fmtMonth),
         datasets: [
           {
             type: "bar", label: "Saldo do mês", data: saldoData,
@@ -949,6 +977,7 @@ const Dashboard = (() => {
     delete anchor.repeatMonthlyDay;
     delete anchor.repeatThrough;
     delete anchor.repeatKey;
+    delete anchor.repeatBillReferenceMonth;
   }
 
   // O último mês gerado faz parte da mesma gravação das novas ocorrências.
@@ -973,10 +1002,14 @@ const Dashboard = (() => {
         }
         const [year,number] = month.split("-").map(Number);
         const day = Math.min(anchor.repeatMonthlyDay,daysInMonth(year,number));
-        latest.transactions.push({id,groupId:anchor.groupId,fixed:true,repeatMonth:month,date:month+"-"+String(day).padStart(2,"0"),
+        const date = month+"-"+String(day).padStart(2,"0");
+        const referenceAnchor = anchor.repeatBillReferenceMonth
+          ? {...anchor, date:(anchor.repeatMonth || anchor.date.slice(0,7))+"-01", advance:undefined, billReferenceMonth:anchor.repeatBillReferenceMonth}
+          : anchor;
+        latest.transactions.push({id,groupId:anchor.groupId,fixed:true,repeatMonth:month,date,
           amount:anchor.amount,currency:anchor.currency,type:anchor.type,desc:anchor.desc,category:anchor.category,account:anchor.account,
           installment:null,totalValue:null,...(anchor.c6Section && {c6Section:anchor.c6Section}),
-          ...(anchor.type === "despesa" && anchor.paymentStatus && {paymentStatus:"pending"})});
+          ...(anchor.type === "despesa" && anchor.paymentStatus && {paymentStatus:"pending",...nextBillReferenceField(referenceAnchor,date)})});
         ids.add(id);
       }
       anchor.repeatThrough = through;
@@ -992,7 +1025,7 @@ const Dashboard = (() => {
     let first = "", last = "";
     for (const t of ds.transactions) {
       if (pendingIndividualBill(t) || !inPeriod(t, period)) continue;
-      const month = accountingDate(t).slice(0,7);
+      const month = reportDate(t).slice(0,7);
       if (!first || month < first) first = month;
       if (month > last) last = month;
       if (t.type !== "despesa" || !inCats(t)) continue;
@@ -1567,9 +1600,10 @@ const Dashboard = (() => {
     const invoice = t.invoice;
     const paidOn = t.paymentStatus === "paid" && (t.paidOn || t.advance?.paidDate);
     const paidLabel = paidOn && "Pago em " + fmtDate(paidOn);
+    const reference = invoice ? "" : billReferenceMonth(t);
     const details = invoice
       ? [fmtMonthLong(invoice.month), t.status, (invoice.dueDateObserved ? "Vencimento " : "Vencimento previsto ") + fmtDate(date), paidLabel]
-      : [t.account, t.category, paidLabel, t.installment && "Parcela " + t.installment];
+      : [t.account, t.category, paidLabel, reference && "Ref. " + fmtMonth(reference), t.installment && "Parcela " + t.installment];
     const detail = details.filter(Boolean).join(" · ");
     const period = invoice ? (invoice.closingDateObserved ? "Período" : "Período previsto") + " de " +
       fmtDate(invoice.startDate).slice(0,5) + " a " + fmtDate(invoice.closingDate).slice(0,5) : "";
@@ -2100,6 +2134,10 @@ const Dashboard = (() => {
     const paidBox = $("#tx-paid"), trackBox = $("#tx-payable");
     trackBox.checked = trackBox.defaultChecked = isEdit ? !!tx.paymentStatus : !!opts.pending;
     paidBox.checked = paidBox.defaultChecked = tx?.paymentStatus === "paid";
+    $("#tx-bill-reference").open = false;
+    const referenceInput = $("#tx-reference-month");
+    referenceInput.value = referenceInput.defaultValue = tx?.billReferenceMonth || "";
+    $("#tx-reference-repeat").checked = false;
     // Reseta o leitor de comprovante
     $("#apikey-wrap").classList.add("hidden");
     const rs = $("#receipt-status");
@@ -2180,6 +2218,15 @@ const Dashboard = (() => {
     $("#tx-paid-wrap").classList.toggle("hidden", !tracked || !editingId);
     $("#tx-date-label").textContent = tracked ? "Vencimento" : "Data";
     const tx = editingId && ds.transactions.find(t => t.id === editingId);
+    $("#tx-bill-reference").classList.toggle("hidden", !tracked);
+    if (tracked) {
+      const input = $("#tx-reference-month");
+      const reference = billReferenceMonth({...tx, ...receiptRead, type:txType, paymentStatus:"pending", date:$("#tx-date").value,
+        desc:$("#tx-desc").value, account:$("#tx-account-sel").value, billReferenceMonth:input.value});
+      $("#tx-reference-label").textContent = reference ? "Mês da despesa · " + fmtMonthLong(reference) : "Mês da despesa";
+      $("#tx-reference-auto").classList.toggle("hidden", !input.value);
+      $("#tx-reference-repeat-wrap").classList.toggle("hidden", !(tx?.fixed && tx.groupId));
+    }
     if (tracked && tx?.fixed && tx.groupId && !$("#tx-payable").defaultChecked) {
       $("#tx-bill-hint").textContent = "Os próximos vencimentos desta série também ficarão em aberto. Cada mês entra nas despesas quando for pago.";
     } else {
@@ -2324,16 +2371,45 @@ const Dashboard = (() => {
     let paidOn = edited?.paidOn;
     if (paymentStatus === "paid" && edited?.paymentStatus !== "paid" && !isValidISODate(paidOn)) paidOn = todayISO();
     if (edited && !tracked && !edited.paymentStatus && date !== edited.date) paidOn = undefined;
-    const bill = cleanBillFields({ type:txType, paymentStatus, paidOn });
-    const nextBill = bill.paymentStatus ? {paymentStatus:"pending"} : {};
+    const referenceInput = $("#tx-reference-month");
+    const reference = edited && referenceInput.value === referenceInput.defaultValue
+      ? edited.billReferenceMonth : referenceInput.value;
+    const bill = cleanBillFields({...fields, paymentStatus, paidOn, billReferenceMonth:reference});
+    const sourceBill = {...edited, ...fields, ...evidence, ...bill, billReferenceMonth:bill.billReferenceMonth};
+    const nextBill = nextDate => bill.paymentStatus ? {paymentStatus:"pending", ...nextBillReferenceField(sourceBill,nextDate)} : {};
     if (edited) {
+      const applyReference = bill.paymentStatus && edited.fixed && edited.groupId && $("#tx-reference-repeat").checked;
       if (bill.paymentStatus && edited.fixed && edited.groupId && trackBox.checked && !trackBox.defaultChecked) {
         const today = todayISO(), anchorMonth = edited.date.slice(0,7);
         for (const other of ds.transactions) {
           if (other.groupId === edited.groupId && other.fixed && other.type === "despesa" &&
               !other.paymentStatus && !other.paidOn && !other.installment && other.date >= today &&
               other.date.slice(0,7) > anchorMonth && !InstallmentSchedule.isC6InvoicePayable(other,ds.transactions)) {
-            other.paymentStatus = "pending";
+            Object.assign(other,nextBill(billDueDate(other)));
+          }
+        }
+      }
+      if (applyReference) {
+        const due = billDueDate(sourceBill);
+        for (const other of ds.transactions) {
+          if (other.id === edited.id || !other.fixed || other.groupId !== edited.groupId || !isPendingBill(other) ||
+              billDueDate(other) <= due || InstallmentSchedule.isC6InvoicePayable(other,ds.transactions)) continue;
+          delete other.billReferenceMonth;
+          Object.assign(other,nextBillReferenceField(sourceBill,billDueDate(other)));
+        }
+      }
+      if (bill.paymentStatus && edited.fixed && edited.groupId) {
+        const anchor = ds.transactions.find(t => t.groupId === edited.groupId && t.repeatMonthlyDay);
+        if (anchor && applyReference) {
+          // O modelo dos próximos meses é independente da despesa já lançada na âncora.
+          const anchorDate = (anchor.repeatMonth || anchor.date.slice(0,7)) + "-01";
+          const rule = {...sourceBill, billReferenceMonth:billReferenceMonth(sourceBill)};
+          anchor.repeatBillReferenceMonth = nextBillReferenceField(rule,anchorDate).billReferenceMonth;
+        } else if (anchor === edited && !anchor.repeatBillReferenceMonth && edited.paymentStatus) {
+          const previous = billReferenceMonth(edited);
+          if (previous && (previous !== billReferenceMonth(sourceBill) || billDueDate(edited) !== billDueDate(sourceBill))) {
+            const anchorDate = (anchor.repeatMonth || anchor.date.slice(0,7)) + "-01";
+            anchor.repeatBillReferenceMonth = nextBillReferenceField({...edited,billReferenceMonth:previous},anchorDate).billReferenceMonth;
           }
         }
       }
@@ -2342,7 +2418,7 @@ const Dashboard = (() => {
         delete edited.c6Section;
         delete edited.creditKind;
       }
-      delete edited.paymentStatus; delete edited.paidOn;
+      delete edited.paymentStatus; delete edited.paidOn; delete edited.billReferenceMonth;
       if (edited.weeklyRevenue) WeeklyRevenue.rememberSource(edited);
       Object.assign(edited, fields, evidence, bill);
       if (dateChanged) { delete edited.dateEstimated; delete edited.dateEstimate; }
@@ -2355,7 +2431,7 @@ const Dashboard = (() => {
       if (edited) Object.assign(edited, { groupId, fixed:true });
       for (let i = edited ? 1 : 0; i < FIXA_MESES; i++) {
         ds.transactions.push({ ...fields, id:uid(), groupId, fixed:true, date:monthlyDate(i),
-          installment:null, totalValue:null, ...(i === 0 ? {...evidence, ...bill} : nextBill) });
+          installment:null, totalValue:null, ...(i === 0 ? {...evidence, ...bill} : nextBill(monthlyDate(i))) });
       }
       message = edited ? `Despesa fixa: este lançamento e mais ${FIXA_MESES-1} meses.`
         : `${txType === "receita" ? "Receita" : "Despesa"} fixa criada para ${FIXA_MESES} meses.`;
@@ -2371,7 +2447,7 @@ const Dashboard = (() => {
           amount: parts[i],
           installment: `${i + 1}/${n}`,
           totalValue: amount,
-          ...(i === 0 ? {...evidence, ...bill} : nextBill),
+          ...(i === 0 ? {...evidence, ...bill} : nextBill(monthlyDate(i))),
         });
       }
       message = `Parcelamento criado: ${n} lançamentos ✔`;
@@ -2763,7 +2839,14 @@ const Dashboard = (() => {
     $("#btn-add-tx").addEventListener("click", () => openTxModal(null));
     $("#btn-tx-save").addEventListener("click", saveTxModal);
     $("#btn-tx-cancel").addEventListener("click", () => { $("#modal-tx").classList.add("hidden"); editingId = null; });
-    $("#tx-desc").addEventListener("input", () => suggestTxCategory());
+    $("#tx-desc").addEventListener("input", () => { suggestTxCategory(); updateTypeToggle(); });
+    $("#tx-reference-month").addEventListener("input", updateTypeToggle);
+    $("#tx-reference-month").addEventListener("change", updateTypeToggle);
+    $("#tx-reference-auto").addEventListener("click", () => {
+      $("#tx-reference-month").value = "";
+      updateTypeToggle();
+      $("#tx-reference-month").focus();
+    });
     $("#tx-date").addEventListener("input", () => { txDateEdited = true; updateTypeToggle(); });
     $("#tx-date").addEventListener("change", () => { txDateEdited = true; updateTypeToggle(); });
     $$("#tx-type-toggle button").forEach((b) => {

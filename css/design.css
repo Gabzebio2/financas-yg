@@ -1262,6 +1262,11 @@ body.hide-money .bill-amount { filter:blur(7px); }
 .bill-history[open] .bill-chevron { transform:rotate(180deg); }
 .bill-options { display:flex; flex-wrap:wrap; align-items:center; gap:8px 18px; padding:12px; border:1px solid var(--border); border-radius:10px; }
 .bill-options p { margin:0; flex:1 0 100%; }
+.bill-reference { flex:1 0 100%; min-width:0; border-top:1px solid var(--border); }
+.bill-reference summary { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:9px 0 2px; cursor:pointer; font-size:12px; }
+.bill-reference-action { color:var(--primary-text); text-decoration:underline; text-underline-offset:3px; white-space:nowrap; }
+.bill-reference-controls { display:flex; align-items:end; flex-wrap:wrap; gap:8px 16px; padding-top:10px; }
+.bill-reference-controls .checkline { flex-basis:100%; }
 @media(max-width:640px){
   .bill-head { padding-block:15px; }
   .bill-heading { gap:8px; }

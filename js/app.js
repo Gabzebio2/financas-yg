@@ -679,6 +679,89 @@ function accountingDate(t) {
   if (t.type === "despesa" && isValidISODate(t.paidOn)) return t.paidOn;
   return t.billClosingDate ? InstallmentSchedule.statementDate(t) : t.date;
 }
+
+const BILL_MONTH_NAMES = new Map();
+[MESES, MESES_ABREV, ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"],
+  ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"]].forEach(list => {
+  list.forEach((name, i) => BILL_MONTH_NAMES.set(stripAccents(name), i + 1));
+});
+BILL_MONTH_NAMES.set("setiembre", 9);
+BILL_MONTH_NAMES.set("sept", 9);
+
+function shiftBillMonth(month, offset) {
+  const [year, number] = month.split("-").map(Number);
+  const index = year * 12 + number - 1 + offset;
+  if (index < 12 || index >= 120000) return "";
+  return String(Math.floor(index / 12)).padStart(4, "0") + "-" + String(index % 12 + 1).padStart(2, "0");
+}
+function printedBillMonth(t, dueMonth) {
+  for (const source of [t.desc, t.sourceEvidence]) {
+    if (!source) continue;
+    const text = stripAccents(source);
+    // "Vencimento", datas de pagamento e identificadores de referência bancária não indicam consumo.
+    const labels = /\b(?:mes de referencia|referencia|ref|competencia|periodo(?: de (?:consumo|faturamento|facturacion))?|referente|fatura de|factura de)\b\s*(?:[:.\-]\s*)?(?:(?:ao?|al|do|de|del)\s+)?(?:mes\s+(?:de\s+)?)?/g;
+    for (const label of text.matchAll(labels)) {
+      const tail = text.slice(label.index + label[0].length);
+      const interval = /^(\d{1,2}\/\d{1,2}\/\d{4})\s*(?:a(?:te|l)?|[-–—])\s*(\d{1,2}\/\d{1,2}\/\d{4})\b/.exec(tail);
+      if (interval) {
+        const start = parseDateCell(interval[1]), end = parseDateCell(interval[2]);
+        if (start && end && start <= end && start.slice(0,7) === end.slice(0,7)) return start.slice(0,7);
+        continue;
+      }
+      const iso = /^(\d{4})[/-](\d{2})\b(?![-/]\d)/.exec(tail);
+      const numeric = /^(\d{1,2})[/-](\d{4})\b(?![-/]\d)/.exec(tail);
+      const named = /^([a-z]+)\b\.?(?:(?:\s+(?:de\s+)?|\s*[/\-]\s*)(\d{4})\b)?/.exec(tail);
+      const number = iso ? Number(iso[2]) : numeric ? Number(numeric[1]) : BILL_MONTH_NAMES.get(named?.[1]);
+      if (!number || number > 12) continue;
+      const rest = tail.slice((iso || numeric || named)[0].length);
+      const rangeEnd = /^\s+(?:a|al|ate|hasta|[-–—])\s+(\d{1,4}|[a-z]+)\b/.exec(rest);
+      if (rangeEnd && (/^\d/.test(rangeEnd[1]) || BILL_MONTH_NAMES.has(rangeEnd[1]))) continue;
+      const year = iso?.[1] || numeric?.[2] || named?.[2] ||
+        String(Number(dueMonth.slice(0,4)) - (number > Number(dueMonth.slice(5,7)) ? 1 : 0)).padStart(4,"0");
+      const month = year + "-" + String(number).padStart(2,"0");
+      if (isValidISODate(month + "-01")) return month;
+    }
+  }
+  return "";
+}
+function billReferenceMonth(t) {
+  if (t.type !== "despesa" || !["pending","paid"].includes(t.paymentStatus) || t.invoice ||
+      (typeof InstallmentSchedule !== "undefined" && InstallmentSchedule.isC6InvoicePayable(t))) return "";
+  const due = t.advance?.scheduledDate || t.date;
+  if (!isValidISODate(due)) return "";
+  if (typeof t.billReferenceMonth === "string" && isValidISODate(t.billReferenceMonth + "-01")) return t.billReferenceMonth;
+  const dueMonth = due.slice(0,7);
+  const printed = printedBillMonth(t, dueMonth);
+  if (printed) return printed;
+  const desc = stripAccents(t.desc);
+  const personal = /\bpersonal\b/.test(desc) &&
+    (/^(?:telecom\s+)?personal(?:\s+(?:py|paraguay))?$/.test(desc) ||
+      /\b(?:telefonia|internet|telecom|fibra|factura|fatura|pospago|pos[ -]pago)\b/.test(desc)) &&
+    !/\b(?:recarga|prepago|pre[ -]pago|prestamo|emprestimo|credito personal|personal trainer)\b/.test(desc);
+  return personal ? shiftBillMonth(dueMonth,-1) || dueMonth : dueMonth;
+}
+function expenseReportDate(t) {
+  const actual = accountingDate(t);
+  const reference = t.paymentStatus === "paid" && billReferenceMonth(t);
+  if (!reference || actual.slice(0,7) === reference) return actual;
+  const due = t.advance?.scheduledDate || t.date;
+  const [year, month] = reference.split("-").map(Number);
+  const day = Math.min(Number(due.slice(8)), daysInMonth(year, month));
+  return reference + "-" + String(day).padStart(2,"0");
+}
+function nextBillReferenceField(anchor, nextDueDate) {
+  const due = anchor.advance?.scheduledDate || anchor.date;
+  if (!isValidISODate(due) || !isValidISODate(nextDueDate)) return {};
+  const from = due.slice(0,7);
+  // Texto copiado, como “ref. nov/2026”, só prova a competência da primeira conta.
+  if (!anchor.billReferenceMonth && !printedBillMonth(anchor, from)) return {};
+  const reference = billReferenceMonth(anchor);
+  if (!reference) return {};
+  const diff = 12 * (Number(nextDueDate.slice(0,4)) - Number(due.slice(0,4))) +
+    Number(nextDueDate.slice(5,7)) - Number(due.slice(5,7));
+  const month = shiftBillMonth(reference, diff);
+  return month ? {billReferenceMonth:month} : {};
+}
 function cleanPurchaseSchedule(t) {
   if (!isValidISODate(t.purchaseDate) || !RE_PARC.test(t.installment || "")) return {};
   const key = t.seriesKey;
@@ -700,6 +783,14 @@ function cleanBillFields(t) {
   if (["pending", "paid"].includes(t.paymentStatus)) result.paymentStatus = t.paymentStatus;
   // As despesas antigas só fixadas já tinham sido contabilizadas.
   else if (t.billPinned === true) result.paymentStatus = "paid";
+  if (result.paymentStatus && typeof t.billReferenceMonth === "string" && isValidISODate(t.billReferenceMonth + "-01")) {
+    result.billReferenceMonth = t.billReferenceMonth;
+  }
+  if (typeof t.repeatBillReferenceMonth === "string" && isValidISODate(t.repeatBillReferenceMonth + "-01") &&
+      t.fixed === true && t.groupId && Number.isInteger(t.repeatMonthlyDay) && t.repeatMonthlyDay >= 1 && t.repeatMonthlyDay <= 31 &&
+      /^[a-z0-9]{6,24}$/.test(t.repeatKey || "") && isValidISODate(t.repeatThrough + "-01")) {
+    result.repeatBillReferenceMonth = t.repeatBillReferenceMonth;
+  }
   if (!isPendingBill(t) && isValidISODate(t.paidOn)) result.paidOn = t.paidOn;
   return result;
 }
@@ -776,7 +867,7 @@ function normalizeStoredDataset(raw) {
     profile: raw.profile === "pj" ? "pj" : "pf",
     categories: [],
     transactions: raw.transactions.map((t) => {
-      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, purchaseDate, seriesKey, billDueDate, billDateObserved, billClosingDate, cardBestPurchaseDay, creditKind, c6Section, ...fields } = t;
+      const { dateEstimated, dateEstimate, advance, cashback, billPinned, paymentStatus, paidOn, billReferenceMonth, repeatBillReferenceMonth, purchaseDate, seriesKey, billDueDate, billDateObserved, billClosingDate, cardBestPurchaseDay, creditKind, c6Section, ...fields } = t;
       return {
         ...fields,
         id: typeof t.id === "string" && t.id ? t.id : uid(),

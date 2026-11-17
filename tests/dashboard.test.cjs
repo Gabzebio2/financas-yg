@@ -61,7 +61,7 @@ let source = fs.readFileSync(path.join(appDir, 'js/dashboard.js'), 'utf8');
 source = source.replace('  return { open, openTxModal,', `
   globalThis.audit = {
     requestDeleteTx, deleteSeries, openAdvance, saveAdvance, advanceCandidates, updateAdvance,
-    splitInstallments, tableTxs, sortTxs, saveTxModal, openTxModal, openMetaModal, saveMetaModal,
+    splitInstallments, tableTxs, sortTxs, allMonths, renderCharts, saveTxModal, openTxModal, openMetaModal, saveMetaModal,
     openLimitModal, saveLimitModal, renderTable, renderSummary, parcSiblings, fixedSiblings,
     resolveImportDate, appendImported, addBulk, exportCSV, saveCur, undo, moneyTip, refreshFromStore,
     existingTxKeys, existingSeriesKeys, existingTransactions, getImportTargetId, renderAll, limitStats, metaStats, addToMeta, fillTxFromReceipt, changeBill, currencyBreakdown,
@@ -507,7 +507,7 @@ test('cashback informativo sobrevive à gravação sem virar outra receita',()=>
  saveBase(dataset());assert.equal(api.appendImported([tx('cash',{cashback:{amount:0.65,currency:'USD'}})]),1);api.refreshFromStore();const saved=api.getDataset().transactions;assert.equal(saved.length,1);assert.equal(saved[0].type,'despesa');assert.equal(saved[0].cashback.amount,0.65);assert.match(get('#tx-tbody').innerHTML,/Cashback:.*informativo/);
 });
 
-test('conta permanece no mês de vencimento e contabiliza uma única vez no mês de pagamento',()=>{
+test('conta comum permanece no mês de vencimento, entra no relatório ao pagar e na lista pela data da baixa',()=>{
   const ds=dataset(), today=vm.runInContext('todayISO()',ctx);
   ds.transactions=[tx('oldpaid1',{date:today,amount:2}), tx('billopen',{date:'2020-02-03',amount:5,currency:'USD',billPinned:true,paymentStatus:'pending'})];
   ds.limits=[{name:'Alimentação',amount:50,currency:'BRL',categories:['Mercado']}];
@@ -517,10 +517,11 @@ test('conta permanece no mês de vencimento e contabiliza uma única vez no mês
   assert.doesNotMatch(panel('#dash-bills'),/billopen/);assert(!panel('#tx-tbody').includes('billopen'));
   api.changeBill('billopen','pay');api.changeBill('billopen','pay');
   let saved=api.getDataset().transactions;assert.equal(saved.length,2);assert.equal(saved[1].paidOn,today);
-  assert.equal(saved[1].date,'2020-02-03');assert.equal(api.limitStats()[0].spent,27);
-  assert.equal(api.currencyBreakdown().find(g=>g.currency==='USD').expense,5);
+  assert.equal(saved[1].date,'2020-02-03');assert.equal(api.limitStats()[0].spent,2);
+  assert(!api.currencyBreakdown().some(g=>g.currency==='USD'));
   assert.doesNotMatch(panel('#dash-bills'),/billopen/);assert.match(panel('#tx-tbody'),/data-bill-action="reopen"/);
-  api.setFilters({month:'2020-02'});api.renderAll();assert.equal(api.limitStats()[0].spent,0);assert.equal(api.tableTxs().length,0);
+  api.setFilters({month:'2020-02'});api.renderAll();assert.equal(api.limitStats()[0].spent,25);assert.equal(api.tableTxs().length,0);
+  assert.equal(api.currencyBreakdown().find(g=>g.currency==='USD').expense,5);
   assert.match(panel('#dash-bills'),/datetime="2020-02-03" title="Vencimento em 03\/02\/2020"/);
   assert.match(panel('#dash-bills'),new RegExp('Mercado · Pago em '+today.split('-').reverse().join('/')));
   assert.match(panel('#dash-bills'),/Contas pagas \(1\)/);
@@ -532,6 +533,136 @@ test('conta permanece no mês de vencimento e contabiliza uma única vez no mês
   assert.equal(api.limitStats()[0].spent,2);api.saveTxModal();assert.equal(api.limitStats()[0].spent,0);
   saved=JSON.parse(storage.get('fyg:ds:audit001')).transactions;
   assert.equal(saved[0].paymentStatus,'pending');assert.equal(saved[1].paidOn,undefined);assert.equal(saved.length,2);
+});
+
+test('Personal de novembro paga em dezembro conta uma vez na competência e sai do caixa no dia da baixa',()=>{
+  const originalToday=ctx.todayISO;
+  try {
+    ctx.todayISO=()=> '2026-12-10';
+    const ds=dataset();
+    ds.transactions=[
+      tx('personal01',{date:'2026-12-13',desc:'Personal - Telefonia',paymentStatus:'pending',currency:'PYG',amount:150000}),
+      tx('recebido01',{date:'2026-11-18',type:'receita',amount:200}),
+      tx('debito0001',{date:'2026-12-02',desc:'Recarga avulsa',amount:10}),
+    ];
+    ds.limits=[{name:'Mensal',amount:300,currency:'BRL',categories:['Mercado']}];
+    saveBase(ds);
+    const month=ym=>{api.setFilters({month:ym});api.renderAll();};
+    const brl=selector=>Number(get(selector).textContent.replace(/[^\d,-]/g,'').replace(',','.'));
+    month('2026-11');
+    assert.equal(brl('#hero-desp'),0);assert.equal(brl('#hero-acc'),200);
+    assert.equal(api.limitStats()[0].spent,0);assert(!api.tableTxs().some(t=>t.id==='personal01'));
+    month('2026-12');
+    assert.equal(brl('#hero-desp'),10);assert.match(get('#dash-bills').innerHTML,/13\/12\/2026/);
+    api.changeBill('personal01','pay');api.changeBill('personal01','pay');
+    assert.equal(api.getDataset().transactions.length,3);
+    assert.equal(brl('#hero-desp'),10);assert.equal(brl('#txs-saldo'),-160);assert.equal(brl('#hero-acc'),40);
+    assert.match(get('#tx-tbody').innerHTML,/10\/12\/2026/);
+    assert.match(get('#dash-bills').innerHTML,/Vencimento em 13\/12\/2026/);
+    assert.match(get('#dash-bills').innerHTML,/Pago em 10\/12\/2026/);
+    assert(!api.currencyBreakdown().some(g=>g.currency==='PYG'));
+    month('2026-11');
+    assert.equal(brl('#hero-desp'),150);assert.equal(brl('#hero-saldo'),50);assert.equal(brl('#hero-acc'),200);
+    assert.equal(brl('#txs-saldo'),200);assert.equal(api.limitStats()[0].spent,150);
+    assert.equal(api.currencyBreakdown().find(g=>g.currency==='PYG').expense,150000);
+    assert(!api.tableTxs().some(t=>t.id==='personal01'));
+    api.setFilters({mode:'range',from:'2026-11-01',to:'2026-12-31'});api.renderAll();
+    assert.equal(brl('#hero-desp'),160);assert.equal(brl('#txs-saldo'),40);
+    api.setFilters({mode:'range',from:'2026-12-01',to:'2026-12-09'});api.renderAll();
+    assert.equal(brl('#hero-acc'),190);assert(!api.tableTxs().some(t=>t.id==='personal01'));
+    api.changeBill('personal01','reopen');api.changeBill('personal01','reopen');
+    month('2026-11');assert.equal(brl('#hero-desp'),0);
+    month('2026-12');assert.equal(brl('#hero-acc'),190);assert.equal(api.getDataset().transactions.length,3);
+  } finally {ctx.todayISO=originalToday;}
+});
+
+test('conta sem período informado usa o mês do vencimento mesmo com pagamento adiantado e débito normal mantém a data',()=>{
+  const ds=dataset();
+  ds.transactions=[
+    tx('servico01',{date:'2027-02-03',paidOn:'2027-01-28',paymentStatus:'paid',desc:'Licença anual',amount:70}),
+    tx('debtjan1',{date:'2027-01-28',desc:'Personal - Telefonia',amount:10}),
+    tx('servjan1',{date:'2027-01-12',paidOn:'2027-01-15',paymentStatus:'paid',desc:'Aula',amount:20}),
+  ];
+  saveBase(ds);
+  api.setFilters({month:'2027-01'});api.renderAll();
+  assert.equal(api.currencyBreakdown()[0].expense,30);
+  assert.deepEqual(Array.from(api.tableTxs(),t=>t.id).sort(),['debtjan1','servico01','servjan1']);
+  api.setFilters({month:'2027-02'});api.renderAll();
+  assert.equal(api.currencyBreakdown()[0].expense,70);assert.equal(api.tableTxs().length,0);
+  assert.match(get('#dash-bills').innerHTML,/Vencimento em 03\/02\/2027/);
+  assert.match(get('#dash-bills').innerHTML,/Pago em 28\/01\/2027/);
+  api.setFilters({mode:'all'});api.renderAll();
+  assert.equal(api.currencyBreakdown()[0].expense,100);assert.equal(api.tableTxs().length,3);
+});
+
+test('gráficos e seleção de meses distinguem referência de dezembro, vencimento em janeiro e pagamento em fevereiro',()=>{
+  const ds=dataset();
+  ds.transactions=[tx('personal02',{date:'2027-01-13',paidOn:'2027-02-01',paymentStatus:'paid',desc:'Pos:personal pago de factura - personal',amount:80})];
+  saveBase(ds);
+  const captured=new Map(), originalChart=ctx.Chart;
+  ctx.Chart=class {
+    static defaults={font:{},plugins:{legend:{labels:{}},tooltip:{}},elements:{line:{},point:{}}};
+    constructor(canvas,config){captured.set(canvas,config.data);}
+    destroy(){}
+  };
+  try {
+    api.setFilters({month:'2026-12'});api.renderCharts();
+    const months=Array.from(api.allMonths());
+    for(const m of ['2026-12','2027-01','2027-02']) assert(months.includes(m),'Mês navegável '+m);
+    const series=id=>captured.get(get('#'+id));
+    function point(id,month,index){
+      const chart=series(id),position=Array.from(chart.labels,s=>s.toLowerCase()).indexOf(month);
+      return position<0 ? 0 : chart.datasets[index].data[position];
+    }
+    assert.deepEqual(Array.from(series('chart-cat').datasets[0].data),[80]);
+    assert.deepEqual(Array.from(series('chart-conta').datasets[0].data),[80]);
+    assert.equal(point('chart-evo','dez/2026',1),80);
+    assert.equal(point('chart-evo','fev/2027',1),0);
+    assert.equal(point('chart-saldo','dez/2026',0),0);
+    assert.equal(point('chart-saldo','fev/2027',0),-80);
+    api.setFilters({month:'2027-01'});api.renderAll();
+    assert.equal(api.tableTxs().length,0);assert.equal(api.currencyBreakdown().length,0);
+    assert.match(get('#dash-bills').innerHTML,/Pago em 01\/02\/2027/);
+    api.setFilters({month:'2027-02'});api.renderAll();
+    assert.equal(api.tableTxs()[0].id,'personal02');assert.equal(api.currencyBreakdown().length,0);
+  } finally {if(originalChart)ctx.Chart=originalChart;else delete ctx.Chart;}
+});
+
+test('competência escrita acompanha cada vencimento da série até o 13º mês sem depender de escolha manual',()=>{
+  const originalToday=ctx.todayISO;
+  try {
+    ctx.todayISO=()=> '2026-12-01';
+    saveBase(dataset());api.openTxModal(null,{pending:true});
+    get('#tx-date').value='2026-12-13';get('#tx-desc').value='Mensalidade, competência novembro de 2026';
+    get('#tx-amount').value='25';get('#tx-cat').value='Mercado';get('#tx-fixa').checked=true;get('#tx-renew').checked=true;
+    api.saveTxModal();
+    const references=()=>api.getDataset().transactions.map(t=>ctx.billReferenceMonth(t));
+    assert.equal(references().length,12);assert.equal(references()[0],'2026-11');assert.equal(references()[1],'2026-12');
+    assert.equal(references()[11],'2027-10');
+    ctx.todayISO=()=> '2027-12-01';api.renderAll();api.renderAll();
+    assert.equal(references().length,13);assert.equal(references()[12],'2027-11');
+    assert.equal(api.getDataset().transactions[12].paymentStatus,'pending');
+  } finally {ctx.todayISO=originalToday;}
+});
+
+test('referência corrigida e depois devolvida ao automático a partir da 13ª ocorrência segue em novas renovações',()=>{
+  const originalToday=ctx.todayISO;
+  try {
+    ctx.todayISO=()=> '2026-12-10';
+    saveBase(dataset());api.openTxModal(null,{pending:true});
+    get('#tx-date').value='2026-12-13';get('#tx-desc').value='Personal - Telefonia';get('#tx-amount').value='50';
+    get('#tx-cat').value='Mercado';get('#tx-fixa').checked=true;get('#tx-renew').checked=true;api.saveTxModal();
+    const rows=()=>api.getDataset().transactions;
+    const ref=i=>ctx.billReferenceMonth(rows()[i]);
+    ctx.todayISO=()=> '2027-12-02';api.renderAll();
+    assert.equal(rows().length,13);assert.equal(ref(12),'2027-11');
+    api.openTxModal(rows()[12].id);get('#tx-reference-month').value='2027-10';get('#tx-reference-repeat').checked=true;api.saveTxModal();
+    ctx.todayISO=()=> '2028-01-02';api.renderAll();
+    assert.equal(rows().length,14);assert.equal(ref(12),'2027-10');assert.equal(ref(13),'2027-11');
+    api.openTxModal(rows()[13].id);get('#tx-reference-auto').listeners.get('click')();get('#tx-reference-repeat').checked=true;api.saveTxModal();
+    ctx.todayISO=()=> '2028-02-02';api.renderAll();api.renderAll();
+    assert.equal(rows().length,15);assert.equal(ref(12),'2027-10');assert.equal(ref(13),'2027-12');assert.equal(ref(14),'2028-01');
+  } finally {ctx.todayISO=originalToday;}
 });
 
 test('agenda exibe os vencimentos do mês e mostra a próxima recorrência quando o mês vira com o painel aberto',()=>{
@@ -763,6 +894,47 @@ test('fixações antigas preservam o valor contabilizado e receitas não entram 
   assert.doesNotMatch(get('#tx-tbody').innerHTML,/data-bill-action="track"/);
   api.changeBill('income000','track');api.changeBill('wasfixed','track');
   assert.equal(api.getDataset().transactions[1].paymentStatus,undefined);assert.equal(api.getDataset().transactions[0].paymentStatus,'paid');
+});
+
+test('formulário mostra competência automática, permite ajustar e restaura o automático sem afetar débito ou C6',()=>{
+  const ds=dataset(), reference=get('#tx-reference-month'), details=get('#tx-bill-reference');
+  ds.transactions=[tx('tel10001',{desc:'Personal - Telefonia',date:'2027-01-13',paymentStatus:'pending'}),
+    tx('debit001',{desc:'Padaria'}),tx('credit01',{account:'C6',c6Section:'card',date:'2026-12-09'})];
+  saveBase(ds);api.openTxModal('tel10001');
+  assert.equal(details.open,false);assert(!details.classList.contains('hidden'));
+  assert.match(get('#tx-reference-label').textContent,/Dezembro de 2026/);assert.equal(reference.value,'');
+  reference.value='2027-01';reference.listeners.get('input')();assert.match(get('#tx-reference-label').textContent,/Janeiro de 2027/);
+  api.saveTxModal();api.setFilters({month:'2027-01'});api.renderAll();
+  assert.match(get('#dash-bills').innerHTML,/Ref\. jan\/2027/);
+  api.openTxModal('tel10001');assert.equal(reference.value,'2027-01');get('#tx-reference-auto').listeners.get('click')();
+  api.saveTxModal();assert.equal(api.getDataset().transactions[0].billReferenceMonth,undefined);
+  assert.match(get('#dash-bills').innerHTML,/Ref\. dez\/2026/);
+  api.openTxModal('tel10001');
+  const fresh=JSON.parse(storage.get('fyg:ds:'+ds.id));fresh.transactions[0].billReferenceMonth='2026-10';
+  storage.set('fyg:ds:'+ds.id,JSON.stringify(fresh));get('#tx-desc').value='Personal - Telefonia alterada';api.saveTxModal();
+  assert.equal(api.getDataset().transactions[0].billReferenceMonth,'2026-10');
+  for(const id of ['debit001','credit01']){api.openTxModal(id);assert(details.classList.contains('hidden'));}
+  api.openTxModal(null,{pending:true});api.fillTxFromReceipt(receipt({data:'2027-01-13',descricao:'Internet',instituicao:'Itaú',sourceEvidence:'Competência novembro de 2026'}));
+  assert.match(get('#tx-reference-label').textContent,/Novembro de 2026/);
+});
+
+test('correção opcional de uma série protege competências pagas, projeta o ajuste e mantém exceção isolada na âncora',()=>{
+  const today=ctx.todayISO;
+  try {
+    ctx.todayISO=()=> '2026-01-13';const ds=dataset();saveBase(ds);api.openTxModal(null,{pending:true});
+    get('#tx-amount').value='80';get('#tx-date').value='2026-01-13';get('#tx-desc').value='Serviço ref. dezembro de 2025';
+    get('#tx-cat').value='Mercado';get('#tx-fixa').checked=true;get('#tx-renew').checked=true;api.saveTxModal();
+    const rows=()=>api.getDataset().transactions;
+    assert.equal(rows()[1].billReferenceMonth,'2026-01');assert.equal(rows()[11].billReferenceMonth,'2026-11');
+    api.changeBill(rows()[2].id,'pay');
+    api.openTxModal(rows()[1].id);get('#tx-reference-month').value='2026-02';get('#tx-reference-repeat').checked=true;api.saveTxModal();
+    assert.equal(rows()[1].billReferenceMonth,'2026-02');assert.equal(rows()[2].billReferenceMonth,'2026-02');
+    assert.equal(rows()[3].billReferenceMonth,'2026-04');assert.equal(rows()[11].repeatBillReferenceMonth,'2026-12');
+    api.openTxModal(rows()[11].id);get('#tx-reference-month').value='2026-10';api.saveTxModal();
+    assert.equal(rows()[11].billReferenceMonth,'2026-10');
+    ctx.todayISO=()=> '2027-01-13';api.renderAll();api.renderAll();
+    assert.equal(rows().length,13);assert.equal(rows()[12].billReferenceMonth,'2027-01');assert.equal(rows()[12].paymentStatus,'pending');
+  } finally {ctx.todayISO=today;}
 });
 
 test('sair do acompanhamento de uma conta paga conserva o mês original do pagamento',()=>{

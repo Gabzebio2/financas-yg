@@ -14,7 +14,7 @@
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261117-revisao">
+<link rel="stylesheet" href="css/design.css?v=20261117-mes-da-despesa">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 <link rel="stylesheet" href="css/receipt-jobs.css?v=20261106-statement-coverage">
 </head>
@@ -338,7 +338,7 @@
           <span class="sum-ico ico-desp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></span>
           <span class="hero-flow-txt">
             <span class="hero-flow-label">Despesas</span>
-            <span class="hero-flow-value neg" id="hero-desp">—</span><span class="flow-caption">Saídas no período</span>
+            <span class="hero-flow-value neg" id="hero-desp">—</span><span class="flow-caption">Por mês de referência</span>
           </span>
         </button>
         <div class="hero-flow-item hero-flow-acc">
@@ -402,12 +402,12 @@
         </div>
       </div>
       <div class="card chart-card">
-        <h3>Entradas e saídas</h3><p class="chart-subtitle">Receitas e despesas por mês</p>
+        <h3>Receitas e despesas</h3><p class="chart-subtitle">Contas pagas entram no mês a que se referem</p>
         <p class="hint" id="chart-evo-note" hidden>Os pontos sem cotação ficam em branco.</p>
         <div class="chart-box"><canvas id="chart-evo">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
       <div class="card chart-card">
-        <h3>Evolução do saldo</h3><p class="chart-subtitle">Resultado mensal e saldo acumulado</p>
+        <h3>Evolução do saldo</h3><p class="chart-subtitle">Saldo mensal e acumulado pela data da movimentação</p>
         <p class="hint" id="chart-saldo-note" hidden>Os saldos que dependem de uma cotação ausente ficam em branco.</p>
         <div class="chart-box"><canvas id="chart-saldo">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
@@ -546,6 +546,14 @@
         <label class="checkline"><input type="checkbox" id="tx-payable" aria-describedby="tx-bill-hint"> Conta a pagar</label>
         <label class="checkline hidden" id="tx-paid-wrap"><input type="checkbox" id="tx-paid"> Pago</label>
         <p class="hint" id="tx-bill-hint">Selecione para acompanhar o pagamento no dashboard.</p>
+        <details class="bill-reference hidden" id="tx-bill-reference">
+          <summary><span id="tx-reference-label"></span><span class="bill-reference-action">Ajustar mês</span></summary>
+          <div class="bill-reference-controls">
+            <label>Usar outro mês<input type="month" id="tx-reference-month"></label>
+            <button type="button" class="btn-link" id="tx-reference-auto">Usar automático</button>
+            <label class="checkline hidden" id="tx-reference-repeat-wrap"><input type="checkbox" id="tx-reference-repeat"> Aplicar também aos próximos vencimentos em aberto desta série</label>
+          </div>
+        </details>
       </div>
       <label class="span2 checkline" id="tx-parc-wrap">
         <input type="checkbox" id="tx-parcelado"> Compra parcelada
@@ -861,12 +869,12 @@
 <script src="js/installment-schedule.js?v=20261107-c6-invoices"></script>
 <script src="js/import-dates.js?v=20261106-auto-document"></script>
 <script src="js/transaction-categories.js?v=20261109-categorias"></script>
-<script src="js/app.js?v=20261117-revisao"></script>
+<script src="js/app.js?v=20261117-mes-da-despesa"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
 <script src="js/importer.js?v=20261116-extratos"></script>
 <script src="js/weekly-revenue.js?v=20261117-revisao"></script>
 <script src="js/business.js?v=20261117-revisao"></script>
-<script src="js/dashboard.js?v=20261117-revisao"></script>
+<script src="js/dashboard.js?v=20261117-mes-da-despesa"></script>
 <script src="js/receipt.js?v=20261116-envio"></script>
 <script src="js/batch.js?v=20261116-extratos"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
