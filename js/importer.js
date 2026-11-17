@@ -484,8 +484,7 @@ const Importer = (() => {
     csel.innerHTML = CURRENCY_CODES.map((c) =>
       `<option value="${c}">${escapeHtml(CURRENCIES[c].name)} (${escapeHtml(CURRENCIES[c].symbol)})</option>`).join("");
     csel.value = importCurrency;
-    $("#import-currency-hint").textContent =
-      `Detectei ${CURRENCIES[importCurrency].name}. A seleção vale para linhas sem coluna de moeda; moedas explícitas em cada linha são preservadas.`;
+    $("#import-currency-hint").textContent = "As linhas que já têm moeda mantêm a original.";
 
     renderImportStats();
   }

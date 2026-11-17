@@ -35,15 +35,16 @@ function normDisplayCur(code, profile) {
 function curFrac(code) { return (CURRENCIES[normCur(code)]).frac; }
 
 // Formata um valor numérico na moeda indicada (padrão Real)
-function fmtMoney(v, code) {
+function fmtMoney(v, code, includeUnit = true) {
   code = normCur(code);
   const c = CURRENCIES[code];
   try {
     const options = { minimumFractionDigits: c.frac, maximumFractionDigits: c.frac };
+    if (!includeUnit) return (Number(v) || 0).toLocaleString(c.locale, options);
     if (c.token) return `${c.symbol} ${(Number(v) || 0).toLocaleString(c.locale, options)}`;
     return (Number(v) || 0).toLocaleString(c.locale, { ...options, style: "currency", currency: code });
   } catch {
-    return `${c.symbol} ${(Number(v) || 0).toFixed(c.frac)}`;
+    return (includeUnit ? c.symbol + " " : "") + (Number(v) || 0).toFixed(c.frac);
   }
 }
 const fmtBRL = (v) => fmtMoney(v, "BRL");
@@ -153,8 +154,8 @@ function fmtDate(iso) {
 }
 
 // Número -> texto de campo já formatado na moeda: 10.25 -> "R$ 10,25"
-function fmtMoneyInput(n, code) {
-  return fmtMoney(Number(n) || 0, code);
+function fmtMoneyInput(n, code, input) {
+  return fmtMoney(Number(n) || 0, code, input?.dataset.unit !== "separate");
 }
 
 // Máscara de moeda ao vivo: os dígitos digitados formam as casas decimais da
@@ -165,7 +166,7 @@ function maskMoneyEl(el, code) {
   code = normCur(code || el.dataset.cur);
   const frac = curFrac(code);
   const digits = el.value.replace(/\D/g, "").slice(0, 15);
-  el.value = digits ? fmtMoney(parseInt(digits, 10) / Math.pow(10, frac), code) : "";
+  el.value = digits ? fmtMoneyInput(parseInt(digits, 10) / Math.pow(10, frac), code, el) : "";
 }
 
 // Valor numérico a partir dos dígitos crus de um texto mascarado (independe do
@@ -186,7 +187,7 @@ function setMoneyMaskCurrency(el, code) {
   const value = moneyInputValue(el);
   el.dataset.cur = normCur(code);
   // Mudar apenas a unidade não deve transformar R$ 10,00 em CLP 1.000.
-  if (value != null) el.value = fmtMoneyInput(value, el.dataset.cur);
+  if (value != null) el.value = fmtMoneyInput(value, el.dataset.cur, el);
 }
 
 // Liga a máscara num input (idempotente). Retorna o próprio elemento.
@@ -625,9 +626,8 @@ function renderFolders() {
   }
   grid.innerHTML = idx.map((e) => `
     <div class="folder-card" data-profile="${e.profile === "pj" ? "company" : "personal"}" data-id="${escapeHtml(e.id)}">
-      <div class="folder-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z" stroke-linejoin="round"/><path d="M3 10h18"/></svg></div>
       <div class="folder-info">
-        <div class="folder-kind">${e.profile === "pj" ? "Empresa" : "Pessoa física"}</div>
+        <div class="folder-kind"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z" stroke-linejoin="round"/><path d="M3 10h18"/></svg>${e.profile === "pj" ? "Empresa" : "Pessoa física"}</div>
         <div class="folder-name" data-name>${escapeHtml(e.name)}</div>
         <div class="folder-meta"><span>Moeda padrão · ${e.profile === "pj" ? "USD" : "PYG"}</span><span>${e.txCount} transaç${e.txCount === 1 ? "ão" : "ões"} · atualizada em ${new Date(e.updatedAt).toLocaleDateString("pt-BR")}</span></div>
       </div>

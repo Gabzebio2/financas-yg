@@ -97,10 +97,12 @@
   #screen-txs #tx-table tr[data-id],#screen-txs #tx-table thead tr{--cols:minmax(150px,1.5fr) minmax(88px,.8fr) minmax(110px,1fr) 70px;grid-template-areas:"who account amount actions"}
   #screen-txs.ledger-selecting #tx-table tr[data-id],#screen-txs.ledger-selecting #tx-table thead tr{grid-template-areas:"check who account amount actions"}
   #screen-txs #tx-table :is(td,th):nth-child(4){display:none}
-  .ledger-row-meta span{display:inline}
-  .ledger-row-meta span+b::before{content:" · ";font-weight:400}
+  .ledger-row-meta .ledger-category{display:inline}
+  .ledger-row-meta .ledger-category~b::before{content:" · ";font-weight:400}
 }
 @media(max-width:760px){
+  .ledger-row-meta .ledger-account{display:inline}
+  .ledger-row-meta :is(.ledger-category + .ledger-account,.ledger-account + b)::before{content:" · ";font-weight:400}
   #screen-txs .txs-head{gap:10px;margin-bottom:12px}
   #screen-txs .txs-add{display:none}
   .ledger-toolbar{gap:4px 6px}

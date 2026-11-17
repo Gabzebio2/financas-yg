@@ -17,10 +17,10 @@
 <link rel="stylesheet" href="css/design.css?v=20261117-mes-da-despesa">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 <link rel="stylesheet" href="css/receipt-jobs.css?v=20261106-statement-coverage">
-<link rel="stylesheet" href="css/workspace-review.css?v=20261117-interface">
-<link rel="stylesheet" href="css/dashboard-review.css?v=20261117-interface">
-<link rel="stylesheet" href="css/entry-review.css?v=20261117-interface">
-<link rel="stylesheet" href="css/ledger-review.css?v=20261117-interface">
+<link rel="stylesheet" href="css/workspace-review.css?v=20261117-comprovante">
+<link rel="stylesheet" href="css/dashboard-review.css?v=20261117-comprovante">
+<link rel="stylesheet" href="css/entry-review.css?v=20261117-comprovante">
+<link rel="stylesheet" href="css/ledger-review.css?v=20261117-comprovante">
 </head>
 <body>
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -82,8 +82,8 @@
     <div class="card drive-card" id="cloud-card">
       <div class="drive-head">
         <div>
-          <div class="cloud-symbol" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6"/></svg></div><span class="eyebrow">Em todos os seus dispositivos</span><h3 id="cloud-account-title">Entre na sua conta</h3>
-          <span class="hint">Use a mesma conta no computador e no celular. Suas pastas sincronizadas acompanham você pelo Supabase.</span>
+          <div class="cloud-symbol" aria-hidden="true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6"/></svg></div><h3 id="cloud-account-title">Entre na sua conta</h3>
+          <span class="hint">Use a mesma conta para acessar suas pastas no celular e no computador.</span>
       <p class="drive-status" id="cloud-access-status" role="status" aria-live="polite"></p>
         </div>
         <div class="cloud-login" id="cloud-login">
@@ -277,7 +277,7 @@
       </div>
       <div class="dash-header-btns">
         <button class="btn btn-ghost hidden" id="btn-undo" title="Desfazer a última alteração (Ctrl+Z)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5 4 10l5 5M4 10h9a6 6 0 0 1 0 12"/></svg> Desfazer</button>
-        <button class="btn btn-ghost" id="dash-view-txs">Ver transações <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></button><button class="btn btn-primary" id="btn-add-tx"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nova transação</button>
+        <button class="btn btn-ghost" id="dash-view-txs">Ver transações <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></button><button class="btn btn-primary" id="btn-add-tx"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Novo lançamento</button>
       </div>
     </div>
 
@@ -447,11 +447,11 @@
     <div class="txs-head">
       <button class="btn-icon" id="btn-txs-back" aria-label="Voltar à tela anterior" title="Voltar à tela anterior"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 5-7 7 7 7M5 12h15"/></svg></button>
       <h1>Transações</h1>
-      <button class="btn btn-primary txs-add" id="btn-txs-add">Nova transação</button>
+      <button class="btn btn-primary txs-add" id="btn-txs-add">Novo lançamento</button>
     </div>
     <div class="card table-card">
       <div class="ledger-search-row">
-        <label class="search-field"><span class="sr-only">Buscar transações</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input type="search" id="tx-search" placeholder="Buscar descrição, categoria ou conta"></label>
+        <label class="search-field"><span class="sr-only">Buscar por descrição, categoria ou conta</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input type="search" id="tx-search" placeholder="Buscar transações" title="Buscar por descrição, categoria ou conta"></label>
         <button type="button" class="btn btn-ghost" id="tx-options-toggle" aria-expanded="false" aria-controls="tx-options" title="Filtros e opções do extrato"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 7h8m4 0h6M3 17h3m4 0h11"/><circle cx="13" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>Filtros</button>
       </div>
       <div class="ledger-toolbar">
@@ -545,21 +545,23 @@
 
 <div class="modal-backdrop hidden" id="modal-tx">
   <div class="modal tx-entry-dialog" role="dialog" aria-modal="true" aria-labelledby="modal-tx-title">
-    <h3 id="modal-tx-title">Nova transação</h3>
+    <h3 id="modal-tx-title">Novo lançamento</h3>
 
     <div class="tx-entry-scroll">
     <div class="tx-entry-layout">
     <!-- Leitura de comprovante com IA -->
     <aside class="receipt-box" id="receipt-box" aria-labelledby="tx-photo-title">
-      <div class="entry-slip-heading"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linejoin="round"><path d="M5 3h14v18l-3-2-2 2-2-2-2 2-2-2-3 2zM8 8h8M8 12h6"/></svg><h4 id="tx-photo-title">Registrar pela foto</h4></div>
-      <p class="entry-slip-hint" id="tx-photo-hint">Envie o comprovante e acompanhe a leitura pelo sino.</p>
-      <div class="receipt-btns">
+      <div class="entry-slip-label"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5 3l3 2 2-2 2 2 2-2 2 2 3-2v18l-3-2-2 2-2-2-2 2-2-2-3 2zM8 9h8m-8 4h6"/></svg>Comprovante</div>
+      <h4 id="tx-photo-title">Registrar pela foto</h4>
+      <p class="entry-slip-hint" id="tx-photo-hint">Confira valor, data e conta pelo sino.</p>
+      <button type="button" class="btn entry-slip-trigger" id="receipt-source-toggle" aria-expanded="false" aria-controls="receipt-source-actions"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h5l2-3h4l2 3h5v13H3z"/><circle cx="12" cy="13" r="4"/></svg>Foto ou arquivo</button>
+      <div class="entry-slip-choices" id="receipt-source-actions" role="group" aria-label="Origem do comprovante" hidden>
         <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-camera"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="4"/></svg> Tirar foto</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-upload" title="Envie uma foto ou PDF (comprovante ou fatura/lista) ou um arquivo Excel — serve tanto para um gasto só quanto para vários de uma vez"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 16 8-8a3 3 0 0 0-4-4L4 13a5 5 0 0 0 7 7l9-9M7 14l7-7"/></svg> Anexar comprovante</button>
-        <span class="receipt-status hidden" id="receipt-status"></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-upload" title="Fotos, PDF, planilhas Excel ou CSV"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 16 8-8a3 3 0 0 0-4-4L4 13a5 5 0 0 0 7 7l9-9M7 14l7-7"/></svg> Escolher arquivo</button>
+      </div>
+      <span class="receipt-status hidden" id="receipt-status" role="status"></span>
         <button type="button" class="btn-link hidden" id="btn-apikey-remove"
           title="Apaga a chave de IA salva neste navegador">Remover chave</button>
-      </div>
       <input type="file" id="receipt-input-camera" accept="image/*" capture="environment" hidden>
       <input type="file" id="receipt-input-upload" accept="image/*,.pdf,application/pdf,.xlsx,.xls,.xlsm,.csv" multiple hidden>
       <div id="apikey-wrap" class="hidden">
@@ -570,19 +572,25 @@
           <button type="button" class="btn btn-primary btn-sm" id="btn-apikey-save">Salvar chave</button>
         </div>
       </div>
+      <div class="entry-slip-folder" aria-label="Pasta de destino"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 6h6l2 2h10v12H3z"/></svg><span id="tx-photo-folder"></span></div>
     </aside>
     <div class="tx-manual-column">
     <div class="type-toggle" id="tx-type-toggle" role="group" aria-label="Tipo de lançamento">
-      <button data-type="despesa" class="active">Despesa</button>
-      <button data-type="receita">Receita</button>
+      <button data-type="despesa" class="active"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 14V2m-5 5 5-5 5 5"/></svg>Despesa</button>
+      <button data-type="receita"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v12m-5-5 5 5 5-5"/></svg>Receita</button>
     </div>
     <div class="form-grid tx-entry-fields">
-      <label id="tx-amount-label">Valor
-        <input type="text" id="tx-amount" inputmode="decimal" placeholder="0,00">
-      </label>
-      <label class="tx-currency-field">Moeda
-        <select id="tx-currency"></select>
-      </label>
+      <div class="span2 tx-value-field">
+        <label for="tx-amount" id="tx-amount-label">Valor</label>
+        <div class="tx-value-row">
+          <div class="tx-currency-field">
+            <span id="tx-currency-unit" aria-hidden="true"></span>
+            <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m4 6 4 4 4-4"/></svg>
+            <select id="tx-currency" aria-label="Moeda"></select>
+          </div>
+          <input type="text" id="tx-amount" inputmode="decimal" data-unit="separate" placeholder="0,00">
+        </div>
+      </div>
       <label class="span2">Descrição
         <input type="text" id="tx-desc" placeholder="Ex: Supermercado">
       </label>
@@ -928,13 +936,13 @@
 <script src="js/installment-schedule.js?v=20261107-c6-invoices"></script>
 <script src="js/import-dates.js?v=20261106-auto-document"></script>
 <script src="js/transaction-categories.js?v=20261109-categorias"></script>
-<script src="js/app.js?v=20261117-interface"></script>
+<script src="js/app.js?v=20261117-comprovante"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
-<script src="js/importer.js?v=20261117-interface"></script>
+<script src="js/importer.js?v=20261117-comprovante"></script>
 <script src="js/weekly-revenue.js?v=20261117-revisao"></script>
 <script src="js/business.js?v=20261117-interface"></script>
-<script src="js/dashboard.js?v=20261117-interface"></script>
-<script src="js/receipt.js?v=20261116-envio"></script>
+<script src="js/dashboard.js?v=20261117-comprovante"></script>
+<script src="js/receipt.js?v=20261117-comprovante"></script>
 <script src="js/batch.js?v=20261117-interface"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>

@@ -451,12 +451,42 @@ const Receipt = (() => {
   /* ---------- Eventos ---------- */
   document.addEventListener("DOMContentLoaded", () => {
     const modal = $("#modal-tx");
+    const sourceToggle = $("#receipt-source-toggle");
+    const sourceActions = $("#receipt-source-actions");
+    function setSourceOpen(open) {
+      sourceActions.hidden = !open;
+      sourceToggle.ariaExpanded = String(open);
+    }
+    sourceToggle.addEventListener("click", () => setSourceOpen(sourceActions.hidden));
+    modal.addEventListener("focusout", ev => {
+      if (ev.relatedTarget && !$("#receipt-box").contains(ev.relatedTarget)) setSourceOpen(false);
+    });
+    modal.addEventListener("click", ev => {
+      if (!ev.target.closest("#receipt-box")) setSourceOpen(false);
+    });
+    // Escape fecha primeiro a escolha de origem e mantém a transação em edição.
+    document.addEventListener("keydown", ev => {
+      if (ev.key !== "Escape" || sourceActions.hidden || !modal.contains(ev.target)) return;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      setSourceOpen(false);
+      sourceToggle.focus();
+    }, true);
+    function pickReceipt(input) {
+      setSourceOpen(false);
+      sourceToggle.focus();
+      input.click();
+    }
     new MutationObserver(() => {
-      if (modal.classList.contains("hidden")) { requestVersion++; pendingFile = null; }
+      if (modal.classList.contains("hidden")) {
+        setSourceOpen(false);
+        requestVersion++;
+        pendingFile = null;
+      }
     }).observe(modal, { attributes: true, attributeFilter: ["class"] });
     // New photos use the same quick, multi-operation flow as uploaded prints.
     // Editing an existing transaction still fills its form rather than adding rows.
-    $("#btn-receipt-camera").addEventListener("click", () => $("#receipt-input-camera").click());
+    $("#btn-receipt-camera").addEventListener("click", () => pickReceipt($("#receipt-input-camera")));
     $("#receipt-input-camera").addEventListener("change", (ev) => {
       const file = ev.target.files[0];
       if (file) {
@@ -467,7 +497,7 @@ const Receipt = (() => {
     });
     // Upload do comprovante: foto (gasto único ou fatura/lista) ou Excel — tudo
     // cai na tela de lista para conferir e confirmar de uma vez.
-    $("#btn-receipt-upload").addEventListener("click", () => $("#receipt-input-upload").click());
+    $("#btn-receipt-upload").addEventListener("click", () => pickReceipt($("#receipt-input-upload")));
     $("#receipt-input-upload").addEventListener("change", (ev) => {
       const files = Array.from(ev.target.files || []);
       ev.target.value = "";

@@ -125,14 +125,24 @@ body.hide-money #screen-analytics :is(.fx-rows,.progress-bar,canvas),body.hide-m
   .analytics-layout .limits-block{display:block}
   .weekly-panel .weekly-browser{grid-template-columns:minmax(0,1fr);gap:10px}
   .weekly-account-panel{border-left:0;border-top:1px solid var(--border);padding:13px 0 0}
-  .weekly-panel .weekly-card{flex-basis:104px}
+  .weekly-panel .weekly-card{flex-basis:7.4rem}
+  .weekly-panel .weekly-result [data-week-edit]{margin-inline-start:0}
+  .weekly-panel .weekly-range{margin-inline-end:12px}
   .weekly-panel .weekly-card[aria-pressed=true]{transform:translateY(-3px)}
   .weekly-mode button {padding:8px}
   .recent-panel li>button{grid-template-columns:29px minmax(0,1fr) minmax(0,35%);gap:8px;min-height:62px}
   .recent-amount{font-size:.81rem}
-  .dash-activity .bill-row{grid-template-columns:42px minmax(0,1fr) minmax(85px,32%);grid-template-areas:"date title amount" "date title action";gap:2px 8px;}
-  .dash-activity .bill-amount{text-align:end;line-height:1.25}
+  .dash-activity .bill-row{grid-template-columns:42px minmax(0,1fr) auto;grid-template-areas:"date title title" "amount amount action";gap:6px 10px;}
+  .dash-activity .bill-amount{text-align:start;line-height:1.25}
   .dash-activity .bill-actions{justify-content:flex-end}
   .dash-activity .bill-actions .bill-pay{min-height:40px;padding:4px 7px;white-space:normal;}
 }
-@media(max-width:360px){.analytics-header{align-items:flex-start;flex-direction:column}.dash-activity .bill-row{grid-template-columns:35px minmax(0,1fr) minmax(82px,34%)}}
+@media(max-width:360px){
+  .analytics-header{align-items:flex-start;flex-direction:column}
+  .analytics-layout .category-chart-legend{max-height:17rem}
+  .analytics-layout .category-chart-legend button {grid-template-columns:8px minmax(0,1fr) auto;grid-template-areas:"dot name name" ". amount share";gap:2px 5px;}
+  .analytics-layout .category-chart-legend i{grid-area:dot}
+  .analytics-layout .chart-cat-name{grid-area:name}
+  .analytics-layout .chart-amount{grid-area:amount;text-align:start}
+  .analytics-layout .chart-share{grid-area:share}
+}

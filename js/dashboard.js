@@ -1933,7 +1933,9 @@ const Dashboard = (() => {
       const paid = !groupedC6Ids.has(t.id) && t.type === "despesa" && t.paymentStatus === "paid";
       const dateNote = (installmentTotal(t) > 1 && isValidISODate(t.purchaseDate)) || (date === t.date && cleanDateEstimate(t).dateEstimated);
       const series = t.installment ? "Parcela " + t.installment + (t.advance ? " · Adiantada" : "") : t.fixed ? "Fixa" : "";
-      const meta = '<small class="ledger-row-meta"><span>' + escapeHtml([t.category, t.account].filter(Boolean).join(" · ")) + '</span>' +
+      const meta = '<small class="ledger-row-meta">' +
+        (t.category ? '<span class="ledger-category">' + escapeHtml(t.category) + '</span>' : '') +
+        (t.account ? '<span class="ledger-account">' + escapeHtml(t.account) + '</span>' : '') +
         (series ? '<b>' + escapeHtml(series) + '</b>' : '') + '</small>';
       const title = `<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.creditKind === "card_payment" ? '<small class="hint">Pg recebido</small>' : ""}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span>`;
       return `
@@ -2199,7 +2201,7 @@ const Dashboard = (() => {
   // Atualiza o rótulo (símbolo) e a máscara do campo de valor conforme a moeda
   function applyTxCurrency(code) {
     code = normCur(code);
-    $("#tx-amount-label").childNodes[0].nodeValue = `Valor (${CURRENCIES[code].symbol}) `;
+    $("#tx-currency-unit").textContent = code === "PYG" ? "Gs." : CURRENCIES[code].symbol;
     setMoneyMaskCurrency($("#tx-amount"), code);
   }
 
@@ -2219,11 +2221,12 @@ const Dashboard = (() => {
     receiptRead = null;
     txModalRevision++;
 
-    $("#modal-tx-title").textContent = isEdit ? "Editar transação" : (opts.title || "Nova transação");
+    $("#modal-tx-title").textContent = isEdit ? "Editar transação" : (opts.title || "Novo lançamento");
     $("#tx-entry-options").open = !!(opts.pending || tx?.paymentStatus || tx?.fixed || tx?.installment);
+    $("#tx-photo-folder").textContent = ds.name;
     $("#tx-photo-hint").textContent = isEdit
-      ? "Ao tirar uma foto, você pode preencher os campos deste lançamento."
-      : "Envie o comprovante e acompanhe a leitura pelo sino.";
+      ? "Tire uma foto para preencher os campos deste lançamento."
+      : "Confira valor, data e conta pelo sino.";
     txType = isEdit ? tx.type : (opts.type === "receita" ? "receita" : "despesa");
     const paidBox = $("#tx-paid"), trackBox = $("#tx-payable");
     trackBox.checked = trackBox.defaultChecked = isEdit ? !!tx.paymentStatus : !!opts.pending;
@@ -2246,7 +2249,7 @@ const Dashboard = (() => {
     curSel.value = txCurCode;
     applyTxCurrency(txCurCode);
 
-    $("#tx-amount").value = isEdit ? fmtMoneyInput(tx.amount, txCurCode) : "";
+    $("#tx-amount").value = isEdit ? fmtMoneyInput(tx.amount, txCurCode, $("#tx-amount")) : "";
     $("#tx-desc").value = isEdit ? tx.desc : (opts.desc || "");
     populateAccountSelect(isEdit && tx.account === "C6" && tx.c6Section === "transfer"
       ? C6_CHECKING : isEdit ? tx.account : null);
@@ -2306,6 +2309,7 @@ const Dashboard = (() => {
   }
 
   function updateTypeToggle() {
+    $("#btn-tx-save").textContent = editingId ? "Salvar alterações" : "Salvar " + txType;
     $$("#tx-type-toggle button").forEach((b) => {
       const active = b.dataset.type === txType;
       b.classList.toggle("active", active);
@@ -2617,7 +2621,7 @@ const Dashboard = (() => {
     }
     const code = normCur($("#tx-currency").value);
     if (typeof d.valor === "number" && d.valor > 0) {
-      $("#tx-amount").value = fmtMoneyInput(d.valor, code);
+      $("#tx-amount").value = fmtMoneyInput(d.valor, code, $("#tx-amount"));
       $("#tx-amount").dispatchEvent(new Event("input"));
     }
     // Campo ausente continua vazio para revisão; não herda data, categoria ou
