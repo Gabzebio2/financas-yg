@@ -101,7 +101,7 @@ const Dashboard = (() => {
     const pending = ds.transactions.some((t) => !pendingIndividualBill(t) && !Number.isFinite(dispAmount(t))) ||
       ds.limits.some((l) => !Rates.ready(normCur(l.currency), dispCur())) ||
       ds.metas.some((m) => !m.category && !Rates.ready(normCur(m.currency), dispCur()));
-    ["#currency-warning", "#tx-currency-warning"].forEach((id) => {
+    ["#currency-warning", "#tx-currency-warning", "#analytics-rate-warning"].forEach((id) => {
       const warning = $(id);
       if (!warning) return;
       warning.classList.toggle("hidden", !pending);
@@ -134,7 +134,7 @@ const Dashboard = (() => {
     if (!ratesHooked) {
       ratesHooked = true;
       Rates.onUpdate(() => {
-        if (ds && ["#screen-dash", "#screen-txs"].some((id) => !$(id).classList.contains("hidden"))) renderAll();
+        if (ds && ["#screen-dash", "#screen-txs", "#screen-analytics"].some((id) => !$(id).classList.contains("hidden"))) renderAll();
       });
     }
     // Migração: limites antigos ganham histórico de versões ("0000-00" = desde sempre)
@@ -158,6 +158,8 @@ const Dashboard = (() => {
     undoStack.length = 0;
     updateUndoBtn();
     $("#tx-search").value = "";
+    setLedgerSelection(false);
+    setLedgerOptions(false);
     showScreen("screen-dash");
     renderAll();
     if(typeof ReceiptJobs!=="undefined")ReceiptJobs.refresh();
@@ -305,8 +307,12 @@ const Dashboard = (() => {
   function renderTableFilters() {
     $("#tx-receipt-filter")?.classList.toggle("hidden", !receiptFilter);
     if (receiptFilter && $("#tx-receipt-label")) $("#tx-receipt-label").textContent = receiptFilter.printedOnly ? "Itens impressos na fatura" : "Lançamentos deste documento · todos os meses";
-    const type = $("#tx-type-filter");
-    if (type) type.value = fil.type;
+    $$("#tx-type-filter [data-tx-type]").forEach(button => {
+      button.setAttribute("aria-pressed", String(button.dataset.txType === fil.type));
+    });
+    const sortInput = $("#tx-sort-filter");
+    if (sortInput) sortInput.value = sort.key + ":" + sort.dir;
+    $("#tx-options-toggle")?.classList.toggle("has-ledger-filter", fil.account !== "all" || !!fil.cats);
     const account = $("#tx-account-filter");
     if (account) {
       const accounts = [...new Set(ds.transactions.map((t) => t.account || ""))]
@@ -383,17 +389,36 @@ const Dashboard = (() => {
     renderCurrencyWarning();
     renderCatFilter();
     renderSummary();
+    renderRecentTransactions();
     renderCardCycle();
     renderBillBoard(cycles);
     renderCurrencyBreakdown();
-    renderLimits();
-    renderMetas();
-    renderCharts();
+    if (!$("#screen-analytics").classList.contains("hidden")) renderAnalytics();
     renderTable();
     if ($("#tx-origin-review").open) refreshOriginReview();
   }
 
   // Botão "BRL ▾" do cabeçalho + menu de moedas + linha de status da cotação
+  function renderAnalytics() {
+    if (!ds) return;
+    $("#analytics-folder").textContent = ds.name + " · Totais em " + dispCur();
+    renderLimits();
+    renderMetas();
+    renderCharts();
+  }
+
+  function renderRecentTransactions() {
+    const recent = filteredTxs(accountingDate)
+      .sort((a, b) => accountingDate(b).localeCompare(accountingDate(a))).slice(0, 5);
+    $("#dash-recent-list").innerHTML = recent.map(t => {
+      const income = t.type === "receita";
+      const detail = [t.account, t.category, fmtDate(accountingDate(t))].filter(Boolean).join(" · ");
+      return `<li><button type="button" data-recent-id="${escapeHtml(t.id)}">${catAvatar(t.category)}
+        <span class="recent-description"><strong>${escapeHtml(t.desc)}</strong><small>${escapeHtml(detail)}</small></span>
+        <b class="recent-amount${income ? " pos" : ""}">${income ? "+" : "−"} ${escapeHtml(fmtTxAmount(t))}</b></button></li>`;
+    }).join("") || '<li class="recent-empty">Nenhuma movimentação neste período.</li>';
+  }
+
   function renderCurrencyControl() {
     $("#dash-hero")?.classList.toggle("precise-currency", curFrac(dispCur()) > 2);
     const code = $("#hero-cur-code");
@@ -484,7 +509,8 @@ const Dashboard = (() => {
       };
       return `<div class="fx-row"><div class="fx-code"><strong>${g.currency}</strong><span>${g.count} ${g.count === 1 ? "lançamento" : "lançamentos"}</span></div>${metric("income", "Entradas", g.incomeConverted)}${metric("expense", "Saídas", g.expenseConverted)}</div>`;
     }).join("");
-    rows.innerHTML = `<div class="fx-flows">${flows}</div><h4 class="fx-detail-title">Valores na moeda original</h4>${detail}`;
+    rows.innerHTML = `<div class="fx-table-head" aria-hidden="true"><span>Moeda</span><span>Entradas</span><span>Saídas</span></div>${detail}
+      <details class="fx-flow-detail"><summary>Ver participação por moeda</summary><div class="fx-flows">${flows}</div></details>`;
   }
 
   function renderPeriodControls() {
@@ -497,8 +523,16 @@ const Dashboard = (() => {
       lbl = y === new Date().getFullYear() ? cap : `${cap} ${y}`;
     }
     $("#month-label").textContent = lbl;
+    $("#analytics-month").value = fil.mode === "month" ? fil.month : "";
     const t = $("#txs-month-label");
-    if (t) t.textContent = lbl;
+    const monthPicker = $("#tx-month-picker");
+    if (t) t.textContent = fil.mode === "month" && fil.month ? fmtMonth(fil.month) : fil.mode === "range" ? "Período" : "Tudo";
+    if (monthPicker) {
+      const months = [...new Set([...allMonths(), fil.month, todayISO().slice(0,7)])].filter(Boolean).sort().reverse();
+      monthPicker.innerHTML = (fil.mode !== "month" ? '<option value="">' + (fil.mode === "range" ? "Período selecionado" : "Todo o histórico") + '</option>' : "") +
+        months.map(ym => '<option value="' + escapeHtml(ym) + '">' + escapeHtml(fmtMonthLong(ym)) + '</option>').join("");
+      monthPicker.value = fil.mode === "month" ? fil.month : "";
+    }
   }
 
   /* ---------- Calendário de meses (popup do cabeçalho) ---------- */
@@ -568,7 +602,8 @@ const Dashboard = (() => {
 
   function stepMonth(delta) {
     receiptFilter = null;
-    let [y, m] = fil.month.split("-").map(Number);
+    let [y, m] = (fil.month || todayISO().slice(0, 7)).split("-").map(Number);
+    fil.mode = "month";
     m += delta;
     if (m < 1) { m = 12; y--; }
     if (m > 12) { m = 1; y++; }
@@ -642,6 +677,11 @@ const Dashboard = (() => {
     if (!flow || !flow.clientWidth) return;
     const vals = flow.querySelectorAll(".hero-flow-value");
     vals.forEach((el) => { el.style.fontSize = ""; });
+    const hero = $("#dash-hero");
+    hero.classList.remove("wide-values");
+    if (window.matchMedia("(min-width:981px)").matches && flow.scrollWidth > flow.clientWidth + 1) {
+      hero.classList.add("wide-values");
+    }
     let guard = 16;
     while (guard-- > 0 && flow.scrollWidth > flow.clientWidth + 1) {
       let shrunk = false;
@@ -1859,7 +1899,8 @@ const Dashboard = (() => {
     const matchingIds = new Set(list.map((t) => t.id));
     // Seleções ocultas por um filtro jamais participam de exclusão em lote.
     [...selectedTx].forEach((id) => { if (!matchingIds.has(id)) selectedTx.delete(id); });
-    $("#tx-count").textContent = list.length;
+    $("#tx-count").textContent = list.length + (list.length === 1 ? " lançamento" : " lançamentos");
+    $("#tx-table").classList.toggle("ledger-by-date", sort.key === "date");
     const exportBtn = $("#btn-export-csv");
     if (exportBtn) exportBtn.disabled = !list.length;
 
@@ -1878,26 +1919,42 @@ const Dashboard = (() => {
       return;
     }
     const visible = list.slice(0, rowLimit);
+    const weekdays = new Intl.DateTimeFormat("pt-BR", {weekday:"long"});
+    let lastDate = "";
     tbody.innerHTML = visible.map((t) => {
+      const date = accountingDate(t);
+      let dayHeading = "";
+      if (sort.key === "date" && date !== lastDate) {
+        const weekday = isValidISODate(date) ? weekdays.format(new Date(date + "T12:00:00")) : "";
+        dayHeading = '<tr class="ledger-day"><td colspan="8"><h2>' + escapeHtml(fmtDate(date)) + ' <small>' + escapeHtml(weekday) + '</small></h2></td></tr>';
+        lastDate = date;
+      }
       const sel = selectedTx.has(t.id);
       const paid = !groupedC6Ids.has(t.id) && t.type === "despesa" && t.paymentStatus === "paid";
+      const dateNote = (installmentTotal(t) > 1 && isValidISODate(t.purchaseDate)) || (date === t.date && cleanDateEstimate(t).dateEstimated);
+      const series = t.installment ? "Parcela " + t.installment + (t.advance ? " · Adiantada" : "") : t.fixed ? "Fixa" : "";
+      const meta = '<small class="ledger-row-meta"><span>' + escapeHtml([t.category, t.account].filter(Boolean).join(" · ")) + '</span>' +
+        (series ? '<b>' + escapeHtml(series) + '</b>' : '') + '</small>';
       const title = `<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.creditKind === "card_payment" ? '<small class="hint">Pg recebido</small>' : ""}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span>`;
       return `
-      <tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${paid ? " bill-settled" : ""}">
+      ${dayHeading}<tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${paid ? " bill-settled" : ""}${dateNote ? " ledger-date-note" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
         <td style="white-space:nowrap">${transactionDateCell(t)}</td>
-        <td><span class="tx-desc-cell">${catAvatar(t.category)}${paid
-          ? `<span class="tx-paid-caption">${title}${billPayButton(t, billConfirmations.get(t.id)?.source === "transactions")}</span>`
-          : title}</span></td>
+        <td><span class="tx-desc-cell">${catAvatar(t.category)}<span class="ledger-name">${title}${meta}
+          ${paid ? '<span class="tx-paid-caption">' + billPayButton(t, billConfirmations.get(t.id)?.source === "transactions") + '</span>' : pendingIndividualBill(t) ? billPayButton(t) : ""}</span></span></td>
         <td><span class="cat-chip" style="background:color-mix(in srgb, ${catColor(ds, t.category)} 16%, var(--card,#24212e));color:var(--chip-text,var(--text,#f1eff5));border:1px solid color-mix(in srgb, ${catColor(ds, t.category)} 28%, var(--card,#24212e))">${escapeHtml(t.category)}</span></td>
         <td>${escapeHtml(t.account || "—")}</td>
         <td>${t.installment ? escapeHtml(t.installment) + (t.advance ? '<br><span class="fixa-chip">Adiantada</span>' : '') : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
         <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtTxAmount(t)}</td>
         <td class="tx-actions">
-          ${pendingIndividualBill(t) ? billPayButton(t) : ""}
           <button class="btn-icon" data-action="edit" title="Editar" aria-label="Editar transação">${uiIcon("edit")}</button>
-          ${installmentTotal(t) > 1 ? `<button class="btn-icon" data-action="advance" title="Adiantar parcelas" aria-label="Adiantar parcelas">${uiIcon("advance")}</button>` : ""}
-          <button class="btn-icon" data-action="delete" title="Excluir" aria-label="Excluir transação">${uiIcon("trash")}</button>
+          <details class="ledger-more"><summary aria-label="Mais ações de ${escapeHtml(t.desc) || "transação"}" title="Mais ações"><span aria-hidden="true">⋯</span></summary>
+            <div class="ledger-row-menu">
+              <button type="button" data-action="edit">${uiIcon("edit")} Editar</button>
+              ${installmentTotal(t) > 1 ? `<button type="button" data-action="advance">${uiIcon("advance")} Adiantar parcelas</button>` : ""}
+              <button type="button" data-action="delete">${uiIcon("trash")} Excluir</button>
+            </div>
+          </details>
         </td>
       </tr>`;
     }).join("");
@@ -1912,6 +1969,17 @@ const Dashboard = (() => {
   }
 
   // Mostra/atualiza a barra de ações em lote conforme a seleção
+  function setLedgerSelection(on) {
+    if (!on) selectedTx.clear();
+    $("#screen-txs").classList.toggle("ledger-selecting", on);
+    $("#tx-select-tools").classList.toggle("hidden", !on);
+    $("#tx-select-mode").setAttribute("aria-pressed", String(on));
+  }
+  function setLedgerOptions(on) {
+    $("#tx-options").classList.toggle("hidden", !on);
+    $("#tx-options-toggle").setAttribute("aria-expanded", String(on));
+  }
+
   function updateBulkBar() {
     // Remove da seleção ids que não existem mais
     const existing = new Set(ds ? ds.transactions.map((t) => t.id) : []);
@@ -2152,6 +2220,10 @@ const Dashboard = (() => {
     txModalRevision++;
 
     $("#modal-tx-title").textContent = isEdit ? "Editar transação" : (opts.title || "Nova transação");
+    $("#tx-entry-options").open = !!(opts.pending || tx?.paymentStatus || tx?.fixed || tx?.installment);
+    $("#tx-photo-hint").textContent = isEdit
+      ? "Ao tirar uma foto, você pode preencher os campos deste lançamento."
+      : "Envie o comprovante e acompanhe a leitura pelo sino.";
     txType = isEdit ? tx.type : (opts.type === "receita" ? "receita" : "despesa");
     const paidBox = $("#tx-paid"), trackBox = $("#tx-payable");
     trackBox.checked = trackBox.defaultChecked = isEdit ? !!tx.paymentStatus : !!opts.pending;
@@ -2208,7 +2280,8 @@ const Dashboard = (() => {
     updateTxHints();
 
     $("#modal-tx").classList.remove("hidden");
-    setTimeout(() => $("#tx-amount").focus(), 50);
+    // No celular, abrir o formulário não deve acionar o teclado e encobrir o comprovante.
+    if (!window.matchMedia("(max-width: 700px)").matches) setTimeout(() => $("#tx-amount").focus({preventScroll:true}), 50);
   }
 
   function suggestTxCategory(suggested = "", clearMissing = false) {
@@ -2233,7 +2306,11 @@ const Dashboard = (() => {
   }
 
   function updateTypeToggle() {
-    $$("#tx-type-toggle button").forEach((b) => b.classList.toggle("active", b.dataset.type === txType));
+    $$("#tx-type-toggle button").forEach((b) => {
+      const active = b.dataset.type === txType;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-pressed", String(active));
+    });
     const expense = txType === "despesa" && !formUsesC6Invoice();
     const tracked = expense && $("#tx-payable").checked;
     $("#tx-bill-options").classList.toggle("hidden", !expense);
@@ -2567,19 +2644,53 @@ const Dashboard = (() => {
       if (document.visibilityState === "visible" && ds && billCalendarDate !== todayISO()) renderAll();
     });
     document.addEventListener("fyg:themechange", () => {
-      if (!ds) return;
+      if (!ds || $("#screen-analytics").classList.contains("hidden")) return;
       // Apenas os canvas precisam ser recriados. Cores inline de chips e
       // avatares usam CSS vars, inclusive dentro de modais abertos. Não
       // refaz a tabela: foco, seleção, busca e valores digitados permanecem.
       renderCharts();
       renderLimits();
     });
+    const categoryFilter = $("#cat-filter");
+    const panelFilterHost = categoryFilter.parentElement;
+    document.addEventListener("fyg:screen", ev => {
+      const analytics = ev.detail?.id === "screen-analytics";
+      const host = analytics ? $("#analytics-filter-host") : panelFilterHost;
+      if (host !== categoryFilter.parentElement) {
+        $("#cat-dropdown").classList.add("hidden");
+        host.append(categoryFilter);
+      }
+      if (analytics) renderAnalytics();
+    });
+    $("#analytics-prev").addEventListener("click", () => stepMonth(-1));
+    $("#analytics-next").addEventListener("click", () => stepMonth(1));
+    $("#analytics-month").addEventListener("change", ev => {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(ev.target.value)) { renderPeriodControls(); return; }
+      fil.mode = "month";
+      fil.month = ev.target.value;
+      receiptFilter = null;
+      rowLimit = 100;
+      renderAll();
+    });
+    $("#dash-all-recent").addEventListener("click", () => showScreen("screen-txs"));
+    $("#dash-recent-list").addEventListener("click", ev => {
+      const entry = ev.target.closest("[data-recent-id]");
+      if (entry) openTxModal(entry.dataset.recentId);
+    });
     // Máscara de moeda (R$ 10,25) em todos os campos fixos de valor
     ["#tx-amount", "#meta-target", "#meta-saved", "#limit-amount"].forEach((s) => attachMoneyMask($(s)));
 
     // Navegação de mês (setas do cabeçalho e da tela de Transações)
-    $("#month-prev").addEventListener("click", () => stepMonth(-1));
-    $("#month-next").addEventListener("click", () => stepMonth(1));
+    $("#month-prev").addEventListener("click", () => { fil.mode = "month"; stepMonth(-1); });
+    $("#month-next").addEventListener("click", () => { fil.mode = "month"; stepMonth(1); });
+    $("#tx-month-picker").addEventListener("change", ev => {
+      if (!/^\d{4}-(0[1-9]|1[012])$/.test(ev.target.value)) return;
+      receiptFilter = null;
+      fil.mode = "month";
+      fil.month = ev.target.value;
+      rowLimit = 100;
+      renderAll();
+    });
     $("#hero-month-prev").addEventListener("click", () => stepMonth(-1));
     $("#hero-month-next").addEventListener("click", () => stepMonth(1));
 
@@ -2687,8 +2798,29 @@ const Dashboard = (() => {
 
     // Busca e ordenação
     $("#tx-search").addEventListener("input", (ev) => { fil.search = ev.target.value; rowLimit = 100; renderTable(); });
-    $("#tx-type-filter")?.addEventListener("change", (ev) => {
-      fil.type = ["receita", "despesa"].includes(ev.target.value) ? ev.target.value : "all";
+    $("#tx-type-filter")?.addEventListener("click", (ev) => {
+      const type = ev.target.closest("[data-tx-type]")?.dataset.txType;
+      if (!["receita", "despesa", "all"].includes(type)) return;
+      fil.type = type;
+      rowLimit = 100;
+      renderTable();
+    });
+    $("#tx-options-toggle").addEventListener("click", () => setLedgerOptions($("#tx-options").classList.contains("hidden")));
+    $("#tx-select-mode").addEventListener("click", () => {
+      const on = !$("#screen-txs").classList.contains("ledger-selecting");
+      setLedgerSelection(on);
+      setLedgerOptions(false);
+      renderTable();
+      (on ? $("#tx-sel-all") : $("#tx-options-toggle")).focus();
+    });
+    $("#tx-select-finish").addEventListener("click", () => {
+      setLedgerSelection(false);
+      renderTable();
+      $("#tx-options-toggle").focus();
+    });
+    $("#tx-sort-filter").addEventListener("change", ev => {
+      const [key, direction] = ev.target.value.split(":");
+      sort = {key, dir:Number(direction)};
       rowLimit = 100;
       renderTable();
     });
@@ -2767,20 +2899,32 @@ const Dashboard = (() => {
       const billAction = ev.target.closest("[data-bill-action]")?.dataset.billAction;
       if (billAction) { changeBill(tr.dataset.id, billAction, "transactions"); return; }
       const action = ev.target.closest("[data-action]")?.dataset.action;
+      const menu = ev.target.closest(".ledger-more");
+      if (action && menu) menu.open = false;
       if (action === "advance") { openAdvance(tr.dataset.id); return; }
       if (action === "delete") { requestDeleteTx(tr.dataset.id); return; }
       if (action === "edit") { openTxModal(tr.dataset.id); return; }
       // Celular: toque na linha abre a edição (como no Mobills). Ignora a
       // caixinha de seleção e qualquer campo interativo.
-      if (window.matchMedia("(max-width: 640px)").matches &&
-          !ev.target.closest("input, button, a, label")) {
+      if (window.matchMedia("(max-width: 760px)").matches &&
+          !ev.target.closest("input, button, a, label, details") &&
+          !$("#screen-txs").classList.contains("ledger-selecting")) {
         openTxModal(tr.dataset.id);
       }
     });
     $("#tx-tbody").addEventListener("dblclick", (ev) => {
-      if (ev.target.closest("input, button")) return;
+      if (ev.target.closest("input, button, details") || $("#screen-txs").classList.contains("ledger-selecting")) return;
       const tr = ev.target.closest("tr[data-id]");
       if (tr) openTxModal(tr.dataset.id);
+    });
+    document.addEventListener("click", ev => {
+      $$("#tx-tbody .ledger-more[open]").forEach(menu => { if (!menu.contains(ev.target)) menu.open = false; });
+    });
+    $("#tx-tbody").addEventListener("keydown", ev => {
+      const menu = ev.target.closest(".ledger-more[open]");
+      if (ev.key === "Escape" && menu) {
+        ev.preventDefault(); menu.open = false; menu.querySelector("summary").focus();
+      }
     });
 
     // Seleção em lote: caixinha por linha
@@ -2853,7 +2997,7 @@ const Dashboard = (() => {
       if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && (ev.key === "z" || ev.key === "Z")) {
         const el = document.activeElement;
         const editando = el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
-        const noPainel = ["#screen-dash", "#screen-txs"].some((id) => !$(id).classList.contains("hidden"));
+        const noPainel = ["#screen-dash", "#screen-txs", "#screen-analytics"].some((id) => !$(id).classList.contains("hidden"));
         const modalAberto = $$(".modal-backdrop").some((m) => !m.classList.contains("hidden"));
         if (noPainel && !editando && !modalAberto) { ev.preventDefault(); undo(); }
       }
@@ -3036,7 +3180,7 @@ const Dashboard = (() => {
     $("#tx-search").value = "";
     selectedTx.clear();
     rowLimit = 100;
-    showScreen("screen-txs");
+    showScreen("screen-txs", { documents: true });
     renderTable();
     return true;
   }

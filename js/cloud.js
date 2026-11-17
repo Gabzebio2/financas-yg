@@ -818,6 +818,7 @@ const Cloud = (() => {
 
   function showNewPassUI() {
     recoveryOwner = activeOwner;
+    if (typeof showAccountSettings === "function") showAccountSettings();
     publishAuthOptions();
     const wrap = $("#cloud-newpass-wrap");
     if (!wrap) return;
@@ -1540,7 +1541,10 @@ const Cloud = (() => {
 
   /* ---------- Inicialização e eventos ---------- */
   async function init() {
-    if (authCallbackError) setAccessStatus(authCallbackError, true);
+    if (authCallbackError) {
+      if (typeof showAccountSettings === "function") showAccountSettings();
+      setAccessStatus(authCallbackError, true);
+    }
     const c = ensureClient();
     const initialVersion = connectionVersion;
     refreshUI();

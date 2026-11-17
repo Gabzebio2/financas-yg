@@ -495,11 +495,21 @@ function catColor(ds, name) {
 }
 
 /* ---------- Navegação entre telas ---------- */
-function showScreen(id) {
+const screenTrail = [];
+let navigationFolder = null;
+function showScreen(id, { returning = false, documents = false } = {}) {
+  const previous = document.querySelector(".screen:not(.hidden)")?.id;
+  const dataset = typeof Dashboard !== "undefined" ? Dashboard.getImportTargetId?.() : null;
+  if (id === "screen-home" || (id === "screen-dash" && dataset !== navigationFolder)) screenTrail.length = 0;
+  navigationFolder = dataset;
+  if (!returning && previous && id !== "screen-home" && previous !== "screen-import" && (previous !== id || documents)) {
+    screenTrail.push({ id: previous, documents, top: window.scrollY, mainTop: $("#main").scrollTop });
+    if (screenTrail.length > 24) screenTrail.shift();
+  }
   $$(".screen").forEach((s) => s.classList.add("hidden"));
   $("#" + id).classList.remove("hidden");
   $("#btn-back").classList.toggle("hidden", id === "screen-home");
-  window.scrollTo(0, 0);
+  window.scrollTo?.(0, 0);
   // No celular quem rola é o <main> (evita o botão "voltar ao topo" do navegador)
   const m = $("#main");
   if (m && m.scrollTo) m.scrollTo(0, 0);
@@ -508,6 +518,20 @@ function showScreen(id) {
   if (id === "screen-dash" && typeof Dashboard !== "undefined" && Dashboard.refitHero) {
     requestAnimationFrame(Dashboard.refitHero);
   }
+  if (typeof CustomEvent === "function") document.dispatchEvent(new CustomEvent("fyg:screen", { detail: { id, previous } }));
+}
+
+function returnToPreviousScreen() {
+  const target = screenTrail.pop();
+  if (!target || target.id === "screen-home") { goHome(); return; }
+  const folderScreen = ["screen-dash", "screen-txs", "screen-analytics"].includes(target.id);
+  if (folderScreen && !Cloud.ownsFolder(Dashboard.getImportTargetId())) { goHome(); return; }
+  showScreen(target.id, { returning: true });
+  requestAnimationFrame(() => {
+    window.scrollTo(0, target.top);
+    $("#main").scrollTop = target.mainTop;
+    if (target.documents) $("#hero-notifications").click();
+  });
 }
 
 function goHome() {
@@ -566,15 +590,27 @@ function accountFolderOwner() {
 function accountFolderIndex() {
   return accountFolderOwner() ? Store.loadIndex(Cloud.ownsFolder) : [];
 }
+function showAccountSettings() {
+  showScreen("screen-account");
+  $("#home-account").open = true;
+}
+let loginFromFolders = false;
 function showFolderLogin() {
-  const panel = $("#home-account");
-  if (panel) panel.open = true;
+  loginFromFolders = true;
+  showAccountSettings();
   $("#cloud-email")?.focus();
 }
 function renderFolders() {
   const owner = accountFolderOwner();
   const idx = accountFolderIndex();
   const grid = $("#folders-grid");
+  const rail = $("#folder-rail");
+  if (rail) {
+    rail.hidden = !idx.length;
+    rail.innerHTML = idx.length ? '<span>Abrir pasta</span>' + idx.map(e => `<button type="button" data-folder-id="${escapeHtml(e.id)}">${escapeHtml(e.name)}</button>`).join("") : "";
+  }
+  const count = $("#folder-count");
+  if (count) count.textContent = owner ? `${idx.length} ${idx.length === 1 ? "pasta da conta" : "pastas da conta"}` : "";
   for (const selector of ["#card-new","#card-business","#card-upload","#btn-import-backup","#btn-copy-backup","#btn-export-backup"]) {
     const button = $(selector);
     if (button) button.disabled = !owner;
@@ -588,11 +624,12 @@ function renderFolders() {
     return;
   }
   grid.innerHTML = idx.map((e) => `
-    <div class="folder-card" data-id="${escapeHtml(e.id)}">
+    <div class="folder-card" data-profile="${e.profile === "pj" ? "company" : "personal"}" data-id="${escapeHtml(e.id)}">
       <div class="folder-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z" stroke-linejoin="round"/><path d="M3 10h18"/></svg></div>
       <div class="folder-info">
+        <div class="folder-kind">${e.profile === "pj" ? "Empresa" : "Pessoa física"}</div>
         <div class="folder-name" data-name>${escapeHtml(e.name)}</div>
-        <div class="folder-meta">${e.profile==="pj"?"Empresa · ":""}${e.txCount} transaç${e.txCount === 1 ? "ão" : "ões"} · atualizada em ${new Date(e.updatedAt).toLocaleDateString("pt-BR")}</div>
+        <div class="folder-meta"><span>Moeda padrão · ${e.profile === "pj" ? "USD" : "PYG"}</span><span>${e.txCount} transaç${e.txCount === 1 ? "ão" : "ões"} · atualizada em ${new Date(e.updatedAt).toLocaleDateString("pt-BR")}</span></div>
       </div>
       <div class="folder-actions">
         <button class="btn-icon" data-action="rename" title="Renomear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7l-4-4L4 15z" stroke-linejoin="round"/></svg></button>
@@ -1298,9 +1335,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     shownOwner = owner;
     renderFolders();
+    if (owner && loginFromFolders) {
+      loginFromFolders = false;
+      if (!Cloud.getAuthOptions?.()?.recoveryActive && !$("#screen-account").classList.contains("hidden")) {
+        $("#home-account").open = false;
+        goHome();
+      }
+    }
   });
 
-  $("#btn-back").addEventListener("click", goHome);
+  $("#btn-back").addEventListener("click", returnToPreviousScreen);
 
   // Home: ações principais
   let uploadOwner, backupOwner, backupCopy = false;

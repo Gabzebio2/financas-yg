@@ -34,7 +34,8 @@ const BusinessPanel = (() => {
   const eraseIcon='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="m4 14 9-10 7 6-9 10H9l-5-4zM9 9l7 6M11 20h10"/></svg>';
   function mount(){
     const host=el('weekly-content');
-    host.innerHTML=`<div class="weekly-tools"><div class="weekly-switches">
+    host.innerHTML=`<div class="weekly-result" id="weekly-result" aria-label="Resultado da seleção"></div>
+      <div class="weekly-tools"><div class="weekly-switches">
       <div class="weekly-mode" role="group" aria-label="Modo de seleção"><button type="button" id="weekly-single">Uma semana</button><button type="button" id="weekly-multiple">Somar semanas</button></div>
       <button type="button" id="weekly-clear" class="weekly-icon" title="Limpar seleção" aria-label="Limpar seleção de semanas">${eraseIcon}</button></div>
       <details id="weekly-filter" class="weekly-filter"><summary>Filtrar por data</summary>
@@ -46,7 +47,7 @@ const BusinessPanel = (() => {
       <p id="weekly-instruction"></p><div id="weekly-rail" class="weekly-cards" role="group" aria-label="Selecionar semanas"></div>
       <div class="weekly-shortcuts" id="weekly-shortcuts"><span>Marcar</span>${[2,4,8].map(n=>`<button type="button" data-week-size="${n}">Últimas ${n}</button>`).join('')}
       <button type="button" id="weekly-mark-filter">Todas do filtro</button></div></div>
-      <div class="weekly-result" id="weekly-result" aria-label="Resultado da seleção"></div></div>
+      <div class="weekly-account-panel" id="weekly-account-panel"></div></div>
       <span id="weekly-announcement" class="sr-only" aria-live="polite" aria-atomic="true"></span>`;
     el('weekly-rail').addEventListener('scroll',updateArrows,{passive:true});
     bindMouseDrag(el('weekly-rail'));
@@ -133,11 +134,20 @@ const BusinessPanel = (() => {
     const title=multiple?(dates.length===1?'1 semana selecionada':dates.length+' semanas selecionadas'):selected?'Semana até '+isoLabel(selected):'Nenhuma semana';
     const value=!dates.length?'—':reported?money(total/100,model.unit):'Sem registro';
     const description=!dates.length?(multiple?'Selecione os cartões que deseja somar.':'Escolha outro intervalo de datas.'):'';
-    el('weekly-result').innerHTML=`<p class="weekly-result-label">${esc(title)}</p><strong class="weekly-result-value">${esc(value)}</strong>
+    el('weekly-result').innerHTML=`<p class="weekly-result-label">Receitas selecionadas</p><strong class="weekly-result-value">${esc(value)}</strong><small class="weekly-range">${esc(title)}</small>
       ${description?`<p class="weekly-empty">${description}</p>`:''}
       ${missing&&reported?`<small>${missing} sem registro</small>`:''}
-      ${rows.length?`<h3>Ganhos por conta</h3><ul class="weekly-accounts">${rows.map(([a,v])=>`<li><span>${esc(a)}</span><strong>${esc(money(v/100,model.unit))}</strong></li>`).join('')}</ul>`:''}
       ${!multiple&&selected?`<button type="button" class="btn-link" data-week-edit>${reported?'Editar':'Anotar'} esta semana</button>`:''}`;
+    const accounts=el('weekly-account-panel');
+    const showShares=total>0&&rows.every(([,v])=>v>=0);
+    accounts.innerHTML='<h3>Receitas por conta</h3>'+(rows.length
+      ? '<ul class="weekly-accounts">'+rows.map(([account,amount])=>{
+        const value=esc(money(amount/100,model.unit));
+        // Reversões negativas não compõem uma participação válida do total.
+        const share=showShares?`<i class="account-share" aria-hidden="true" style="--share:${100*amount/total}%"></i>`:'';
+        return `<li><span>${esc(account)}</span><strong>${value}</strong>${share}</li>`;
+      }).join('')+'</ul>'
+      : '<p class="weekly-empty">Nenhum ganho na seleção.</p>');
     el('weekly-announcement').textContent=title+' · '+value;
     const outside=multiple?marked.size-dates.length:0;
     el('weekly-filter-note').textContent=(filterFrom||filterTo)?'Encerramentos'+(filterFrom?' a partir de '+isoLabel(filterFrom):'')+(filterTo?' até '+isoLabel(filterTo):'')+' · '+visible.length+(visible.length===1?' semana':' semanas')+(outside?' · '+outside+' marcada(s) fora do total':''):'';
@@ -200,6 +210,7 @@ const BusinessPanel = (() => {
     generation++;preview=null;
     el('weekly-import-form').querySelector('[type=submit]').textContent='Ler planilha';
     el('weekly-import-state').textContent='';
+    el('weekly-import-sample').replaceChildren();el('weekly-import-sample').classList.add('hidden');
     el('weekly-import-review')?.remove();
   }
   function offerLegacyReview(uncertain,currency,distinct){
@@ -218,6 +229,7 @@ const BusinessPanel = (() => {
   }
   function openImport(){
     const ds=start();resetPreview();el('weekly-file').value='';
+    el('weekly-import-target').textContent=ds.name;
     el('weekly-url').value=ds.weekly?.sheetId?'https://docs.google.com/spreadsheets/d/'+ds.weekly.sheetId+'/edit':'';
     el('weekly-year').value=ds.weekly?.year||new Date().getFullYear();
     el('weekly-currency').value=ds.weekly?.currency||'USD';el('weekly-import-dialog').showModal();
@@ -240,6 +252,11 @@ const BusinessPanel = (() => {
         const uncertain=[],distinct=new Set();
         const counts=WeeklyRevenue.apply(structuredClone(folder()),data.entries,currency,true,uid,{uncertain});
         preview={data,id,year,currency,distinct};
+        const sample=el('weekly-import-sample'),latest=dates.at(-1),rows=data.entries.filter(row=>row.date===latest);
+        if(rows.length){
+          sample.innerHTML='<h3>Última semana da planilha</h3><p class="import-source">Até '+esc(isoLabel(latest))+'</p><ul class="weekly-sample-rows">'+rows.map(row=>'<li><span>'+esc(row.account)+'</span><strong class="'+(row.amount<0?'amount-despesa':'amount-receita')+'">'+esc(money(row.amount,currency))+'</strong></li>').join('')+'</ul><div class="weekly-sample-total"><strong>Total da semana</strong><b>'+esc(money(rows.reduce((sum,row)=>sum+row.amount,0),currency))+'</b></div>';
+          sample.classList.remove('hidden');
+        }
         state.textContent=`${data.accounts.length} contas · ${dates.length} semanas, de ${isoLabel(dates[0])} a ${isoLabel(dates.at(-1))} · ${currency}. ${counts.added} novos, ${counts.updated} atualizações.`+(counts.conflicts?' Edições feitas no app serão preservadas.':'')+(data.skipped?' Células sem valor numérico: '+data.skipped+'.':'');
         offerLegacyReview(uncertain,currency,distinct);button.textContent='Aplicar à pasta';return;
       }

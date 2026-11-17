@@ -3,41 +3,68 @@
 document.addEventListener("DOMContentLoaded", () => {
   const wire = (id, fn) => document.querySelector(id)?.addEventListener("click", fn);
   const isVisible = (el) => !!el && !el.closest(".hidden") && el.getClientRects().length > 0;
-  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-  let section = "#dash-hero";
   const currentScreen = () => document.querySelector(".screen:not(.hidden)")?.id;
+  const folderScreens = new Set(["screen-txs", "screen-dash", "screen-analytics"]);
   function hasDataset() {
-    if (Dashboard.currentDatasetName()) return true;
+    if (Dashboard.currentDatasetName() && Cloud.ownsFolder(Dashboard.getImportTargetId())) return true;
     goHome(); toast("Abra ou crie uma pasta para continuar."); return false;
   }
   function refreshNavigation() {
     const screen = currentScreen();
-    const labels = { "screen-home": "Minhas pastas", "screen-import": "Importar planilha", "screen-dash": "Painel financeiro", "screen-txs": "Transações" };
-    document.querySelector("#workspace-location").textContent = `Visão geral / ${labels[screen] || "Finanças YG"}`;
-    document.title = `${labels[screen] || "Seu dinheiro"} · Finanças YG`;
-    document.querySelectorAll(".sb-item, .bn-item").forEach((btn) => {
-      const active = screen === "screen-home" ? /^(sb|bn)-home$/.test(btn.id)
-        : screen === "screen-txs" ? /^(sb|bn)-txs$/.test(btn.id)
-        : screen === "screen-dash" && btn.dataset.scroll === section;
-      if (active) btn.setAttribute("aria-current", "page");
-      else btn.removeAttribute("aria-current");
+    const labels = { "screen-home": "Minhas pastas", "screen-import": "Importar planilha", "screen-dash": "Painel", "screen-txs": "Transações", "screen-analytics": "Análises", "screen-account": "Conta e preferências" };
+    const folder = folderScreens.has(screen) ? Dashboard.currentDatasetName() : "";
+    document.querySelector("#workspace-location").textContent = [folder || "Finanças YG", labels[screen]].filter(Boolean).join("  /  ");
+    document.body.classList.toggle("folder-workspace", folderScreens.has(screen));
+    document.title = [labels[screen],folder,"Finanças YG"].filter(Boolean).join(" · ");
+    document.querySelectorAll(".sb-item, .bn-item").forEach(btn => {
+      const id = btn.dataset.screenLink || (/^(sb|bn)-home$/.test(btn.id) ? "screen-home" : /^(sb|bn)-txs$/.test(btn.id) ? "screen-txs" : "");
+      if (id === screen) btn.setAttribute("aria-current", "page"); else btn.removeAttribute("aria-current");
     });
   }
-  function scrollToSection(sel) {
-    if (!hasDataset()) return;
-    if (currentScreen() !== "screen-dash") showScreen("screen-dash");
-    section = sel; refreshNavigation();
-    requestAnimationFrame(() => document.querySelector(sel)?.scrollIntoView({ behavior: reducedMotion.matches ? "instant" : "smooth", block: "start" }));
-  }
-  document.querySelectorAll("[data-scroll]").forEach(btn => btn.addEventListener("click", () => scrollToSection(btn.dataset.scroll)));
+  document.querySelectorAll("[data-screen-link]").forEach(btn => btn.addEventListener("click", () => {
+    const id = btn.dataset.screenLink;
+    if (id === "screen-account" && !accountFolderOwner()) { showFolderLogin(); return; }
+    if (!folderScreens.has(id) || hasDataset()) showScreen(id);
+  }));
+  document.querySelectorAll("[data-back-screen]").forEach(btn => btn.addEventListener("click", returnToPreviousScreen));
   wire("#sb-home", goHome); wire("#bn-home", goHome);
-  wire("#sb-txs", () => { if (hasDataset()) showScreen("screen-txs"); });
-  wire("#dash-view-txs", () => { if (hasDataset()) showScreen("screen-txs"); });
-  wire("#bn-txs", () => { if (hasDataset()) showScreen("screen-txs"); });
-  wire("#btn-txs-back", () => { section = "#dash-hero"; showScreen("screen-dash"); });
-  ["#sb-fab", "#bn-fab", "#btn-txs-add"].forEach(id => wire(id, () => document.querySelector("#btn-add-tx").click()));
-  const screenObserver = new MutationObserver(refreshNavigation);
-  document.querySelectorAll(".screen").forEach(el => screenObserver.observe(el, { attributes: true, attributeFilter: ["class"] }));
+  document.querySelector("#folder-rail").addEventListener("click", ev => {
+    const id = ev.target.closest("[data-folder-id]")?.dataset.folderId;
+    if (id && accountFolderOwner() && Cloud.ownsFolder(id)) Dashboard.open(id);
+  });
+  ["#sb-txs", "#bn-txs", "#dash-view-txs"].forEach(id => wire(id, () => { if (hasDataset()) showScreen("screen-txs"); }));
+  wire("#btn-txs-back", returnToPreviousScreen);
+  ["#sb-fab", "#bn-fab", "#btn-txs-add"].forEach(id => wire(id, () => { if (hasDataset()) document.querySelector("#btn-add-tx").click(); }));
+  ["#workspace-docs", "#sb-docs"].forEach(id => wire(id, () => { if (hasDataset()) document.querySelector("#hero-notifications").click(); }));
+  function openFolderDocuments(id) {
+    if (!accountFolderOwner() || !Cloud.ownsFolder(id)) { goHome(); return; }
+    Dashboard.open(id);
+    if (Dashboard.getImportTargetId() === id) document.querySelector("#hero-notifications").click();
+  }
+  wire("#home-documents", () => {
+    if (!accountFolderOwner()) { showFolderLogin(); return; }
+    const folders = accountFolderIndex();
+    if (folders.length === 1) { openFolderDocuments(folders[0].id); return; }
+    if (!folders.length) { toast("Crie uma pasta para enviar e consultar documentos."); return; }
+    const list = document.querySelector("#document-folders");
+    list.replaceChildren(...folders.map(folder => {
+      const button = document.createElement("button");
+      button.type = "button"; button.textContent = folder.name;
+      button.addEventListener("click", () => { document.querySelector("#folder-documents").close(); openFolderDocuments(folder.id); });
+      return button;
+    }));
+    document.querySelector("#folder-documents").showModal();
+  });
+  wire("#account-sync-action", () => {
+    const account = document.querySelector("#home-account");
+    account.open = true;
+    account.querySelector("summary").focus();
+    account.scrollIntoView({block:"start"});
+  });
+  const createMenu = document.querySelector("#folder-create");
+  document.addEventListener("click", ev => { if (!ev.target.closest("#folder-create") || ev.target.closest("#folder-create button")) createMenu.open = false; });
+  createMenu.addEventListener("keydown", ev => { if (ev.key === "Escape") { createMenu.open = false; createMenu.querySelector("summary").focus(); } });
+  document.addEventListener("fyg:screen", refreshNavigation);
   refreshNavigation();
   function refreshConnection() {
     const el = document.querySelector("#connection-status");
@@ -80,6 +107,15 @@ document.addEventListener("DOMContentLoaded", () => {
     const dot = document.createElement("i"); dot.setAttribute("aria-hidden", "true");
     el.replaceChildren(dot, document.createTextNode(label));
     el.title = detail;
+    const syncLabel = document.querySelector("#account-sync-label");
+    if (syncLabel) {
+      syncLabel.textContent = label;
+      const last = state?.lastSyncedAt ? new Date(state.lastSyncedAt) : null;
+      const healthy = connected && state?.status === "synced" && !offline && !pending && !invalidRemote && !errorDetail;
+      document.querySelector("#account-sync-detail").textContent = healthy && last && Number.isFinite(last.getTime())
+        ? `Última sincronização em ${last.toLocaleString("pt-BR", {dateStyle:"short", timeStyle:"short"})}.` : detail;
+      document.querySelector("#account-sync").classList.toggle("is-saved", !!healthy);
+    }
     const queue = document.querySelector("#cloud-queue-status");
     if (queue) {
       let message = pending ? `${state.pendingUploads} pasta(s) com alterações e ${state.pendingDeletes} exclusão(ões) aguardando confirmação da nuvem. ` : "";
@@ -270,7 +306,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (ev.key === "Escape") document.querySelectorAll(".pop-menu, .cat-dropdown").forEach(el => el.classList.add("hidden"));
     if (ev.target.closest('input, select, textarea, [contenteditable="true"]') || ev.ctrlKey || ev.metaKey || ev.altKey) return;
-    const inDataset = ["screen-dash", "screen-txs"].includes(currentScreen());
+    const inDataset = folderScreens.has(currentScreen());
     if (inDataset && ev.key.toLowerCase() === "n") { ev.preventDefault(); document.querySelector("#btn-add-tx").click(); }
     if (inDataset && ev.key === "/") { ev.preventDefault(); showScreen("screen-txs"); document.querySelector("#tx-search").focus(); }
   }, true);

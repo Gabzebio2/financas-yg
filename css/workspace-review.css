@@ -1,0 +1,114 @@
+/* Navegação compartilhada e pastas da conta. Os cabeçalhos de saldo são definidos no painel. */
+.workspace-icon { display:inline-grid; place-items:center; height:40px; width:40px; padding:0; border:1px solid var(--border); border-radius:50%; background:var(--card); color:var(--text); cursor:pointer; }
+.workspace-icon:hover, .folder-shortcuts button:hover { background:var(--card-2); }
+.workspace-icon svg, .account-heading svg, .create-folder-menu svg, .folder-shortcuts svg, .account-sync svg { width:20px; height:20px; flex:none; }
+body:not(.folder-workspace) .for-folder, body:has(#screen-account:not(.hidden)) .workspace-icon[data-screen-link="screen-account"] { display:none; }
+.sb-preferences { margin-top:auto; width:100%; border-top:1px solid var(--border); padding-top:12px; }
+.folder-rail { display:none; }
+body:has(#screen-home:not(.hidden)) .folder-rail:not([hidden]) { display:grid; align-content:start; gap:3px; width:100%; max-height:40vh; overflow:auto; border-top:1px solid var(--border); padding:14px 5px; margin-top:15px; }
+.folder-rail span { color:var(--text-soft); font-size:12px; padding:0 8px 3px; }
+.folder-rail button { text-align:left; color:var(--text); min-height:40px; background:transparent; border:0; border-radius:8px; font:inherit; overflow-wrap:anywhere; padding:7px 8px; cursor:pointer; }
+.folder-rail button:hover { background:var(--card-2); }
+.account-section-label { margin:0 0 12px; font-size:18px; }
+#screen-home .folder-meta { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:5px 12px; }
+.sb-preferences .sb-item { width:100%; justify-content:flex-start; text-align:left; gap:10px; }
+body.folder-workspace .sb-dash-only, body.folder-workspace .sb-fab { display:flex; }
+.sidebar .sb-brand { margin-bottom:24px; }
+.sidebar .sb-nav { gap:4px; }
+.sidebar .sb-fab { margin-top:16px; margin-bottom:0; }
+.workspace-actions { align-items:center; }
+#screen-home .home-folder-head { align-items:center; margin:0 0 20px; }
+.home-folder-head h1, .account-heading h1 { font-size:clamp(29px,3.1vw,44px); line-height:1.13; letter-spacing:-.05em; margin:0; }
+.folder-count { color:var(--text-soft); margin:.55em 0 0; font-size:13px; }
+.folder-count:empty { display:none; }
+.create-folder-menu { position:relative; flex-shrink:0; z-index:5; }
+.create-folder-menu summary { display:flex; align-items:center; gap:7px; cursor:pointer; list-style:none; }
+.create-folder-menu summary::-webkit-details-marker { display:none; }
+.folder-menu-options { position:absolute; right:0; top:calc(100% + 6px); width:180px; padding:5px; background:var(--card); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow); }
+.folder-menu-options button { width:100%; border:0; background:transparent; color:var(--text); font:inherit; display:flex; align-items:center; gap:8px; min-height:44px; text-align:left; border-radius:8px; padding:8px; cursor:pointer; }
+.folder-menu-options button:disabled { opacity:.5; cursor:default; }
+.folder-menu-options button:hover:not(:disabled) { background:var(--card-2); }
+#screen-home .folders-grid { grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr)); gap:16px; }
+#screen-home .folder-card { --cover:#ccb5e5; --cover-ink:#32273f; --tab:#866c9f; position:relative; isolation:isolate; overflow:hidden; display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:8px; color:var(--cover-ink); padding:31px 22px 20px; min-height:177px; border:0; border-radius:0 14px 14px 14px; background:transparent; }
+#screen-home .folder-card[data-profile="company"] { --cover:#b1d0c4; --cover-ink:#203c35; --tab:#65877a; }
+#screen-home .folder-card::before, #screen-home .folder-card::after { content:""; position:absolute; inset:0; z-index:-2; background:var(--tab); clip-path:polygon(0 0,27% 0,31% 10px,100% 10px,100% 100%,0 100%); }
+#screen-home .folder-card::after { z-index:-1; top:7px; background:var(--cover); }
+#screen-home .folder-icon { position:absolute; top:29px; left:22px; padding:0; width:18px; height:18px; background:none; color:inherit; }
+#screen-home .folder-icon svg { width:17px; height:17px; }
+#screen-home .folder-info { width:100%; min-width:0; }
+#screen-home .folder-kind { padding-left:24px; font-size:12px; font-weight:600; line-height:19px; }
+#screen-home .folder-name { color:inherit; font-size:clamp(24px,2.5vw,34px); line-height:1.15; letter-spacing:-.05em; margin:12px 0 19px; overflow-wrap:anywhere; }
+#screen-home .folder-meta { color:inherit; opacity:.87; font-size:12px; }
+#screen-home .folder-actions { position:absolute; right:7px; top:19px; display:flex; gap:0; }
+#screen-home .folder-actions .btn-icon { width:38px; height:38px; display:grid; place-items:center; padding:8px; border:0; color:var(--cover-ink); background:transparent; }
+#screen-home .folder-actions .btn-icon:hover { background:#ffffff55; }
+#screen-home .folder-name-input { max-width:100%; }
+.folder-shortcuts { margin-top:clamp(24px,4vw,40px); }
+.folder-shortcuts h2,.folder-picker h2,.account-sync h2 { font-size:20px; margin:0 0 10px; letter-spacing:-.035em; }
+.folder-shortcuts button { width:100%; border:0; border-top:1px solid var(--border); background:transparent; color:var(--text); font:inherit; display:flex; gap:14px; align-items:center; text-align:left; cursor:pointer; padding:14px 3px; }
+.folder-shortcuts button:last-child { border-bottom:1px solid var(--border); }
+.folder-shortcuts button>svg:first-child { color:var(--primary-text); }
+.folder-shortcuts button>svg:last-child { margin-left:auto; width:16px; color:var(--text-soft); }
+.folder-shortcuts strong, .folder-shortcuts small { display:block; }
+.folder-shortcuts small,.account-sync p { color:var(--text-soft); font-size:13px; }
+.folder-picker { background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:16px; padding:18px; width:min(400px,calc(100% - 28px)); max-height:80dvh; }
+.folder-picker::backdrop { background:#15141ccc; }
+.folder-picker header,.account-heading { display:flex; align-items:center; gap:12px; }
+.folder-picker header { justify-content:space-between; margin-bottom:10px; }
+.folder-picker h2 { margin:0; }
+#document-folders button { display:block; width:100%; text-align:left; border:0; border-top:1px solid var(--border); background:transparent; color:var(--text); padding:14px 4px; cursor:pointer; font:inherit; font-weight:600; }
+.account-heading { margin-bottom:24px; }
+.account-layout { display:grid; grid-template-columns:minmax(0,1.7fr) minmax(235px,1fr); align-items:start; gap:24px; }
+.account-layout .home-tools { margin:0; min-width:0; border:0; }
+.account-tools .home-disclosure,.account-tools .wa-panel { border:1px solid var(--border); border-radius:13px; background:var(--card); padding:0 15px; margin:0 0 10px; }
+.account-tools .home-disclosure>summary,.account-tools .wa-panel-summary { min-height:58px; }
+.account-tools .home-disclosure>summary small { margin-left:auto; text-align:right; }
+.account-tools .home-disclosure>summary::after { flex:none; margin-left:4px; }
+.account-tools .drive-head { display:flex; flex-direction:column; align-items:stretch; gap:16px; }
+.account-tools .drive-card { padding:0; border:0; background:transparent; box-shadow:none; }
+.account-tools .drive-connected,.account-tools .cloud-login { max-width:none; }
+.account-sync { border:1px solid var(--border); border-radius:15px; background:var(--card); padding:clamp(16px,2vw,28px); }
+.account-sync.is-saved { background:color-mix(in srgb,var(--success,#70b889) 11%,var(--card)); }
+.account-sync>span { display:flex; align-items:center; gap:8px; font-size:13px; }
+.account-sync h2 { font-size:clamp(21px,2vw,30px); margin:20px 0 4px; }
+.account-sync button { margin-top:9px; }
+@media(min-width:981px){
+  #screen-home .folders-grid:has(.folder-card:nth-child(2):last-child) { grid-template-columns:1fr 1fr; }
+  .sidebar .sb-item,.sidebar .sb-fab { justify-content:flex-start; text-align:left; }
+  .sidebar .sb-fab { justify-content:center; }
+}
+@media(max-width:980px){
+  body.folder-workspace .bottomnav { display:grid; grid-template-columns:1fr 1fr 54px 1fr 1fr; align-items:center; padding:5px 6px max(6px,env(safe-area-inset-bottom,0px)); min-height:62px; }
+  .bottomnav .bn-item { justify-self:stretch; width:auto; min-height:45px; }
+  .bottomnav .bn-fab { width:44px; height:44px; min-height:44px; margin:0 auto; border-radius:12px; box-shadow:none; }
+  .bottomnav .bn-fab svg { width:23px; height:23px; }
+  body.folder-workspace main { padding-bottom:calc(84px + env(safe-area-inset-bottom,0px)); }
+  body.folder-workspace .topbar,body:has(#screen-account:not(.hidden)) .topbar { display:none; }
+}
+@media(max-width:700px){
+  .account-layout { grid-template-columns:minmax(0,1fr); gap:14px; }
+  .account-sync { grid-row:1; }
+  .account-heading { gap:7px; margin-bottom:16px; }
+  .account-heading h1 { font-size:clamp(24px,6.7vw,32px); }
+  #screen-home .folder-card { min-height:146px; padding:26px 18px 16px; }
+  #screen-home .folder-icon { top:26px; left:18px; }
+  #screen-home .folder-name { font-size:26px; margin:10px 0 15px; }
+  .account-tools .home-disclosure>summary small { max-width:48%; }
+  .workspace-bar { gap:5px; }
+  .workspace-actions { gap:5px; }
+  .workspace-icon { height:36px; width:36px; }
+  body:has(#screen-home:not(.hidden)) .topbar { display:none; }
+  .create-folder-menu .btn { padding-inline:10px; }
+}
+@media(max-width:420px){
+  .workspace-bar { flex-wrap:nowrap; }
+  #workspace-location { min-width:0; overflow-wrap:anywhere; }
+  .workspace-actions { flex:none; }
+  .workspace-bar .connection-status:not(.offline) { display:none; }
+}
+@media(prefers-reduced-motion:reduce){.folder-card,.sb-fab { transition:none; }}
+@media(min-width:981px) {
+  body:has(#screen-dash:not(.hidden)) .workspace-actions #workspace-docs,
+  body:has(#screen-dash:not(.hidden)) .workspace-actions [data-screen-link="screen-account"],
+  #screen-dash .dash-header #btn-add-tx { display:none; }
+}

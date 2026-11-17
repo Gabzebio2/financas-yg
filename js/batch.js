@@ -112,6 +112,7 @@ const Batch = (() => {
     $("#batch-cur").innerHTML = "";
     ["#btn-batch-photo", "#btn-batch-file"].forEach((id) => { $(id).disabled = false; });
     $("#batch-title").textContent = opts.title || "Importar em lote";
+    $("#batch-destination-name").textContent = Dashboard.currentDatasetName?.() || "Pasta atual";
     // Quando os arquivos já vieram do "Upload do comprovante", não repete os
     // botões de origem (foto/Excel) — o modal serve só para conferir e confirmar.
     const hide = !!opts.hideSources;

@@ -422,9 +422,8 @@ const Importer = (() => {
     }
 
     const all = results.flatMap((r) => r.txs);
-    $("#import-title").textContent = addToCurrent
-      ? `Adicionar à pasta "${Dashboard.currentDatasetName()}"`
-      : `Importar: ${file.name}`;
+    $("#import-title").textContent = "Importar planilha";
+    $("#import-filename").textContent = file.name;
     showScreen("screen-import");
     if (all.length) showPreview(results);
     else showMapping();
@@ -477,7 +476,7 @@ const Importer = (() => {
     $("#import-name-card").classList.toggle("hidden", addToCurrent);
     $("#import-target-card").classList.toggle("hidden", !addToCurrent);
     if (addToCurrent) $("#import-target-name").textContent = Dashboard.currentDatasetName();
-    $("#btn-import-save").textContent = addToCurrent ? "➕ Adicionar à pasta atual" : "💾 Salvar e abrir painel";
+    $("#btn-import-save").textContent = addToCurrent ? "Incluir na pasta" : "Salvar e abrir painel";
 
     // Moeda: palpite pelos símbolos da planilha; o usuário confirma/ajusta
     importCurrency = guessCurrency();
@@ -547,13 +546,20 @@ const Importer = (() => {
       `</tbody>`;
 
     const sample = txs.slice(0, 15);
+    const sampleList = rows => '<ul class="import-preview-rows">' + rows.map(t => {
+      const incoming = t.type === "receita";
+      const currency = currencyOf(t);
+      const details = [fmtDate(t.date), t.account, t.category, t.installment && "Parcela " + t.installment].filter(Boolean).join(" · ");
+      const symbol = incoming ? "+" : "−";
+      const value = fmtMoney(t.amount,currency);
+      return `<li><span aria-hidden="true" class="import-direction ${incoming ? "in" : "out"}">${incoming ? "↓" : "↑"}</span>
+        <div><strong>${escapeHtml(t.desc)}</strong><small>${escapeHtml(details)}</small></div>
+        <b class="amount-${incoming ? "receita" : "despesa"}">${symbol} ${escapeHtml(value)}${value.trim().startsWith("$") ? " " + escapeHtml(currency) : ""}</b></li>`;
+    }).join("") + '</ul>';
+    const extra = sample.slice(5);
     $("#import-sample").innerHTML =
-      `<thead><tr><th>Data</th><th>Descrição</th><th>Categoria</th><th>Cartão/Conta</th><th>Parcela</th><th class="num">Valor</th></tr></thead><tbody>` +
-      sample.map((t) => `<tr>
-        <td>${fmtDate(t.date)}</td><td>${escapeHtml(t.desc)}</td><td>${escapeHtml(t.category)}</td>
-        <td>${escapeHtml(t.account)}</td><td>${t.installment || "—"}</td>
-        <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtMoney(t.amount, currencyOf(t))}</td></tr>`).join("") +
-      `</tbody>`;
+      `<p class="import-sample-count">${txs.length} ${txs.length===1?"lançamento":"lançamentos"}</p>` + sampleList(sample.slice(0,5)) +
+      (extra.length ? '<details class="import-more-rows"><summary>Ver mais '+extra.length+' na amostra</summary>'+sampleList(extra)+'</details>' : '');
 
     $("#import-note").textContent = pending.notes.join(" ");
     renderImportReview();
