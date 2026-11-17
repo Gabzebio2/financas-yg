@@ -2283,8 +2283,6 @@ const Dashboard = (() => {
     updateTxHints();
 
     $("#modal-tx").classList.remove("hidden");
-    // No celular, abrir o formulário não deve acionar o teclado e encobrir o comprovante.
-    if (!window.matchMedia("(max-width: 700px)").matches) setTimeout(() => $("#tx-amount").focus({preventScroll:true}), 50);
   }
 
   function suggestTxCategory(suggested = "", clearMissing = false) {

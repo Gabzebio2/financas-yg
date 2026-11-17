@@ -280,7 +280,10 @@ document.addEventListener("DOMContentLoaded", () => {
       requestAnimationFrame(() => {
         const origin = returnFocus.get(previous);
         if (origin?.isConnected && active.contains(origin) && isVisible(origin)) origin.focus();
-        else if (!active.contains(document.activeElement)) (focusable(active)[0] || active.querySelector(".modal")).focus();
+        else if (!active.contains(document.activeElement)) {
+          const amount = active.id === "modal-tx" && !window.matchMedia("(max-width: 700px)").matches && active.querySelector("#tx-amount");
+          (amount || focusable(active)[0] || active.querySelector(".modal")).focus({preventScroll:true});
+        }
       });
     } else if (!active && previous) {
       const target = returnFocus.get(previous);
