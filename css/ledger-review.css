@@ -73,6 +73,7 @@
 #screen-txs #tx-table .ledger-row-meta{font-size:12px;line-height:1.45;color:var(--text-soft)}
 .ledger-row-meta span{display:none}
 .ledger-row-meta b{font-weight:550}
+.ledger-amount-installment{display:none}
 #screen-txs #tx-table .cat-chip{padding:0;border:0!important;background:transparent!important;color:var(--text-soft)!important;font:inherit;font-size:13px}
 #screen-txs #tx-table .amount-receita{color:var(--green);font-size:14px;overflow-wrap:anywhere}
 #screen-txs #tx-table .amount-despesa{color:var(--text);font-size:14px;overflow-wrap:anywhere}
@@ -101,6 +102,8 @@
   .ledger-row-meta .ledger-category~b::before{content:" · ";font-weight:400}
 }
 @media(max-width:760px){
+  .ledger-row-meta .ledger-installment{display:none}
+  .ledger-amount-installment{display:block;margin-top:3px;color:var(--text-soft);font-size:11.5px;line-height:1.35;font-weight:550}
   .ledger-row-meta .ledger-account{display:inline}
   .ledger-row-meta :is(.ledger-category + .ledger-account,.ledger-account + b)::before{content:" · ";font-weight:400}
   #screen-txs .txs-head{gap:10px;margin-bottom:12px}

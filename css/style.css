@@ -833,16 +833,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
     -webkit-overflow-scrolling: touch;
   }
 
-  /* Barra inferior aparece no painel e na tela de transações */
-  body:has(#screen-dash:not(.hidden), #screen-txs:not(.hidden)) .bottomnav { display: flex; }
-  body:has(#screen-dash:not(.hidden), #screen-txs:not(.hidden)) main { padding-bottom: 120px; }
-  body:has(#screen-dash:not(.hidden), #screen-txs:not(.hidden)) .toast { bottom: 100px; }
   /* Com o painel aberto, o topo da tela é o cabeçalho de saldo (como no app) */
   body:has(#screen-dash:not(.hidden), #screen-txs:not(.hidden)) .topbar { display: none; }
   #screen-dash { display: flex; flex-direction: column; }
   #screen-dash .dash-hero { order: -1; }
-  /* Aba ativa na barra inferior */
-  body:has(#screen-txs:not(.hidden)) #bn-txs { color: var(--primary-text); }
 }
 @media (max-width: 860px) {
   .hero-actions, .charts-grid, .limits-block-body { grid-template-columns: 1fr; }

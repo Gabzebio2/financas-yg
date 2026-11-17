@@ -293,7 +293,10 @@ test('salvar parcelamento preserva o dia-base após fevereiro', () => {
   const txs = api.getDataset().transactions;
   assert.equal(txs.length,6);
   assert.equal(txs[1].date,'2027-02-28'); assert.equal(txs[2].date,'2027-03-31');
+  assert(txs.every(t=>t.purchaseDate==='2027-01-31'));
   assert.equal(txs.reduce((s,t)=>s+Math.round(t.amount*100),0),10);
+  api.openTxModal(txs[1].id);get('#tx-date').value='2027-02-25';api.saveTxModal();
+  assert.equal(api.getDataset().transactions[1].purchaseDate,'2027-01-31');
 });
 test('datas impossíveis e parcelas fracionárias não são salvas', () => {
   saveBase(dataset()); api.openTxModal(null);
@@ -887,7 +890,8 @@ test('transações mostram, ordenam e contabilizam a conta paga pela data da bai
   const row=id=>table.match(new RegExp('<tr data-id="'+id+'"[\\s\\S]*?</tr>'))[0];
   assert.match(row('personal'),/<td style="white-space:nowrap">12\/10\/2026<\/td>/);
   assert.equal(row('personal').match(/12\/10\/2026/g).length,1);
-  assert.match(row('parcela'),/03\/10\/2026<br><span title="Data da compra">Cpr\. 07\/08\/2026/);
+  assert.match(row('parcela'),/Cpr\. 07\/08\/2026/);
+  assert.doesNotMatch(row('parcela'),/03\/10\/2026/);
   assert.doesNotMatch(table,/Pago em|28\/09\/2026|07\/11\/2026/);
   assert.deepEqual(Array.from(api.sortTxs(api.tableTxs()),t=>t.id),['parcela','debito','personal']);
   api.setFilters({month:'2026-09'});assert.equal(api.tableTxs().length,0);
@@ -962,6 +966,27 @@ test('parcelas do C6 entram uma por mês e mostram a data original da compra',()
   assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['c6002']); api.renderAll();
   assert.match(get('#tx-tbody').innerHTML,/Cpr\. 11\/08\/2026/);assert.notEqual(get('#hero-acc').textContent,august);
 });
+test('extrato recupera a compra da primeira parcela vinculada e conserva datas desconhecidas',()=>{
+  const ds=dataset();
+  const group={groupId:'manual',totalValue:90};
+  ds.transactions=[
+    tx('inicio',{...group,date:'2026-08-31',installment:'1/3'}),
+    tx('vinculada',{...group,date:'2026-10-31',installment:'3/3'}),
+    tx('isolada',{date:'2026-10-31',installment:'3/3',totalValue:90}),
+    tx('avulsa',{date:'2026-10-31'}),
+  ];
+  saveBase(ds);api.setFilters({month:'2026-10'});api.setSort({key:'date',dir:1});api.renderTable();
+  const table=get('#tx-tbody').innerHTML;
+  const row=id=>table.match(new RegExp('<tr data-id="'+id+'"[\\s\\S]*?</tr>'))[0];
+  assert.match(table,/<h2>31\/10\/2026/);
+  assert.match(row('vinculada'),/Cpr\. 31\/08\/2026/);
+  assert.doesNotMatch(row('vinculada'),/31\/10\/2026/);
+  assert.match(row('vinculada'),/<td class="num amount-despesa">[^<]*<small class="ledger-amount-installment">Parcela 3\/3<\/small>/);
+  assert.match(row('isolada'),/Compra sem data/);
+  assert.doesNotMatch(row('isolada'),/31\/08\/2026/);
+  assert.doesNotMatch(row('avulsa'),/ledger-amount-installment|Cpr\./);
+  assert.match(row('avulsa'),/31\/10\/2026/);
+});
 test('fatura C6 fecha em outubro: soma linhas impressas pelo fechamento e mantém origem e projeções',async()=>{
   const ds=dataset();
   const cycle={account:'C6',billClosingDate:'2026-10-29',billDueDate:'2026-11-05',billDateObserved:true};
@@ -977,7 +1002,9 @@ test('fatura C6 fecha em outubro: soma linhas impressas pelo fechamento e manté
   assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['last-five','last-six','september-pos','payment']);
   assert.match(get('#hero-desp').textContent,/423,30/);
   assert.match(get('#hero-rec').textContent,/6\.145,28/);
-  assert.match(get('#tx-tbody').innerHTML,/30\/10\/2026<br><span title="Data da compra">Cpr\. 30\/05\/2026<\/span>/);
+  const installmentRow = get('#tx-tbody').innerHTML.match(/<tr data-id="last-five"[\s\S]*?<\/tr>/)[0];
+  assert.match(installmentRow,/<span title="Data da compra">Cpr\. 30\/05\/2026<\/span>/);
+  assert.doesNotMatch(installmentRow,/30\/10\/2026/);
   assert.match(get('#tx-tbody').innerHTML,/>Pg recebido</);
   assert.match(get('#tx-tbody').innerHTML.match(/<tr data-id="september-pos"[\s\S]*?<\/tr>/)[0], /<td style="white-space:nowrap">30\/10\/2026<\/td>/);
   assert.match(get('#tx-tbody').innerHTML.match(/<tr data-id="payment"[\s\S]*?<\/tr>/)[0], /<td style="white-space:nowrap">05\/10\/2026<\/td>/);

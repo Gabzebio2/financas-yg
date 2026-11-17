@@ -1805,15 +1805,31 @@ const Dashboard = (() => {
     }
   }
 
-  function transactionDateCell(t) {
-    const date = accountingDate(t);
-    const label = date === t.date && cleanDateEstimate(t).dateEstimated
+  function installmentOrigins(transactions) {
+    const dates = new Map();
+    for (const t of transactions) {
+      const group = t.groupId || t.seriesKey;
+      if (!group || installmentTotal(t) < 2) continue;
+      let date = t.purchaseDate;
+      // Parcelamentos manuais antigos guardavam o dia-base só na primeira parcela.
+      if (!isValidISODate(date) && installmentIdx(t) === 1 && t.totalValue > 0 &&
+          !t.billClosingDate && !t.billDueDate && !t.paymentStatus && !t.paidOn && !t.dateEstimated) {
+        date = t.advance?.scheduledDate || t.date;
+      }
+      if (!isValidISODate(date)) continue;
+      if (!dates.has(group)) dates.set(group, date);
+      else if (dates.get(group) !== date) dates.set(group, "");
+    }
+    return dates;
+  }
+
+  function transactionDateCell(t, date, purchaseDate) {
+    if (installmentTotal(t) > 1) {
+      return purchaseDate ? '<span title="Data da compra">Cpr. ' + fmtDate(purchaseDate) + '</span>' : '<span title="Data da compra não informada">Compra sem data</span>';
+    }
+    return date === t.date && cleanDateEstimate(t).dateEstimated
       ? '<span title="Data aproximada">' + fmtDate(date) + '</span>'
       : fmtDate(date);
-    if (installmentTotal(t) > 1 && isValidISODate(t.purchaseDate)) {
-      return label + '<br><span title="Data da compra">Cpr. ' + fmtDate(t.purchaseDate) + '</span>';
-    }
-    return label;
   }
 
   function historicalOrigins(transactions) {
@@ -1919,6 +1935,7 @@ const Dashboard = (() => {
       return;
     }
     const visible = list.slice(0, rowLimit);
+    const origins = installmentOrigins(ds.transactions);
     const weekdays = new Intl.DateTimeFormat("pt-BR", {weekday:"long"});
     let lastDate = "";
     tbody.innerHTML = visible.map((t) => {
@@ -1931,23 +1948,25 @@ const Dashboard = (() => {
       }
       const sel = selectedTx.has(t.id);
       const paid = !groupedC6Ids.has(t.id) && t.type === "despesa" && t.paymentStatus === "paid";
-      const dateNote = (installmentTotal(t) > 1 && isValidISODate(t.purchaseDate)) || (date === t.date && cleanDateEstimate(t).dateEstimated);
+      const purchaseDate = installmentTotal(t) > 1 &&
+        (isValidISODate(t.purchaseDate) ? t.purchaseDate : origins.get(t.groupId || t.seriesKey));
+      const dateNote = purchaseDate || (!t.installment && date === t.date && cleanDateEstimate(t).dateEstimated);
       const series = t.installment ? "Parcela " + t.installment + (t.advance ? " · Adiantada" : "") : t.fixed ? "Fixa" : "";
       const meta = '<small class="ledger-row-meta">' +
         (t.category ? '<span class="ledger-category">' + escapeHtml(t.category) + '</span>' : '') +
         (t.account ? '<span class="ledger-account">' + escapeHtml(t.account) + '</span>' : '') +
-        (series ? '<b>' + escapeHtml(series) + '</b>' : '') + '</small>';
+        (series ? '<b' + (t.installment ? ' class="ledger-installment"' : '') + '>' + escapeHtml(series) + '</b>' : '') + '</small>';
       const title = `<span class="tx-desc-text">${escapeHtml(t.desc) || '<span class="tx-desc-empty">Sem descrição</span>'}${t.creditKind === "card_payment" ? '<small class="hint">Pg recebido</small>' : ""}${t.cashback ? `<small class="hint cashback-info">Cashback: ${escapeHtml(String(t.cashback.amount))} ${escapeHtml(t.cashback.currency)} · informativo</small>` : ""}</span>`;
       return `
       ${dayHeading}<tr data-id="${escapeHtml(t.id)}" class="${sel ? "tx-selected" : ""}${paid ? " bill-settled" : ""}${dateNote ? " ledger-date-note" : ""}">
         <td class="tx-check-col"><input type="checkbox" class="tx-sel" aria-label="Selecionar ${escapeHtml(t.desc)}" data-id="${escapeHtml(t.id)}" ${sel ? "checked" : ""}></td>
-        <td style="white-space:nowrap">${transactionDateCell(t)}</td>
+        <td style="white-space:nowrap">${transactionDateCell(t, date, purchaseDate)}</td>
         <td><span class="tx-desc-cell">${catAvatar(t.category)}<span class="ledger-name">${title}${meta}
           ${paid ? '<span class="tx-paid-caption">' + billPayButton(t, billConfirmations.get(t.id)?.source === "transactions") + '</span>' : pendingIndividualBill(t) ? billPayButton(t) : ""}</span></span></td>
         <td><span class="cat-chip" style="background:color-mix(in srgb, ${catColor(ds, t.category)} 16%, var(--card,#24212e));color:var(--chip-text,var(--text,#f1eff5));border:1px solid color-mix(in srgb, ${catColor(ds, t.category)} 28%, var(--card,#24212e))">${escapeHtml(t.category)}</span></td>
         <td>${escapeHtml(t.account || "—")}</td>
         <td>${t.installment ? escapeHtml(t.installment) + (t.advance ? '<br><span class="fixa-chip">Adiantada</span>' : '') : (t.fixed ? '<span class="fixa-chip">Fixa</span>' : "—")}</td>
-        <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtTxAmount(t)}</td>
+        <td class="num amount-${t.type}">${t.type === "despesa" ? "-" : "+"} ${fmtTxAmount(t)}${t.installment ? '<small class="ledger-amount-installment">' + escapeHtml(series) + '</small>' : ''}</td>
         <td class="tx-actions">
           <button class="btn-icon" data-action="edit" title="Editar" aria-label="Editar transação">${uiIcon("edit")}</button>
           <details class="ledger-more"><summary aria-label="Mais ações de ${escapeHtml(t.desc) || "transação"}" title="Mais ações"><span aria-hidden="true">⋯</span></summary>
@@ -2225,7 +2244,7 @@ const Dashboard = (() => {
     $("#tx-entry-options").open = !!(opts.pending || tx?.paymentStatus || tx?.fixed || tx?.installment);
     $("#tx-photo-folder").textContent = ds.name;
     $("#tx-photo-hint").textContent = isEdit
-      ? "Tire uma foto para preencher os campos deste lançamento."
+      ? "Escolha uma imagem para preencher este lançamento."
       : "Confira valor, data e conta pelo sino.";
     txType = isEdit ? tx.type : (opts.type === "receita" ? "receita" : "despesa");
     const paidBox = $("#tx-paid"), trackBox = $("#tx-payable");
@@ -2481,6 +2500,10 @@ const Dashboard = (() => {
     const sourceBill = {...draft, ...bill, billReferenceMonth:bill.billReferenceMonth};
     const nextBill = nextDate => bill.paymentStatus ? {paymentStatus:"pending", ...nextBillReferenceField(sourceBill,nextDate)} : {};
     if (edited) {
+      if (installmentTotal(edited) > 1 && !isValidISODate(edited.purchaseDate)) {
+        const original = installmentOrigins(ds.transactions).get(edited.groupId || edited.seriesKey);
+        if (original) edited.purchaseDate = original;
+      }
       const applyReference = bill.paymentStatus && edited.fixed && edited.groupId && $("#tx-reference-repeat").checked;
       if (bill.paymentStatus && edited.fixed && edited.groupId && trackBox.checked && !trackBox.defaultChecked) {
         const today = todayISO(), anchorMonth = edited.date.slice(0,7);
@@ -2549,6 +2572,7 @@ const Dashboard = (() => {
           date: monthlyDate(i),
           amount: parts[i],
           installment: `${i + 1}/${n}`,
+          ...(!tracked && {purchaseDate:date}),
           totalValue: amount,
           ...(i === 0 ? {...evidence, ...bill} : nextBill(monthlyDate(i))),
         });

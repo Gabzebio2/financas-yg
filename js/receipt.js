@@ -451,58 +451,24 @@ const Receipt = (() => {
   /* ---------- Eventos ---------- */
   document.addEventListener("DOMContentLoaded", () => {
     const modal = $("#modal-tx");
-    const sourceToggle = $("#receipt-source-toggle");
-    const sourceActions = $("#receipt-source-actions");
-    function setSourceOpen(open) {
-      sourceActions.hidden = !open;
-      sourceToggle.ariaExpanded = String(open);
-    }
-    sourceToggle.addEventListener("click", () => setSourceOpen(sourceActions.hidden));
-    modal.addEventListener("focusout", ev => {
-      if (ev.relatedTarget && !$("#receipt-box").contains(ev.relatedTarget)) setSourceOpen(false);
-    });
-    modal.addEventListener("click", ev => {
-      if (!ev.target.closest("#receipt-box")) setSourceOpen(false);
-    });
-    // Escape fecha primeiro a escolha de origem e mantém a transação em edição.
-    document.addEventListener("keydown", ev => {
-      if (ev.key !== "Escape" || sourceActions.hidden || !modal.contains(ev.target)) return;
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
-      setSourceOpen(false);
-      sourceToggle.focus();
-    }, true);
-    function pickReceipt(input) {
-      setSourceOpen(false);
-      sourceToggle.focus();
-      input.click();
-    }
     new MutationObserver(() => {
       if (modal.classList.contains("hidden")) {
-        setSourceOpen(false);
         requestVersion++;
         pendingFile = null;
       }
     }).observe(modal, { attributes: true, attributeFilter: ["class"] });
-    // New photos use the same quick, multi-operation flow as uploaded prints.
-    // Editing an existing transaction still fills its form rather than adding rows.
-    $("#btn-receipt-camera").addEventListener("click", () => pickReceipt($("#receipt-input-camera")));
-    $("#receipt-input-camera").addEventListener("change", (ev) => {
-      const file = ev.target.files[0];
-      if (file) {
-        if (Dashboard.isEditingTransaction?.()) analyze(file);
-        else { $("#modal-tx").classList.add("hidden"); Batch.openWithFiles([file]); }
-      }
-      ev.target.value = "";
-    });
-    // Upload do comprovante: foto (gasto único ou fatura/lista) ou Excel — tudo
-    // cai na tela de lista para conferir e confirmar de uma vez.
-    $("#btn-receipt-upload").addEventListener("click", () => pickReceipt($("#receipt-input-upload")));
+    $("#btn-receipt-upload").addEventListener("click", () => $("#receipt-input-upload").click());
     $("#receipt-input-upload").addEventListener("change", (ev) => {
       const files = Array.from(ev.target.files || []);
       ev.target.value = "";
       if (!files.length) return;
-      $("#modal-tx").classList.add("hidden");
+      // Na edição, a imagem única preenche o lançamento que está aberto.
+      const [file] = files;
+      if (files.length === 1 && file.type.startsWith("image/") && Dashboard.isEditingTransaction?.()) {
+        analyze(file);
+        return;
+      }
+      modal.classList.add("hidden");
       Batch.openWithFiles(files);
     });
     $("#btn-apikey-save").addEventListener("click", () => {

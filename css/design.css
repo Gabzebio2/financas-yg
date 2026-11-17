@@ -424,11 +424,9 @@ body.modal-open main { overflow: hidden; }
   .bottomnav { background: var(--overlay); border: 1px solid var(--border); padding: 9px 10px calc(10px + env(safe-area-inset-bottom,0px)); backdrop-filter: blur(14px); align-items: center; box-shadow: 0 -5px 20px var(--shadow-color); }
   .bn-item { font-size: 10px; font-weight: 600; color: var(--text-soft); padding: 6px 10px; gap: 4px; min-width: 58px; min-height: 43px; border-radius: 9px; }
   .bn-item svg { width: 19px; height: 19px; }
-  .bn-item:hover, .bn-item:active, body:has(#screen-txs:not(.hidden)) #bn-txs, .bn-item[aria-current="page"] { color: var(--text); background: var(--card-2); }
   .bn-fab { width: 45px; height: 45px; border-radius: 13px; box-shadow: 0 4px 10px var(--shadow-color); margin-top: 0; background: var(--primary-soft); }
   .bn-fab svg { width: 23px; height: 23px; }
   .bn-fab:hover { background: var(--primary-soft); }
-  body:has(#screen-dash:not(.hidden),#screen-txs:not(.hidden)) main { padding-bottom: 102px; }
 }
 @media (max-width: 800px) {
   .dash-hero { grid-template-columns: minmax(0,1fr); gap: 12px; }
@@ -881,7 +879,6 @@ tbody tr:hover { background: var(--card-2); }
   .hero-top-right { gap: 7px; }
   .bottomnav { background: var(--card-2); border-color: var(--border); overflow: visible; }
   .bn-item { color: var(--text-soft); background: transparent; }
-  .bn-item:hover, .bn-item:active, body:has(#screen-txs:not(.hidden)) #bn-txs, .bn-item[aria-current="page"] { background: transparent; color: var(--primary-text); }
   .bn-fab { width: 56px; height: 56px; border-radius: 50%; margin-top: -29px; box-shadow: 0 0 0 5px var(--bg); }
   .bn-fab svg { width: 30px; height: 30px; }
 }

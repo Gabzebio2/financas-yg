@@ -13,14 +13,14 @@
 <meta name="description" content="Organize receitas, despesas, parcelas e metas em um só lugar com o Finanças YG.">
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
-<link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261117-mes-da-despesa">
+<link rel="stylesheet" href="css/style.css?v=20261117-arquivo-painel">
+<link rel="stylesheet" href="css/design.css?v=20261117-arquivo-painel">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 <link rel="stylesheet" href="css/receipt-jobs.css?v=20261106-statement-coverage">
-<link rel="stylesheet" href="css/workspace-review.css?v=20261117-comprovante">
-<link rel="stylesheet" href="css/dashboard-review.css?v=20261117-comprovante">
-<link rel="stylesheet" href="css/entry-review.css?v=20261117-comprovante">
-<link rel="stylesheet" href="css/ledger-review.css?v=20261117-comprovante">
+<link rel="stylesheet" href="css/workspace-review.css?v=20261117-arquivo-painel">
+<link rel="stylesheet" href="css/dashboard-review.css?v=20261117-arquivo-painel">
+<link rel="stylesheet" href="css/entry-review.css?v=20261117-arquivo-painel">
+<link rel="stylesheet" href="css/ledger-review.css?v=20261117-arquivo-painel">
 </head>
 <body>
 <a class="skip-link" href="#main">Pular para o conteúdo</a>
@@ -552,17 +552,12 @@
     <!-- Leitura de comprovante com IA -->
     <aside class="receipt-box" id="receipt-box" aria-labelledby="tx-photo-title">
       <div class="entry-slip-label"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5 3l3 2 2-2 2 2 2-2 2 2 3-2v18l-3-2-2 2-2-2-2 2-2-2-3 2zM8 9h8m-8 4h6"/></svg>Comprovante</div>
-      <h4 id="tx-photo-title">Registrar pela foto</h4>
+      <h4 id="tx-photo-title">Registrar por arquivo</h4>
       <p class="entry-slip-hint" id="tx-photo-hint">Confira valor, data e conta pelo sino.</p>
-      <button type="button" class="btn entry-slip-trigger" id="receipt-source-toggle" aria-expanded="false" aria-controls="receipt-source-actions"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h5l2-3h4l2 3h5v13H3z"/><circle cx="12" cy="13" r="4"/></svg>Foto ou arquivo</button>
-      <div class="entry-slip-choices" id="receipt-source-actions" role="group" aria-label="Origem do comprovante" hidden>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-camera"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h4l2-3h4l2 3h4v13H4z"/><circle cx="12" cy="13" r="4"/></svg> Tirar foto</button>
-        <button type="button" class="btn btn-ghost btn-sm" id="btn-receipt-upload" title="Fotos, PDF, planilhas Excel ou CSV"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9 16 8-8a3 3 0 0 0-4-4L4 13a5 5 0 0 0 7 7l9-9M7 14l7-7"/></svg> Escolher arquivo</button>
-      </div>
+      <button type="button" class="btn entry-slip-trigger" id="btn-receipt-upload" aria-describedby="tx-photo-hint" title="Escolher imagem, PDF, Excel ou CSV"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 13h6m-6 4h5"/></svg>Arquivo</button>
       <span class="receipt-status hidden" id="receipt-status" role="status"></span>
-        <button type="button" class="btn-link hidden" id="btn-apikey-remove"
-          title="Apaga a chave de IA salva neste navegador">Remover chave</button>
-      <input type="file" id="receipt-input-camera" accept="image/*" capture="environment" hidden>
+      <button type="button" class="btn-link hidden" id="btn-apikey-remove"
+        title="Apaga a chave de IA salva neste navegador">Remover chave</button>
       <input type="file" id="receipt-input-upload" accept="image/*,.pdf,application/pdf,.xlsx,.xls,.xlsm,.csv" multiple hidden>
       <div id="apikey-wrap" class="hidden">
         <p class="hint">Para a IA ler comprovantes, cole sua chave da API Anthropic
@@ -575,12 +570,12 @@
       <div class="entry-slip-folder" aria-label="Pasta de destino"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 6h6l2 2h10v12H3z"/></svg><span id="tx-photo-folder"></span></div>
     </aside>
     <div class="tx-manual-column">
+    <div class="tx-entry-summary">
     <div class="type-toggle" id="tx-type-toggle" role="group" aria-label="Tipo de lançamento">
       <button data-type="despesa" class="active"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 14V2m-5 5 5-5 5 5"/></svg>Despesa</button>
       <button data-type="receita"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v12m-5-5 5 5 5-5"/></svg>Receita</button>
     </div>
-    <div class="form-grid tx-entry-fields">
-      <div class="span2 tx-value-field">
+      <div class="tx-value-field">
         <label for="tx-amount" id="tx-amount-label">Valor</label>
         <div class="tx-value-row">
           <div class="tx-currency-field">
@@ -591,6 +586,8 @@
           <input type="text" id="tx-amount" inputmode="decimal" data-unit="separate" placeholder="0,00">
         </div>
       </div>
+    </div>
+    <div class="form-grid tx-entry-fields">
       <label class="span2">Descrição
         <input type="text" id="tx-desc" placeholder="Ex: Supermercado">
       </label>
@@ -645,8 +642,8 @@
     </div>
     </div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" id="btn-tx-cancel">Cancelar</button>
       <button class="btn btn-primary" id="btn-tx-save">Salvar</button>
+      <button class="btn btn-ghost" id="btn-tx-cancel">Cancelar</button>
     </div>
   </div>
 </div>
@@ -941,8 +938,8 @@
 <script src="js/importer.js?v=20261117-comprovante"></script>
 <script src="js/weekly-revenue.js?v=20261117-revisao"></script>
 <script src="js/business.js?v=20261117-interface"></script>
-<script src="js/dashboard.js?v=20261117-foco-comprovante"></script>
-<script src="js/receipt.js?v=20261117-comprovante"></script>
+<script src="js/dashboard.js?v=20261117-arquivo-painel"></script>
+<script src="js/receipt.js?v=20261117-arquivo-painel"></script>
 <script src="js/batch.js?v=20261117-interface"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>

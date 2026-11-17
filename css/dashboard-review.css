@@ -1,26 +1,18 @@
 /* Painéis pessoais e empresariais compartilham os mesmos indicadores financeiros. */
 @media (min-width:981px) {
-  #dash-hero {
-    display:grid;grid-template-columns:minmax(0, .84fr) minmax(0, 1.16fr);
-    gap:0 clamp(18px,3vw,44px);padding:16px clamp(20px,3vw,38px) 20px;border-radius:20px;
+  #dash-hero .hero-month-arrow {
+    display:grid;place-items:center;width:42px;min-width:42px;height:42px;
+    font-size:26px;line-height:1;color:var(--text-soft);border-radius:10px;
   }
-  #dash-hero .hero-top { grid-column:1/-1;padding-bottom:13px;border-bottom:1px solid var(--border); }
-  #dash-hero .hero-month-wrap { display:flex;gap:8px;align-items:center; }
-  #dash-hero .hero-month-arrow,.analytics-period button {
+  #dash-hero .hero-month-arrow:hover {color:var(--primary-text);background:var(--primary-soft)}
+  #dash-hero.wide-values .hero-flow {width:100%}
+  .analytics-period button {
     display:grid;place-items:center;width:42px;min-width:42px;height:42px;
     border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:12px;font-size:26px;line-height:1;
   }
-  #dash-hero .hero-month-arrow:hover,.analytics-period button:hover { color:var(--primary-text);border-color:var(--primary);background:var(--primary-soft); }
-  #dash-hero .hero-balance { align-self:center;align-items:flex-start;text-align:left;padding:18px 0 0; }
-  #dash-hero .hero-eye { margin:3px 0 0; }
-  #dash-hero .hero-flow { align-self:center;gap:0 12px;width:100%;margin:15px 0 0; }
-  #dash-hero .hero-flow-item { justify-content:flex-start;gap:9px; }
-  #dash-hero .hero-flow-acc { margin-top:4px; }
+  .analytics-period button:hover { color:var(--primary-text);border-color:var(--primary);background:var(--primary-soft); }
   #hero-flow-rec .hero-flow-label { color:var(--green); }
   #hero-flow-desp .hero-flow-label { color:var(--red); }
-  #dash-hero.wide-values .hero-balance { grid-column:1/-1;align-items:center;text-align:center; }
-  #dash-hero.wide-values .hero-flow { grid-column:1/-1;width:min(730px,100%);margin-inline:auto; }
-  #dash-hero.wide-values .hero-flow-item { justify-content:center; }
 }
 .dash-activity { display:grid;gap:24px;order:3;min-width:0; }
 .dash-activity .bill-board,.recent-panel { min-width:0;margin:0;background:transparent;border:0;box-shadow:none;padding:0; }

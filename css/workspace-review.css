@@ -86,11 +86,17 @@ body.folder-workspace .sb-dash-only, body.folder-workspace .sb-fab { display:fle
   .sidebar .sb-fab { justify-content:center; }
 }
 @media(max-width:980px){
-  body.folder-workspace .bottomnav { display:grid; grid-template-columns:1fr 1fr 54px 1fr 1fr; align-items:center; padding:5px 6px max(6px,env(safe-area-inset-bottom,0px)); min-height:62px; }
-  .bottomnav .bn-item { justify-self:stretch; width:auto; min-height:45px; }
+  body.folder-workspace .bottomnav {
+    display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); align-items:center;
+    padding:5px max(6px,env(safe-area-inset-right,0px)) max(6px,env(safe-area-inset-bottom,0px)) max(6px,env(safe-area-inset-left,0px)); min-height:62px;
+  }
+  .bottomnav .bn-item { display:grid; grid-template-rows:20px auto; align-content:center; justify-items:center; gap:3px; min-width:0; min-height:46px; padding:4px 1px; line-height:1.2; }
+  .bottomnav .bn-item svg { width:20px; height:20px; }
+  .bottomnav .bn-item[aria-current="page"] { color:var(--primary-text); background:var(--primary-soft); }
   .bottomnav .bn-fab { width:44px; height:44px; min-height:44px; margin:0 auto; border-radius:12px; box-shadow:none; }
   .bottomnav .bn-fab svg { width:23px; height:23px; }
   body.folder-workspace main { padding-bottom:calc(84px + env(safe-area-inset-bottom,0px)); }
+  body.folder-workspace .toast { bottom:calc(78px + env(safe-area-inset-bottom,0px)); }
   body.folder-workspace .topbar,body:has(#screen-account:not(.hidden)) .topbar { display:none; }
 }
 @media(max-width:700px){
