@@ -32,6 +32,7 @@ const Cloud = (() => {
   let pullTimer = null;
   let authSubscription = null, connectionVersion = 0;
   let syncPromise = null, syncVersion = -1;
+  let lastRemoteRows = null;
   let queueDurable = true, lastError = "", authRequired = false;
   let accountConflictCount = 0, revisionCounter = 0;
   // Diagnóstico da conexão atual, reavaliado a cada leitura completa da nuvem.
@@ -84,6 +85,12 @@ const Cloud = (() => {
     if (!owner || ledger.owners[id] !== owner) return false;
     const q = loadQueue(owner);
     return !own(q.deletes, id) && (q.base[id]?.listed === true || pendingCreation(q, id));
+  }
+  function isReservedFolderId(id) {
+    refreshLedger();
+    const owner = getFolderOwner();
+    const q = owner && loadQueue(owner);
+    return own(ledger.owners,id) || !!(q && (own(q.base,id) || own(q.deletes,id) || own(q.dirty,id)));
   }
 
   function visibleFolderIds() {
@@ -211,6 +218,42 @@ const Cloud = (() => {
   }
 
   const repairBackupPrefix = (owner) => REPAIR_BACKUP_PREFIX + encodeURIComponent(owner) + ":";
+  const recoveryPrefix = owner => "fyg:offline-recovery:v1:" + encodeURIComponent(owner) + ":";
+  function recoveryKeys(owner) {
+    if (!owner) return [];
+    const prefix = recoveryPrefix(owner), keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(prefix)) keys.push(key);
+    }
+    return keys;
+  }
+  function preserveOfflineEdit(owner, id, dataset) {
+    if (ledger.owners[id] !== owner || dataset?.id !== id) return;
+    const prefix = recoveryPrefix(owner) + id + ":";
+    const value = JSON.stringify(dataset);
+    if (recoveryKeys(owner).some(key => key.startsWith(prefix) && localStorage.getItem(key) === value)) return;
+    // Não aposente a pendência se não foi possível guardar a versão editada.
+    let key;
+    do { key = prefix + uid(); } while (localStorage.getItem(key) !== null);
+    localStorage.setItem(key, value);
+    if (localStorage.getItem(key) !== value) throw new Error("Não foi possível guardar a recuperação das alterações deste aparelho.");
+  }
+  function exportOfflineRecovery() {
+    const owner = getFolderOwner();
+    if (!owner) return false;
+    try {
+      const datasets = recoveryKeys(owner).map(key => {
+        const ds = JSON.parse(localStorage.getItem(key));
+        const [sourceId, copyId] = key.slice(recoveryPrefix(owner).length).split(":");
+        if (!ds || ds.id !== sourceId || !validId(copyId)) throw new Error("Cópia inválida.");
+        return { ...ds, id:copyId, name:String(ds.name || "Pasta") + " · recuperação" };
+      });
+      if (!datasets.length) return false;
+      downloadFolderBackup(datasets, "recuperacao");
+      return true;
+    } catch { setStatus("Não foi possível baixar a recuperação. As cópias permanecem neste navegador.", "err"); return false; }
+  }
   function readRepairBackups(owner) {
     if (!owner) return [];
     const prefix = repairBackupPrefix(owner), { url, userId } = ownerParts(owner);
@@ -308,6 +351,12 @@ const Cloud = (() => {
 
   function publishState() {
     const state = getSyncState();
+    const recovery = $("#btn-cloud-offline-recovery");
+    if (recovery) {
+      let hasCopies = false;
+      try { hasCopies = recoveryKeys(getFolderOwner()).length > 0; } catch { /* armazenamento indisponível */ }
+      recovery.classList.toggle("hidden", !hasCopies);
+    }
     let message;
     if (!state.queueDurable) message = state.error;
     else if (state.repairing) message = "Conferindo o backup e corrigindo somente as datas antigas identificadas…";
@@ -343,7 +392,7 @@ const Cloud = (() => {
     const version = connectionVersion, owner = activeOwner, c = client;
     pullTimer = setTimeout(() => {
       pullTimer = null;
-      if (current(c, version, owner) && isAuto() && !isOffline() && document.visibilityState !== "hidden") syncNow({ automatic: true });
+      if (current(c, version, owner) && isAuto() && !isOffline() && document.visibilityState !== "hidden") syncNow({ automatic: true, poll: true });
     }, delay);
   }
 
@@ -516,6 +565,24 @@ const Cloud = (() => {
     }
   }
 
+  async function checkNewPassword(password) {
+    let compromised;
+    try {
+      // Only a five-character prefix leaves the device. Compare the rest locally.
+      const digest = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(password));
+      const hash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2,"0")).join("").toUpperCase();
+      const response = await fetch("https://api.pwnedpasswords.com/range/" + hash.slice(0,5), {
+        credentials:"omit", referrerPolicy:"no-referrer", redirect:"error", cache:"no-store",
+        headers:{"Add-Padding":"true"}, signal:AbortSignal.timeout(7000)
+      });
+      if (!response.ok) throw Error();
+      const entries=(await response.text()).trim().split(/\r?\n/);
+      if (!entries.length || !entries.every(line=>/^[A-F0-9]{35}:\d+$/i.test(line))) throw Error();
+      compromised=entries.some(line=>line.slice(0,35).toUpperCase()===hash.slice(5) && Number(line.slice(36))>0);
+    } catch { throw Object.assign(Error(),{code:"password_check_unavailable"}); }
+    if (compromised) throw Object.assign(Error(),{code:"password_compromised"});
+  }
+
   function authErrorMessage(error) {
     const code = error?.code || "", name = error?.name || "", raw = String(error?.message || "");
     if (code === "invalid_credentials" || /invalid login credentials/i.test(raw)) return "E-mail ou senha incorretos. Confira o e-mail da sua conta ou use “Esqueci minha senha” para redefini-la.";
@@ -523,6 +590,8 @@ const Cloud = (() => {
     if (code === "otp_disabled") return "Use o e-mail de uma conta já cadastrada. Não foi possível enviar o acesso para este e-mail.";
     if (code === "signup_disabled" || /signups not allowed/i.test(raw)) return "O cadastro de novas contas está desativado. Entre com uma conta existente ou recupere sua senha.";
     if (code === "same_password" || /should be different/i.test(raw)) return "A nova senha precisa ser diferente da senha anterior.";
+    if (code === "password_compromised") return "Essa senha já apareceu em vazamentos. Escolha uma senha diferente e exclusiva para sua conta.";
+    if (code === "password_check_unavailable") return "Não foi possível conferir a segurança da nova senha. Tente novamente em instantes.";
     if (code === "weak_password" || /password.*least/i.test(raw)) return "A nova senha não atende aos requisitos. Use pelo menos 8 caracteres e uma combinação mais forte.";
     if (code === "session_not_found" || name === "AuthSessionMissingError" || /invalid.*jwt|jwt.*expired/i.test(raw)) return "A sessão de recuperação expirou. Peça outro e-mail em “Esqueci minha senha” e abra o link mais recente.";
     if (code === "passkey_disabled") { passkeysEnabled = false; return "As chaves de acesso ainda não foram habilitadas neste projeto. Use e-mail e senha ou o link de acesso."; }
@@ -668,6 +737,7 @@ const Cloud = (() => {
   }
 
   function resetConnection() {
+    lastRemoteRows = null;
     cancelAuthOperation(); authSettingsRequest?.abort(); authSettingsRequest = null;
     clearTimeout(authCooldownTimer); authCooldownTimer = null; linkCooldownUntil = 0;
     passkeysEnabled = null; signupsAllowed = null; authOptionsLoading = false; authOptionsError = "";
@@ -698,6 +768,7 @@ const Cloud = (() => {
     const nextOwner = ownerFor(nextSession);
     const changed = nextOwner !== activeOwner;
     if (changed) {
+      lastRemoteRows = null;
       if (authOperation && authOperation !== acceptedAuth) cancelAuthOperation();
       cancelSchedule(); cancelRequests(); connectionVersion++;
       retryAttempt = 0; lastError = ""; accountConflictCount = 0;
@@ -839,23 +910,48 @@ const Cloud = (() => {
     }
   }
 
-  async function readRemoteRows(c, version, owner) {
+  async function readRemoteRows(c, version, owner, poll = false) {
+    const previous = poll && lastRemoteRows;
     const rows = new Map(), pageSize = 200;
+    let expectedCount;
     for (;;) {
       const offset = rows.size;
-      const response = await request(c.from(TABLE).select("id,data,updated_at", {count:"exact"})
+      const response = await request(c.from(TABLE).select(previous ? "id,updated_at" : "id,data,updated_at", {count:"exact"})
         .eq("user_id", ownerParts(owner).userId).order("id").range(offset, offset + pageSize - 1));
       assertCurrent(c, version, owner);
       if (!Array.isArray(response.data) || !Number.isSafeInteger(response.count) || response.count < 0) {
         throw new Error("O servidor não confirmou a lista completa de pastas. Sincronize novamente.");
       }
+      if (expectedCount !== undefined && response.count !== expectedCount) throw new Error("A lista de pastas mudou. Sincronize novamente.");
+      expectedCount = response.count;
       for (const row of response.data) {
         if (!validId(row?.id) || rows.has(row.id)) throw new Error("A lista de pastas mudou. Sincronize novamente.");
         rows.set(row.id, row);
       }
-      if (rows.size === response.count) return rows;
+      if (rows.size === response.count) break;
       if (!response.data.length || rows.size > response.count) throw new Error("Lista de pastas incompleta. Sincronize novamente.");
     }
+    if (previous) {
+      const changed = [];
+      for (const [id, header] of rows) {
+        const cached = previous.get(id);
+        if (cached && header.updated_at && header.updated_at === cached.updated_at) rows.set(id, cached);
+        else changed.push(id);
+      }
+      for (let i = 0; i < changed.length; i += 50) {
+        const ids = changed.slice(i, i + 50);
+        const result = await request(c.from(TABLE).select("id,data,updated_at").eq("user_id", ownerParts(owner).userId).in("id", ids));
+        assertCurrent(c, version, owner);
+        const remaining = new Set(ids);
+        for (const row of result.data || []) {
+          if (!remaining.delete(row.id) || row.updated_at !== rows.get(row.id).updated_at) throw new Error("Uma pasta mudou durante a leitura. A sincronização será repetida.");
+          rows.set(row.id, row);
+        }
+        if (remaining.size) throw new Error("Uma pasta mudou durante a leitura. A sincronização será repetida.");
+      }
+    }
+    lastRemoteRows = rows;
+    return rows;
   }
 
   async function repairRemoteRows(rowsById, owner, c, version) {
@@ -1136,13 +1232,24 @@ const Cloud = (() => {
     }
   }
 
-  function retireMissingFolders(rowsById, owner, archivedIds, beforePull) {
+  async function retireMissingFolders(rowsById, owner, archivedIds, beforePull, c, version) {
     const q = loadQueue(owner);
     mergeQueueFromDisk(owner, q);
     // A ausência em uma leitura completa invalida o índice, sem apagar os dados da pasta.
     for (const [id, base] of Object.entries(q.base)) {
       const previous = beforePull.base[id];
-      if (base.listed && !rowsById.has(id) && base.version === previous?.version && base.digest === previous?.digest) base.listed = false;
+      if (rowsById.has(id) || archivedIds.has(id) || own(q.deletes,id) || base.version !== previous?.version || base.digest !== previous?.digest) continue;
+      // Também recupera órfãs de versões antigas: a fila pode já ter sido
+      // aposentada, mas o conteúdo local e a última base confirmada sobrevivem.
+      const local = localDataset(id);
+      if (local && ledger.owners[id] === owner && (base.digest || own(q.dirty,id))) {
+        const text = canonical(local);
+        const changed = own(q.dirty,id) || (base.snapshot ? text !== canonical(base.snapshot) : await fingerprint(text) !== base.digest);
+        assertCurrent(c, version, owner);
+        if (canonical(localDataset(id)) !== text) throw new Error("A pasta mudou durante a recuperação. Sincronize novamente.");
+        if (changed) preserveOfflineEdit(owner, id, local);
+      }
+      base.listed = false;
     }
     for (const id of Object.keys(q.dirty)) {
       if (!rowsById.has(id) && !archivedIds.has(id) && !pendingCreation(q,id) && q.dirty[id].rev === beforePull.dirty[id]?.rev) delete q.dirty[id];
@@ -1176,7 +1283,7 @@ const Cloud = (() => {
         requireDurableQueue();
         const queue = loadQueue(owner);
         const beforePull = {base:{...queue.base}, dirty:{...queue.dirty}};
-        let rowsById = await readRemoteRows(c, version, owner);
+        let rowsById = await readRemoteRows(c, version, owner, options.poll);
         await rescan(owner, c, version, rowsById);
         let repairedIds = null;
         // Classifique antes de aplicar qualquer retorno: uma pasta antiga inválida
@@ -1192,7 +1299,7 @@ const Cloud = (() => {
         let archiveResult = { removedCount: 0, archivedIds: [], blockedIds: [] };
         if (typeof CloudArchive !== "undefined") {
           archiveResult = await CloudArchive.reconcile({
-            client: c, userId: ownerParts(owner).userId, remoteRows: rowsById, request,
+            client: c, userId: ownerParts(owner).userId, remoteRows: rowsById, request, poll: options.poll === true,
             assertCurrent: () => assertCurrent(c, version, owner),
             ownsLocal: id => { refreshLedger(); return ledger.owners[id] === owner; },
             getLocal: localDataset,
@@ -1204,6 +1311,7 @@ const Cloud = (() => {
           const archiveQueue = loadQueue(owner);
           mergeQueueFromDisk(owner, archiveQueue);
           for (const id of archiveResult.archivedIds) {
+            if (archiveResult.blockedIds.includes(id)) preserveOfflineEdit(owner, id, localDataset(id));
             archiveQueue.base[id] = { listed: false, archived: true };
             delete archiveQueue.dirty[id];
             delete archiveQueue.deletes[id];
@@ -1215,7 +1323,7 @@ const Cloud = (() => {
           }
         }
         const archivedIds = new Set(archiveResult.archivedIds);
-        retireMissingFolders(rowsById, owner, archivedIds, beforePull);
+        await retireMissingFolders(rowsById, owner, archivedIds, beforePull, c, version);
         await rescan(owner, c, version, rowsById);
         const invalidLocalCount = await pushDirty(rowsById, owner, c, version, archivedIds);
         await flushDeletions(rowsById, owner, c, version);
@@ -1264,6 +1372,10 @@ const Cloud = (() => {
       ticket = beginAuthOperation(isSignUp ? "signup" : "password-login", c);
       if (!ticket) return false;
       setAccessStatus(isSignUp ? "Criando conta…" : "Conferindo e-mail e senha…");
+      if (isSignUp) {
+        await Promise.race([checkNewPassword(pass),ticket.interrupted]);
+        if (!authCurrent(ticket)) return false;
+      }
       const operation = isSignUp ? c.auth.signUp({ email, password: pass, options: { emailRedirectTo: AUTH_REDIRECT_URL } }) : c.auth.signInWithPassword({ email, password: pass });
       const result = await Promise.race([operation, ticket.interrupted]);
       if (!authCurrent(ticket)) return false;
@@ -1353,6 +1465,8 @@ const Cloud = (() => {
       ticket = beginAuthOperation("new-password", c);
       if (!ticket) return false;
       setAccessStatus("Salvando nova senha…");
+      await Promise.race([checkNewPassword(pass),ticket.interrupted]);
+      if (!authCurrent(ticket) || recoveryOwner !== activeOwner) return false;
       const result = await Promise.race([c.auth.updateUser({ password: pass }), ticket.interrupted]);
       if (!authCurrent(ticket) || recoveryOwner !== activeOwner) return false;
       if (result?.error) throw result.error;
@@ -1534,5 +1648,5 @@ const Cloud = (() => {
     return session?.access_token || null;
   }
 
-  return { onLocalChange, onLocalDelete, getToken, getSyncState, getFolderOwner, ownsFolder, getAuthOptions, sendSignInLink, sendSignInCode, verifySignInCode, signInWithPasskey, registerPasskey, linkLocalDatasets, prepareLocalDelete, syncNow, repairLegacyDates, exportRepairBackup };
+  return { onLocalChange, onLocalDelete, getToken, getSyncState, getFolderOwner, ownsFolder, isReservedFolderId, getAuthOptions, sendSignInLink, sendSignInCode, verifySignInCode, signInWithPasskey, registerPasskey, linkLocalDatasets, prepareLocalDelete, syncNow, exportOfflineRecovery, repairLegacyDates, exportRepairBackup };
 })();

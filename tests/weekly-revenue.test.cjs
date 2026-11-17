@@ -34,3 +34,28 @@ test('reimportar atualiza uma célula existente e preserva ganhos corrigidos e s
   assert.equal(weekly.apply(ds,[{...row,amount:17}],'USD',true,mk).conflicts,1);
   assert.deepEqual(ds.transactions.map(t=>t.amount),[18,20]);
 });
+test('origem empresarial sobrevive a edição de data e conta; outra semana com mesmo valor é legítima',async()=>{
+  const entries=[{account:'Conta A',date:'2026-11-07',amount:100},{account:'Conta A',date:'2026-11-14',amount:100}];
+  await weekly.identifyEntries(entries,'USD');
+  const one={transactions:[]},two={transactions:[]},id=()=>assert.fail('Importação deve usar a identidade estável');
+  weekly.apply(one,entries.slice(0,1),'USD',true,id);
+  weekly.apply(two,entries.slice(0,1),'USD',true,id);
+  assert.equal(one.transactions[0].id,two.transactions[0].id);
+  Object.assign(one.transactions[0],{date:'2026-11-08',account:'Conta ajustada'});
+  const reloaded=structuredClone(one);
+  assert.equal(weekly.apply(reloaded,entries,'USD',true,id).added,1);
+  assert.equal(weekly.apply(reloaded,entries,'USD',true,id).added,0);
+  assert.equal(reloaded.transactions.length,2);
+  assert.deepEqual(reloaded.transactions.map(t=>[t.date,t.account,t.amount]),[['2026-11-08','Conta ajustada',100],['2026-11-14','Conta A',100]]);
+  assert.equal(new Set(reloaded.transactions.map(t=>t.id)).size,2);
+});
+test('ganho antigo alterado pede decisão e uma nova entrada legítima pode ser incluída sem sobrescrever a antiga',()=>{
+  let n=0;const make=()=>'ficticio'+(++n);
+  const ds={transactions:[{id:make(),account:'Conta A',date:'2026-11-08',amount:100,type:'receita',currency:'USD',weeklyRevenue:true,weeklyImportedAmount:100}]};
+  const rows=[{date:'2026-11-07',account:'Conta A',amount:100}],uncertain=[];
+  assert.equal(weekly.apply(ds,rows,'USD',true,make,{uncertain}).conflicts,1);
+  assert.equal(ds.transactions.length,1);
+  assert.equal(weekly.apply(ds,rows,'USD',true,make,{distinct:new Set([uncertain[0].identity])}).added,1);
+  assert.equal(weekly.apply(ds,rows,'USD',true,make).added,0);
+  assert.equal(ds.transactions[0].date,'2026-11-08');
+});

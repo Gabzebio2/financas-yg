@@ -41,7 +41,7 @@ function harness(extraCloud = {}) {
       readAsText(file) { this.result = file.content; this.onload(); }
     },
   });
-  vm.runInContext(source + "\nglobalThis.core = { Store, CURRENCY_CODES, normCur, normDisplayCur, curFrac, fmtMoney, fmtMoneyInput, maskMoneyEl, dupTxKey, parseMoney, parseDateCell, isValidISODate, sanitizeDataset, mergeCloudDatasets, buildSyncPayload, importBackup, setMoneyMaskCurrency, moneyInputValue, renderFolders };", context);
+  vm.runInContext(source + "\nglobalThis.core = { Store, CURRENCY_CODES, normCur, normDisplayCur, curFrac, fmtMoney, fmtMoneyInput, maskMoneyEl, dupTxKey, parseMoney, parseDateCell, isValidISODate, sanitizeDataset, mergeCloudDatasets, buildSyncPayload, planBackupRestore, importBackup, setMoneyMaskCurrency, moneyInputValue, renderFolders };", context);
   return { ...context.core, localStorage, values, nodes, notifications: () => notifyCount };
 }
 
@@ -388,16 +388,79 @@ test("backup misto inválido é rejeitado inteiro antes da primeira gravação",
   assert.match(h.nodes.get("#toast").textContent, /Nenhuma pasta/);
 });
 
-test("backup válido cria cópias com novos IDs e preserva o conteúdo", () => {
+test("criar cópias explicitamente atribui novos IDs e preserva o conteúdo", () => {
   const h = harness();
   const original = dataset(h);
-  h.importBackup({ size: 100, content: JSON.stringify({ app: "financas-yg", version: 1, datasets: [original] }) });
+  h.importBackup({ size: 100, content: JSON.stringify({ app: "financas-yg", version: 1, datasets: [original] }) }, true);
   const idx = h.Store.loadIndex();
   assert.equal(idx.length, 1);
   assert.notEqual(idx[0].id, original.id);
   const imported = h.Store.loadDataset(idx[0].id);
   assert.notEqual(imported.transactions[0].id, original.transactions[0].id);
   assert.equal(imported.transactions[0].amount, 1234.56);
+});
+
+test("restaurar repetidamente só acrescenta IDs ausentes e conserva edições, baixas e compras legítimas iguais", () => {
+  const h=harness(), ds=dataset(h);
+  ds.transactions.push({...ds.transactions[0],id:"wa_01234567890123456789012345678901"});
+  const file={size:1000,content:JSON.stringify({app:"financas-yg",version:1,datasets:[ds]})};
+  h.importBackup(file);h.importBackup(file);
+  assert.equal(h.Store.loadIndex().length,1);assert.equal(h.Store.loadDataset(ds.id).transactions.length,2);
+  const after=h.Store.loadDataset(ds.id);
+  Object.assign(after.transactions[0],{desc:"Já pago",paymentStatus:"paid",paidOn:"2026-01-14"});
+  h.Store.saveDataset(after);
+  ds.transactions.push({...ds.transactions[0],id:"absence003"});
+  file.content=JSON.stringify({app:"financas-yg",version:1,datasets:[ds]});
+  h.importBackup(file);h.importBackup(file);
+  const current=h.Store.loadDataset(ds.id);
+  assert.equal(current.transactions.length,3);
+  assert.equal(current.transactions[0].paidOn,"2026-01-14");assert.equal(current.transactions[0].desc,"Já pago");
+  assert.equal(current.transactions[1].id,ds.transactions[1].id);
+});
+
+test("tipo e moeda incompatíveis indicam o item, sem conversão silenciosa nem gravação parcial", () => {
+  for(const extra of [{type:"transfer"},{currency:"CAD"}]){
+    const h=harness(), original=dataset(h), invalid=dataset(h,"folder0002");
+    Object.assign(invalid.transactions[0],extra);
+    h.importBackup({size:1000,content:JSON.stringify({app:"financas-yg",version:1,datasets:[original,invalid]})});
+    assert.equal(h.Store.loadIndex().length,0);
+    assert.match(h.nodes.get("#toast").textContent,/lançamento 1 com (tipo|moeda) incompatível/);
+    h.Store.saveDataset(invalid);
+    assert.equal(h.Store.loadDataset(invalid.id),null);
+    assert.equal(h.Store._rawDataset(invalid.id).transactions[0][Object.keys(extra)[0]],Object.values(extra)[0]);
+  }
+});
+
+test("um ID reservado por outra conta não permite restaurar sobre dados ocultos", () => {
+  const h = harness({ownsFolder:()=>false, isReservedFolderId:()=>true});
+  const ds = dataset(h), source = {...ds, name:"Outra pasta"};
+  h.Store.saveDataset(ds);
+  const initial = JSON.stringify(h.Store._rawDataset(ds.id));
+  h.importBackup({size:100,content:JSON.stringify({app:"financas-yg",version:1,datasets:[source]})});
+  assert.equal(JSON.stringify(h.Store._rawDataset(ds.id)),initial);
+  assert.equal(h.Store.loadIndex().length,1);
+  assert.match(h.nodes.get("#toast").textContent,/vínculo anterior/);
+});
+
+test("restauração de baixas C6 é opcional mesmo quando é a única diferença; mês pago mantém sua edição", () => {
+  const h = harness(), saved = dataset(h);
+  const backup = {...saved, c6InvoicePayments:{
+    "2026-10":{paidOn:"2026-11-04",totals:{BRL:123}},
+    "2026-09":{paidOn:"2026-10-05",totals:{BRL:100}}
+  }};
+  saved.c6InvoicePayments = {"2026-09":{paidOn:"2026-10-06",totals:{BRL:101}}};
+  const sanitized = h.sanitizeDataset(saved,{preserveIds:true,preserveContent:true,rejectInvalidTransactions:true});
+  h.Store.saveDataset(sanitized);
+  const keep = h.planBackupRestore([backup],false);
+  assert.equal(keep.changes.length,0);
+  assert.equal(keep.availablePayments.length,1);
+  const recover = h.planBackupRestore([backup],false,true);
+  h.Store.saveDatasets(recover.changes);
+  const current = h.Store.loadDataset(saved.id);
+  assert.equal(current.transactions.length,1);
+  assert.equal(current.c6InvoicePayments["2026-10"].paidOn,"2026-11-04");
+  assert.equal(current.c6InvoicePayments["2026-09"].paidOn,"2026-10-06");
+  assert.equal(h.planBackupRestore([backup],false,true).changes.length,0);
 });
 
 test("backup com versão desconhecida não escreve dados", () => {

@@ -213,11 +213,18 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
    const ps=await pages(j.id);
    return {job:j,pages:ps,statementError:j.status==='ready'?checkC6Subtotals(ps):null};
   }
+  if(body.action==='upload-manifest'){
+   const missing=j.status==='uploading'?await admin('/rest/v1/receipt_job_pages?job_id=eq.'+j.id+'&uploaded=eq.false&order=page_index&select=page_index,media_type,sha256,byte_size,label'):[];
+   return {status:j.status,folder:j.folder_id,missing};
+  }
   if(body.action==='upload'){
-   if(j.status!=='uploading')throw Error('upload_closed');
    const ps=await admin('/rest/v1/receipt_job_pages?job_id=eq.'+j.id+'&page_index=eq.'+Number(body.index)+'&select=*'),p=ps[0];
    if(!p||typeof body.data!=='string'||body.data.length>4200000||!/^[A-Za-z0-9+/]+={0,2}$/.test(body.data))throw Error('invalid_page');
    const bytes=Uint8Array.from(atob(body.data),c=>c.charCodeAt(0));if(bytes.length!==p.byte_size||await digest(bytes)!==p.sha256)throw Error('invalid_page');
+   if(j.status!=='uploading'){
+    if(p.uploaded)return {uploaded:true,status:j.status};
+    throw Error('upload_closed');
+   }
    if(!p.uploaded){
     const r=await fetcher(url+'/storage/v1/object/'+BUCKET+'/'+p.object_path,{method:'POST',headers:{...adminHeaders,'Content-Type':p.media_type,'x-upsert':'false'},body:bytes,signal:AbortSignal.timeout(45000),redirect:'error'});
     if(!r.ok){
@@ -225,10 +232,10 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
      const old=await fetcher(url+'/storage/v1/object/'+BUCKET+'/'+p.object_path,{headers:adminHeaders,signal:AbortSignal.timeout(15000)});
      if(!old.ok||await digest(new Uint8Array(await old.arrayBuffer()))!==p.sha256)throw Error('upload_failed');
     }
-    try{await jobFor(user,j.id);}catch(e){await admin('/storage/v1/object/'+BUCKET,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({prefixes:[p.object_path]})});throw e;}
-    await patch('receipt_job_pages','job_id=eq.'+j.id+'&page_index=eq.'+p.page_index,{uploaded:true});
+    try{await jobFor(user,j.id);}catch(e){if(e.message==='job_not_found')await admin('/storage/v1/object/'+BUCKET,{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({prefixes:[p.object_path]})});throw e;}
    }
-   return {uploaded:true};
+   const status=await rpc('receipt_verify_upload',{p_user:user,p_id:j.id,p_index:p.page_index});
+   return {uploaded:true,status};
   }
   if(body.action==='submit')return {status:await rpc('receipt_submit',{p_user:user,p_id:j.id})};
   if(body.action==='retry')return {status:await rpc('receipt_retry',{p_user:user,p_id:j.id})};

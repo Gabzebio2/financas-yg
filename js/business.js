@@ -111,9 +111,9 @@ const BusinessPanel = (() => {
     const largest=visible.reduce((n,d)=>Math.max(n,Math.abs(model.groups.get(d)?.total||0)),1);
     rail.innerHTML=visible.map(d=>{
       const week=model.groups.get(d),label=week?money(week.total/100,model.unit):'Sem registro';
-      return `<button type="button" class="weekly-card" data-week-date="${d}" aria-label="Semana até ${isoLabel(d)}, ${esc(label)}">
-        <span class="weekly-card-top"><small>${d.slice(0,4)}</small><span class="weekly-check" aria-hidden="true">✓</span></span>
-        <strong>${formatDay.format(new Date(d+'T00:00:00Z')).replace(' de ',' ')}</strong><span class="weekly-card-value">${esc(label)}</span>
+      return `<button type="button" class="weekly-card" data-week-date="${d}"><span class="sr-only">Semana até ${isoLabel(d)}</span>
+        <span class="weekly-card-top" aria-hidden="true"><small>${d.slice(0,4)}</small><span class="weekly-check">✓</span></span>
+        <strong aria-hidden="true">${formatDay.format(new Date(d+'T00:00:00Z')).replace(' de ',' ')}</strong><span class="weekly-card-value">${esc(label)}</span>
         <span class="weekly-meter" aria-hidden="true"><i style="width:${Math.abs(week?.total||0)/largest*100}%;" class="${week?.total<0?'negative':''}"></i></span></button>`;
     }).join('')||'<p class="weekly-empty">Nenhuma semana neste intervalo.</p>';
     if(focused)rail.querySelector('[data-week-date="'+focused+'"]')?.focus({preventScroll:true});
@@ -200,6 +200,21 @@ const BusinessPanel = (() => {
     generation++;preview=null;
     el('weekly-import-form').querySelector('[type=submit]').textContent='Ler planilha';
     el('weekly-import-state').textContent='';
+    el('weekly-import-review')?.remove();
+  }
+  function offerLegacyReview(uncertain,currency,distinct){
+    if(!uncertain.length)return;
+    const details=document.createElement('details'),summary=document.createElement('summary');
+    details.id='weekly-import-review';summary.textContent='Conferir possíveis coincidências ('+uncertain.length+')';details.append(summary);
+    for(const {row,identity,existing} of uncertain){
+      const label=document.createElement('label'),checkbox=document.createElement('input');
+      checkbox.type='checkbox';
+      checkbox.addEventListener('change',()=>checkbox.checked?distinct.add(identity):distinct.delete(identity));
+      const candidates=existing.map(tx=>tx.account+' em '+isoLabel(tx.date)).join(', ');
+      label.append(checkbox,document.createTextNode(' Incluir como ganho distinto: '+row.account+' · '+isoLabel(row.date)+' · '+money(row.amount,currency)+'. Já consta: '+candidates+'.'));
+      details.append(label);
+    }
+    el('weekly-import-state').after(details);
   }
   function openImport(){
     const ds=start();resetPreview();el('weekly-file').value='';
@@ -220,13 +235,16 @@ const BusinessPanel = (() => {
         if(version!==generation || !el('weekly-import-dialog').open)return;
         folder();const data=WeeklyRevenue.parse(XLSX.read(bytes,{type:'array',sheets:['Semanal','semanal','SEMANAL']}),year,XLSX);
         const dates=[...new Set(data.entries.map(e=>e.date))].sort();
-        const counts=WeeklyRevenue.apply(structuredClone(ds),data.entries,currency,true,uid);
-        preview={data,id,year,currency};
+        await WeeklyRevenue.identifyEntries(data.entries,currency);
+        if(version!==generation || !el('weekly-import-dialog').open)return;
+        const uncertain=[],distinct=new Set();
+        const counts=WeeklyRevenue.apply(structuredClone(folder()),data.entries,currency,true,uid,{uncertain});
+        preview={data,id,year,currency,distinct};
         state.textContent=`${data.accounts.length} contas · ${dates.length} semanas, de ${isoLabel(dates[0])} a ${isoLabel(dates.at(-1))} · ${currency}. ${counts.added} novos, ${counts.updated} atualizações.`+(counts.conflicts?' Edições feitas no app serão preservadas.':'')+(data.skipped?' Células sem valor numérico: '+data.skipped+'.':'');
-        button.textContent='Aplicar à pasta';return;
+        offerLegacyReview(uncertain,currency,distinct);button.textContent='Aplicar à pasta';return;
       }
       const {data,id}=preview;
-      const counts=WeeklyRevenue.apply(ds,data.entries,currency,true,uid);
+      const counts=WeeklyRevenue.apply(ds,data.entries,currency,true,uid,{distinct:preview.distinct});
       ds.weekly={accounts:[...new Set([...accountNames(ds),...data.accounts])],currency,year,sheetId:id||ds.weekly?.sheetId||''};
       save(ds);el('weekly-import-dialog').close();
       toast(`Planilha atualizada: ${counts.added} novos, ${counts.updated} atualizados.`+(counts.conflicts?' '+counts.conflicts+' edição(ões) do app preservada(s).':''));
@@ -270,7 +288,8 @@ const BusinessPanel = (() => {
         entries.push({account,date,amount:value});
       }
       if(!entries.length)throw Error('Informe ou altere o ganho de pelo menos uma conta.');
-      WeeklyRevenue.apply(ds,entries,currency,false,uid);
+      const result=WeeklyRevenue.apply(ds,entries,currency,false,uid);
+      if(result.conflicts)throw Error('Há mais de um ganho para essa conta e semana. Abra os lançamentos em Transações para editar cada um.');
       ds.weekly={...ds.weekly,currency,accounts:accountNames(ds)};selected=date;multiple=false;
       if((filterFrom&&date<filterFrom)||(filterTo&&date>filterTo)){
         filterFrom='';filterTo='';el('weekly-from').value='';el('weekly-to').value='';
@@ -284,7 +303,7 @@ const BusinessPanel = (() => {
     for(const id of ['weekly-currency','weekly-edit-currency'])el(id).innerHTML=opts;
     el('weekly-import').addEventListener('click',openImport);el('weekly-edit').addEventListener('click',()=>openEdit(false));
     el('weekly-import-form').addEventListener('submit',importSheet);
-    el('weekly-import-form').addEventListener('input',resetPreview);
+    el('weekly-import-form').addEventListener('input',e=>{if(!e.target.closest('#weekly-import-review'))resetPreview();});
     el('weekly-import-dialog').addEventListener('close',resetPreview);
     document.querySelectorAll('[data-week-close]').forEach(b=>b.addEventListener('click',()=>b.closest('dialog').close()));
     el('weekly-edit-date').addEventListener('change',fillWeek);el('weekly-edit-currency').addEventListener('change',fillWeek);

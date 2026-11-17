@@ -29,6 +29,14 @@ test('PDF real de cinco páginas é repartido em 2+2+1 sem omitir nem reordenar 
   }
   assert.deepEqual(widths, [200,201,202,203,204]);
 });
+test('repreparar um PDF mantém o hash de cada página e permite retomar após reabrir',async()=>{
+ const pdf=await PDFLib.PDFDocument.create();pdf.addPage([100,200]);pdf.addPage([150,300]);
+ const data=await pdf.save(),file={type:'application/pdf',name:'ficticio.pdf',size:data.length,arrayBuffer:async()=>data};
+ const first=await collect(environment().prepareParts(file,{singlePage:true}));
+ const second=await collect(environment().prepareParts(file,{singlePage:true}));
+ assert.deepEqual(first.map(p=>p.data),second.map(p=>p.data));
+ for(const p of first)assert.equal((await PDFLib.PDFDocument.load(p.data,{updateMetadata:false})).getCreationDate(),undefined);
+});
 
 test('chunk PDF acima de 3 MiB recua para uma página sem pular a seguinte', async () => {
   const copies = [];

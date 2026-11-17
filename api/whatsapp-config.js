@@ -24,7 +24,8 @@ module.exports = async (req, res) => {
     ]);
     const name = folders?.[0]?.name || "Pasta indisponível", configured = wa.ready(), enabled = channel.enabled === true;
     return res.status(200).json({
-      configured, enabled, actionsReady: configured && enabled && !!folders?.length, webhookUrl: prepared.webhookUrl,
+      configured: configured && wa.readingReady(), enabled, actionsReady: configured && enabled && !!folders?.length, webhookUrl: prepared.webhookUrl,
+      readingReady:wa.readingReady(),
       channel: { phoneNumberId: channel.phone_number_id, folderId: channel.folder_id, folderName: name, senders: (channel.allowed_senders || []).map(wa.mask).map(masked => ({ masked })) },
       pending: (drafts || []).map(d => ({ id: d.draft_id, status: "pending", summary: d.status === "error" ? "Leitura ainda não concluída" : d.lease_token ? "Preparando leitura…" : "Confira antes de registrar", createdAt: d.received_at, senderMasked: wa.mask(d.sender_e164), folderId: d.folder_id, folderName: name, transaction: d.candidate || {}, warnings: d.warnings || [], canConfirm: !d.lease_token && d.can_confirm && wa.canConfirm(d.candidate), revision: String(d.revision) })),
     });

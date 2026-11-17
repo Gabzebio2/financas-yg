@@ -9,6 +9,7 @@ const Dashboard = (() => {
   let receiptFilter = null;
   let sort = { key: "date", dir: -1 };
   let rowLimit = 100;
+  let originPage = 0, originGroups = [];
   const charts = {};
   let editingId = null;
   let txDateEdited = false;
@@ -99,6 +100,7 @@ const Dashboard = (() => {
     billConfirmations.forEach(({timer}) => clearTimeout(timer));
     billConfirmations.clear();
     ds = loaded;
+    closeOriginReview();
     receiptFilter = null;
     // Lembra a última pasta pessoal aberta (usada no menu Pessoa física/Empresa)
     if (ds.profile !== "pj") {
@@ -145,6 +147,7 @@ const Dashboard = (() => {
 
   function closeFolder() {
     ds = null;
+    closeOriginReview();
     receiptFilter = null;
     editingId = null;
     receiptRead = null;
@@ -169,9 +172,9 @@ const Dashboard = (() => {
     selectedTx.clear();
     undoStack.length = 0; // snapshots locais não podem reverter a sincronização
     updateUndoBtn();
-    if (pendingParcTx) {
-      pendingParcTx = ds.transactions.find((t) => t.id === pendingParcTx.id) || null;
-      if (!pendingParcTx) $("#modal-del-parc").classList.add("hidden");
+    if (pendingParcTx && !ds.transactions.some(t => t.id === pendingParcTx.id)) {
+      pendingParcTx = null;
+      $("#modal-del-parc").classList.add("hidden");
     }
     renderAll();
     return true;
@@ -326,6 +329,7 @@ const Dashboard = (() => {
   }
   function renderAll() {
     const today = todayISO();
+    renewMonthlySeries(today.slice(0,7));
     if (billCalendarDate && billCalendarDate.slice(0,7) !== today.slice(0,7) &&
         fil.mode === "month" && fil.month === billCalendarDate.slice(0,7)) {
       fil.month = today.slice(0,7);
@@ -348,6 +352,7 @@ const Dashboard = (() => {
     renderMetas();
     renderCharts();
     renderTable();
+    if ($("#tx-origin-review").open) refreshOriginReview();
   }
 
   // Botão "BRL ▾" do cabeçalho + menu de moedas + linha de status da cotação
@@ -803,27 +808,22 @@ const Dashboard = (() => {
   function renderCharts() {
     const palette = themePalette();
     const posted = ds.transactions.filter(t => !pendingIndividualBill(t) && inCats(t));
-    if (posted.some((t) => !Number.isFinite(dispAmount(t)))) {
-      categoryLegend([]);
-      ["chart-cat", "chart-evo", "chart-saldo", "chart-conta"].forEach((id) => {
-        if (charts[id]) { charts[id].destroy(); delete charts[id]; }
-        setEmpty(id, true, "Cotação indisponível para comparar estas moedas. Os valores originais estão na lista de transações.");
-      });
-      return;
-    }
     if (typeof Chart === "undefined") {
       categoryLegend([]);
       ["chart-cat", "chart-evo", "chart-saldo", "chart-conta"].forEach((id) => setEmpty(id, true, "Os gráficos estão indisponíveis. Seus valores e transações continuam acessíveis."));
       return;
     }
-    const txs = filteredTxs();
+    const expenses = filteredTxs().filter(t => t.type === "despesa");
+    const missingExpenseRate = expenses.some(t => !Number.isFinite(dispAmount(t)));
+    const comparable = missingExpenseRate ? [] : expenses;
+    const expenseMessage = missingExpenseRate ? "Falta cotação para somar os gastos deste período." : "Sem despesas no período selecionado";
 
     /* 1. Rosca — gastos por categoria */
     const byCat = Object.create(null);
-    txs.filter((t) => t.type === "despesa").forEach((t) => { byCat[t.category] = (byCat[t.category] || 0) + dispAmount(t); });
+    comparable.forEach((t) => { byCat[t.category] = (byCat[t.category] || 0) + dispAmount(t); });
     const catEntries = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
     categoryLegend(catEntries);
-    setEmpty("chart-cat", !catEntries.length, "Sem despesas no período selecionado");
+    setEmpty("chart-cat", !catEntries.length, expenseMessage);
     mkChart("chart-cat", {
       type: "doughnut",
       data: {
@@ -848,12 +848,14 @@ const Dashboard = (() => {
     const recM = Object.create(null), despM = Object.create(null);
     posted.forEach((t) => {
       const ym = accountingDate(t).slice(0, 7);
-      if (t.type === "receita") recM[ym] = (recM[ym] || 0) + dispAmount(t);
-      else despM[ym] = (despM[ym] || 0) + dispAmount(t);
+      const group = t.type === "receita" ? recM : despM;
+      group[ym] = (group[ym] ?? 0) + dispAmount(t);
     });
     const labels = months.map(fmtMonth);
-    const recData = months.map((ym) => recM[ym] || 0);
-    const despData = months.map((ym) => despM[ym] || 0);
+    const point = value => Number.isFinite(value) ? value : null;
+    const recData = months.map((ym) => point(recM[ym] ?? 0));
+    const despData = months.map((ym) => point(despM[ym] ?? 0));
+    $("#chart-evo-note").hidden = !recData.includes(null) && !despData.includes(null);
 
     setEmpty("chart-evo", !months.length, "Sem transações ainda");
     mkChart("chart-evo", {
@@ -873,9 +875,11 @@ const Dashboard = (() => {
     const allM = allMonths();
     let run = 0;
     const cumByMonth = Object.create(null);
-    allM.forEach((ym) => { run += (recM[ym] || 0) - (despM[ym] || 0); cumByMonth[ym] = run; });
-    const saldoData = months.map((ym) => (recM[ym] || 0) - (despM[ym] || 0));
-    const cumData = months.map((ym) => cumByMonth[ym]);
+    const monthBalance = ym => (recM[ym] ?? 0) - (despM[ym] ?? 0);
+    allM.forEach((ym) => { run += monthBalance(ym); cumByMonth[ym] = run; });
+    const saldoData = months.map((ym) => point(monthBalance(ym)));
+    const cumData = months.map((ym) => point(cumByMonth[ym]));
+    $("#chart-saldo-note").hidden = !saldoData.includes(null) && !cumData.includes(null);
 
     setEmpty("chart-saldo", !months.length, "Sem transações ainda");
     mkChart("chart-saldo", {
@@ -896,12 +900,12 @@ const Dashboard = (() => {
 
     /* 4. Barras horizontais — gastos por cartão/conta */
     const byAcc = Object.create(null);
-    txs.filter((t) => t.type === "despesa").forEach((t) => {
+    comparable.forEach((t) => {
       const a = t.account || "(sem cartão)";
       byAcc[a] = (byAcc[a] || 0) + dispAmount(t);
     });
     const accEntries = Object.entries(byAcc).sort((a, b) => b[1] - a[1]).slice(0, 8);
-    setEmpty("chart-conta", !accEntries.length, "Sem despesas no período selecionado");
+    setEmpty("chart-conta", !accEntries.length, expenseMessage);
     mkChart("chart-conta", {
       type: "bar",
       data: {
@@ -936,32 +940,91 @@ const Dashboard = (() => {
     return cur || { from: "0000-00", amount: L.amount, categories: L.categories };
   }
 
+  function nextCalendarMonth(ym) {
+    const [year,month] = ym.split("-").map(Number);
+    return month === 12 ? String(year + 1).padStart(4,"0") + "-01" : ym.slice(0,5) + String(month + 1).padStart(2,"0");
+  }
+
+  function stopRenewal(anchor) {
+    delete anchor.repeatMonthlyDay;
+    delete anchor.repeatThrough;
+    delete anchor.repeatKey;
+  }
+
+  // O último mês gerado faz parte da mesma gravação das novas ocorrências.
+  // Isso também preserva exclusões individuais e edições na data de vencimento.
+  function renewMonthlySeries(through) {
+    const due = t => t.fixed && t.groupId && Number.isInteger(t.repeatMonthlyDay) && t.repeatMonthlyDay >= 1 && t.repeatMonthlyDay <= 31 &&
+      /^[a-z0-9]{6,24}$/.test(t.repeatKey || "") && isValidISODate(t.repeatThrough + "-01") && t.repeatThrough < through;
+    if (!ds.transactions.some(due)) return;
+    if (typeof Cloud !== "undefined" && typeof Cloud.ownsFolder === "function" && !Cloud.ownsFolder(ds.id)) return;
+    const latest = Store.loadDataset(ds.id);
+    if (!latest) return;
+    const anchors = latest.transactions.filter(due);
+    if (!anchors.length) { ds = latest; return; }
+    const ids = new Set(latest.transactions.map(t => t.id));
+    for (const anchor of anchors) {
+      const months = new Set(latest.transactions.filter(t => t.fixed && t.groupId === anchor.groupId).map(t => t.repeatMonth || t.date.slice(0,7)));
+      for (let month = nextCalendarMonth(anchor.repeatThrough); month.length === 7 && month <= through; month = nextCalendarMonth(month)) {
+        const id = "mr" + anchor.repeatKey + "x" + month.replace("-","");
+        if (months.has(month)) continue;
+        if (ids.has(id) || latest.transactions.length >= 100000) {
+          toast("Revise a série fixa antes de continuar a renovação desta pasta."); return;
+        }
+        const [year,number] = month.split("-").map(Number);
+        const day = Math.min(anchor.repeatMonthlyDay,daysInMonth(year,number));
+        latest.transactions.push({id,groupId:anchor.groupId,fixed:true,repeatMonth:month,date:month+"-"+String(day).padStart(2,"0"),
+          amount:anchor.amount,currency:anchor.currency,type:anchor.type,desc:anchor.desc,category:anchor.category,account:anchor.account,
+          installment:null,totalValue:null,...(anchor.c6Section && {c6Section:anchor.c6Section}),
+          ...(anchor.type === "despesa" && anchor.paymentStatus && {paymentStatus:"pending"})});
+        ids.add(id);
+      }
+      anchor.repeatThrough = through;
+    }
+    try { Store.saveDataset(latest); ds = latest; }
+    catch { /* Store notifica o erro. A próxima abertura tenta de novo. */ }
+  }
+
   function limitStats() {
-    const p = periodRange();
-    const ym = refMonth();
-    const spentByCat = Object.create(null);
-    ds.transactions
-      .filter((t) => t.type === "despesa" && !pendingIndividualBill(t) && inPeriod(t, p))
-      .forEach((t) => {
-        const k = stripAccents(t.category);
-        spentByCat[k] = (spentByCat[k] ?? 0) + dispAmount(t);
-      });
-    return (ds.limits || []).map((base) => {
-      const v = versionFor(base, ym);
-      // Valor do limite convertido da moeda em que foi definido para a do painel
-      const amount = convertAmount(v.amount, base.currency, dispCur());
-      const L = { ...base, amount, categories: v.categories, since: v.from !== "0000-00" ? v.from : null };
-      // O filtro de categorias do painel também filtra os limites:
-      // grupos sem nenhuma categoria selecionada somem; nos demais, só somam as categorias visíveis
-      const visibleCats = L.categories.filter((c) => !fil.cats || fil.cats.has(stripAccents(c)));
-      if (!visibleCats.length) return null;
-      const spent = visibleCats.reduce((s, c) => s + (spentByCat[stripAccents(c)] ?? 0), 0);
-      const pct = L.amount > 0 ? (spent / L.amount) * 100 : 0;
-      return {
-        ...L, visibleCats,
-        filtered: visibleCats.length < L.categories.length,
-        spent, remaining: L.amount - spent, pct, unavailable: !Number.isFinite(amount) || !Number.isFinite(spent),
-      };
+    if (!ds.limits?.length) return [];
+    const period = periodRange();
+    const spentByMonth = new Map();
+    let first = "", last = "";
+    for (const t of ds.transactions) {
+      if (pendingIndividualBill(t) || !inPeriod(t, period)) continue;
+      const month = accountingDate(t).slice(0,7);
+      if (!first || month < first) first = month;
+      if (month > last) last = month;
+      if (t.type !== "despesa" || !inCats(t)) continue;
+      if (!spentByMonth.has(month)) spentByMonth.set(month,new Map());
+      const byCategory = spentByMonth.get(month), category = stripAccents(t.category);
+      byCategory.set(category,(byCategory.get(category) ?? 0) + dispAmount(t));
+    }
+    first = period?.from?.slice(0,7) || first || period?.to?.slice(0,7) || refMonth();
+    last = period?.to?.slice(0,7) || last || first;
+    return ds.limits.map(base => {
+      const versions = base.versions?.length ? base.versions.slice().sort((a,b) => a.from.localeCompare(b.from)) : [{from:"0000-00",amount:base.amount,categories:base.categories}];
+      const visible = new Set(), overMonths = [];
+      let amount = 0, spent = 0, filtered = false, vi = -1;
+      for (let month = first; month <= last && month.length === 7; month = nextCalendarMonth(month)) {
+        while (vi + 1 < versions.length && versions[vi+1].from <= month) vi++;
+        if (vi < 0) continue;
+        const version = versions[vi];
+        const categories = version.categories.filter(c => !fil.cats || fil.cats.has(stripAccents(c)));
+        if (!categories.length) continue;
+        filtered ||= categories.length < version.categories.length;
+        const cap = convertAmount(version.amount,base.currency,dispCur());
+        const expenses = spentByMonth.get(month);
+        const used = categories.reduce((sum,c) => sum + (expenses?.get(stripAccents(c)) ?? 0),0);
+        categories.forEach(c => visible.add(c));
+        amount += cap;
+        spent += used;
+        if (used > cap) overMonths.push(month);
+      }
+      if (!visible.size) return null;
+      const since = first === last && versions[vi].from !== "0000-00" ? versions[vi].from : null;
+      return {...base,amount,spent,remaining:amount-spent,pct:amount>0 ? spent/amount*100 : 0,
+        since,visibleCats:[...visible],filtered,overMonths,unavailable:!Number.isFinite(amount) || !Number.isFinite(spent)};
     }).filter(Boolean);
   }
 
@@ -983,9 +1046,9 @@ const Dashboard = (() => {
     } else {
       const totLim = groups.reduce((s, g) => s + g.amount, 0);
       const totSpent = groups.reduce((s, g) => s + g.spent, 0);
-      const nOver = groups.filter((g) => g.remaining < 0).length;
+      const nOver = groups.filter((g) => g.overMonths.length).length;
       const pct = totLim > 0 ? Math.round((totSpent / totLim) * 100) : 0;
-      ov.innerHTML = `${fmtD(totSpent)} gastos de ${fmtD(totLim)} ${label} (${pct}%)` +
+      ov.innerHTML = `<span class="private-total">${fmtD(totSpent)} gastos de ${fmtD(totLim)} ${label} (${pct}%)</span>` +
         (nOver
           ? ` · <span class="limit-over-txt">${nOver} limite(s) ultrapassado(s)</span>`
           : ` · <span class="limit-ok-txt">Tudo dentro do limite</span>`);
@@ -1004,7 +1067,7 @@ const Dashboard = (() => {
             <button class="btn-icon" data-action="edit-limit" title="Editar limite" aria-label="Editar limite">${uiIcon("edit")}</button>
             <button class="btn-icon" data-action="delete-limit" title="Excluir limite" aria-label="Excluir limite">${uiIcon("trash")}</button>
           </div></div><p class="hint">Cotação indisponível para comparar os gastos e este limite.</p></div>`;
-        const over = g.remaining < 0;
+        const over = g.overMonths.length > 0;
         const warn = !over && g.pct >= 70;
         const barCls = over ? "over" : warn ? "warn" : "";
         return `
@@ -1022,7 +1085,7 @@ const Dashboard = (() => {
           <div class="limit-nums">
             <span>Gasto: <b class="${over ? "limit-over-txt" : ""}">${fmtD(g.spent)}</b> de ${fmtD(g.amount)} <span class="limit-pct">(${g.pct.toFixed(0)}%)</span></span>
             <span>${over
-              ? `<span class="limit-over-txt">Ultrapassou em ${fmtD(-g.remaining)}</span>`
+              ? `<span class="limit-over-txt">${fil.mode === "month" ? "Ultrapassou em " + fmtD(-g.remaining) : "Acima do teto em " + g.overMonths.map(fmtMonth).join(", ")}</span>`
               : `<span class="limit-ok-txt">Falta ${fmtD(g.remaining)}</span>`}</span>
           </div>
         </div>`;
@@ -1043,7 +1106,7 @@ const Dashboard = (() => {
         datasets: [
           {
             label: "Gasto", data: groups.map((g) => g.spent),
-            backgroundColor: groups.map((g) => (g.remaining < 0 ? palette.expense : g.pct >= 70 ? palette.primary : palette.revenue)),
+            backgroundColor: groups.map((g) => (g.overMonths.length ? palette.expense : g.pct >= 70 ? palette.primary : palette.revenue)),
             borderRadius: 5, maxBarThickness: 24,
           },
           {
@@ -1103,7 +1166,7 @@ const Dashboard = (() => {
         <div class="limit-row-top"><div class="limit-name">${escapeHtml(m.name)}</div><div class="limit-actions">
           <button class="btn-icon" data-action="edit-meta" title="Editar meta" aria-label="Editar meta">${uiIcon("edit")}</button>
           <button class="btn-icon" data-action="delete-meta" title="Excluir meta" aria-label="Excluir meta">${uiIcon("trash")}</button>
-        </div></div><p class="hint">Cotação indisponível para calcular o progresso nesta moeda.${s.linked ? "" : ` Guardado: ${fmtMoney(m.saved, normCur(m.currency))} de ${fmtMoney(m.target, normCur(m.currency))} (${normCur(m.currency)} original).`}</p></div>`;
+        </div></div><p class="hint">Cotação indisponível para calcular o progresso nesta moeda.${s.linked ? "" : ` <span class="private-total">Guardado: ${fmtMoney(m.saved, normCur(m.currency))} de ${fmtMoney(m.target, normCur(m.currency))} (${normCur(m.currency)} original).</span>`}</p></div>`;
       const empty = s.linked && s.target <= 0;
       const icon = uiIcon(s.done ? "check" : (s.linked ? "people" : "target"), 20);
       const catLine = s.linked ? `<span class="limit-cats-line">· cobrança de ${escapeHtml(m.category)}</span>` : "";
@@ -1532,12 +1595,18 @@ const Dashboard = (() => {
     const month = fil.mode === "month" && fil.month ? fil.month : currentMonth;
     const cycles = invoiceCycles || InstallmentSchedule.c6Invoices(ds.transactions, today);
     // Após o fechamento, a fatura a vencer e a nova em curso coexistem.
-    const started = cycles.filter(i => {
-      if (i.month < "2026-11" || i.startDate > today) return false;
-      const currentCycle = month === currentMonth && today <= i.closingDate;
-      return i.month === month || i.dueDate.slice(0,7) === month || currentCycle;
-    });
-    const invoices = started.map(i => invoiceBill(i, today)).filter(Boolean);
+    const started = cycles.filter(i => i.month >= "2026-11" && i.startDate <= today);
+    const invoices = [];
+    const pastDue = [];
+    for (const i of started) {
+      const bill = invoiceBill(i, today);
+      if (!bill) continue;
+      if (i.month === month || i.dueDate.slice(0,7) === month || month === currentMonth && today <= i.closingDate) {
+        invoices.push(bill);
+      } else if (month === currentMonth && i.dueDate < today && (isPendingBill(bill) || billConfirmations.has(bill.id))) {
+        pastDue.push(bill);
+      }
+    }
     const bills = ds.transactions.filter(t => t.paymentStatus && !groupedC6Ids.has(t.id) && billDueDate(t).slice(0,7) === month).concat(invoices);
     const active = bills.filter(isPendingBill);
     const settled = bills.filter(t => t.type === "despesa" && t.paymentStatus === "paid")
@@ -1560,14 +1629,16 @@ const Dashboard = (() => {
     const list = agenda ? `<div class="bill-list bill-agenda">${agenda}</div>` :
       `<div class="bill-empty"><span class="bill-empty-icon">${uiIcon("check", 17)}</span>
         <p>${settled.length ? "Todas as contas deste mês estão pagas." : "Nenhuma conta a pagar neste mês."}</p></div>`;
-    const expanded = panel.querySelector("details")?.open;
-    const history = historyItems.length ? `<details class="bill-history" ${expanded ? "open" : ""}><summary>${uiIcon("history", 17)} Contas pagas (${historyItems.length}) <span class="bill-chevron">${uiIcon("down", 16)}</span></summary>
+    const expanded = panel.querySelector(".bill-history[data-paid]")?.open;
+    const overdue = pastDue.length ? `<details class="bill-history bill-overdue" ${panel.querySelector(".bill-overdue")?.open ? "open" : ""}><summary>${uiIcon("calendar", 17)} Faturas anteriores em atraso (${pastDue.length}) <span class="bill-chevron">${uiIcon("down", 16)}</span></summary>
+      <div class="bill-list">${pastDue.map(t => billRow(t, today, !isPendingBill(t))).join("")}</div></details>` : "";
+    const history = historyItems.length ? `<details class="bill-history" data-paid ${expanded ? "open" : ""}><summary>${uiIcon("history", 17)} Contas pagas (${historyItems.length}) <span class="bill-chevron">${uiIcon("down", 16)}</span></summary>
       <div class="bill-list">${historyItems.map(t => billRow(t, today)).join("")}</div></details>` : "";
     const scroll = panel.querySelector(".bill-agenda")?.scrollTop || 0;
     const focused = document.activeElement;
     const refocus = focused && panel.contains(focused);
     const focusedRow = refocus && focused.closest(".bill-row")?.dataset.id;
-    panel.innerHTML = header + list + history;
+    panel.innerHTML = header + overdue + list + history;
     if (scroll && agenda) panel.querySelector(".bill-agenda").scrollTop = scroll;
     if (refocus) {
       const sameRow = Array.from(panel.querySelectorAll(".bill-row")).find(row => row.dataset.id === focusedRow && !row.closest("details:not([open])"));
@@ -1633,7 +1704,7 @@ const Dashboard = (() => {
     }
     renderAll();
     if (action === "pay" && source) {
-      const selector = source === "agenda" ? "#dash-bills .bill-agenda .bill-row" : "#tx-tbody tr";
+      const selector = source === "agenda" ? "#dash-bills .bill-row" : "#tx-tbody tr";
       $$(selector).find(row => row.dataset.id === id)?.classList.add("bill-just-paid");
     }
   }
@@ -1647,6 +1718,83 @@ const Dashboard = (() => {
       return label + '<br><span title="Data da compra">Cpr. ' + fmtDate(t.purchaseDate) + '</span>';
     }
     return label;
+  }
+
+  function historicalOrigins(transactions) {
+    const matches = new Map();
+    function note(key, label, index) {
+      const id = JSON.stringify(key);
+      if (!matches.has(id)) matches.set(id,{label,indices:[]});
+      matches.get(id).indices.push(index);
+    }
+    transactions.forEach((tx,index) => {
+      const ref = typeof tx.referenceId === "string" && tx.referenceId.trim();
+      const account = stripAccents(tx.account).replace(/\s+/g," ");
+      if (ref && !/^(?:[-–—]+|n\/?a|s\/?n|sem refer[eê]ncia|null|undefined)$/i.test(ref) && account &&
+          isValidISODate(tx.date) && !tx.dateEstimated && Number.isFinite(tx.amount) &&
+          CURRENCY_CODES.includes(tx.currency) && ["receita","despesa"].includes(tx.type)) {
+        const bank = ["banco c6","c6 bank"].includes(account) ? "c6" : account;
+        note(["banco",bank,ref,tx.date,tx.amount,tx.currency,tx.type,tx.installment || "",tx.c6Section || "",tx.billClosingDate || ""],
+          "Referência bancária " + ref + " · mesma conta, data, valor, moeda, tipo e parcela",index);
+      }
+      const week = tx.weeklyRevenue && tx.weeklySource;
+      if (week && typeof week.account === "string" && week.account.trim() && isValidISODate(week.date) && CURRENCY_CODES.includes(week.currency)) {
+        note(["planilha",stripAccents(week.account),week.date,week.currency],
+          "Mesma célula da planilha · " + week.account + " · semana de " + fmtDate(week.date) + " · " + week.currency,index);
+      }
+      const photo = tx.photoSource;
+      if (photo && /^[a-f0-9]{64}$/.test(photo.hash) && /^[a-f0-9]{32}$/.test(photo.row) &&
+          Number.isSafeInteger(photo.occurrence) && photo.occurrence > 0) {
+        note(["foto",photo.hash,photo.row,photo.occurrence],"Mesma foto, linha e ocorrência (" + photo.occurrence + ")",index);
+      }
+    });
+    const groups = new Map();
+    for (const {label,indices} of matches.values()) {
+      if (indices.length < 2) continue;
+      // Se duas evidências apontam exatamente para o mesmo grupo, exiba-o uma vez.
+      const id = indices.join(",");
+      if (!groups.has(id)) groups.set(id,{labels:[],items:indices.map(i => transactions[i])});
+      groups.get(id).labels.push(label);
+    }
+    return [...groups.values()];
+  }
+  function closeOriginReview() {
+    $("#tx-origin-review").open = false;
+    $("#tx-origin-results").innerHTML = "";
+    $("#tx-origin-status").textContent = "";
+    originPage = 0; originGroups = [];
+  }
+  function refreshOriginReview() {
+    if (!ds || !$("#tx-origin-review").open) return;
+    originGroups = historicalOrigins(ds.transactions);
+    renderOriginPage();
+  }
+  function renderOriginPage() {
+    const size = 20, count = originGroups.reduce((sum,g) => sum + g.items.length,0);
+    const pages = Math.max(1,Math.ceil(count/size));
+    originPage = Math.min(Math.max(0,originPage),pages-1);
+    const start = originPage*size, end = start+size;
+    let offset = 0, html = "";
+    for (const group of originGroups) {
+      const first = Math.max(0,start-offset), last = Math.min(group.items.length,end-offset);
+      offset += group.items.length;
+      if (last > first) {
+        html += '<section><h4>' + escapeHtml(group.labels.join(" / ")) + '</h4><ul>' + group.items.slice(first,last).map(tx =>
+          '<li><span><strong>' + escapeHtml(tx.desc || "Sem descrição") + '</strong><small>' + escapeHtml([fmtDate(tx.date),tx.account,tx.installment && "Parcela "+tx.installment].filter(Boolean).join(" · ")) +
+          '</small></span><span class="origin-amount">' + (tx.type === "despesa" ? "− " : "+ ") + escapeHtml(fmtTxAmount(tx)) + '</span></li>'
+        ).join("") + '</ul></section>';
+      }
+      if (offset >= end) break;
+    }
+    $("#tx-origin-results").innerHTML = html;
+    $("#tx-origin-prev").classList.toggle("hidden",pages===1);
+    $("#tx-origin-next").classList.toggle("hidden",pages===1);
+    $("#tx-origin-prev").disabled = originPage===0;
+    $("#tx-origin-next").disabled = originPage===pages-1;
+    $("#tx-origin-status").textContent = count ? originGroups.length +
+      (originGroups.length===1 ? " grupo com origem coincidente" : " grupos com origem coincidente") +
+      (pages>1 ? " · Página " + (originPage+1) + " de " + pages : "") :
+      "Nenhuma coincidência encontrada entre as referências bancárias, semanas de origem e fotos identificadas.";
   }
 
   function renderTable() {
@@ -1841,15 +1989,32 @@ const Dashboard = (() => {
     if (!pending || ds?.id !== pending.folder || pending.owner !== (typeof Cloud !== "undefined" ? Cloud.getSyncState().owner : null)) return null;
     return ds.transactions.find(t => t.id === pending.id);
   }
+  function deletionScope(tx, mode) {
+    const siblings = tx.fixed ? fixedSiblings(tx) : parcSiblings(tx);
+    const fixedMonth = t => t.repeatMonth || t.date.slice(0,7);
+    if (mode === "one") return [tx];
+    if (mode === "all") return siblings;
+    return siblings.filter(t => tx.fixed ? fixedMonth(t) >= fixedMonth(tx) : installmentIdx(t) >= installmentIdx(tx));
+  }
   function deleteSeries(mode) {
     const tx = pendingSeriesTx(pendingParcTx); pendingParcTx = null;
     $("#modal-del-parc").classList.add("hidden");
     if (!tx) return;
-    const siblings = tx.fixed ? fixedSiblings(tx) : parcSiblings(tx);
-    const chosen = mode === "one" ? [tx] : mode === "all" ? siblings : siblings.filter(t => tx.fixed ? t.date.slice(0,7) >= tx.date.slice(0,7) : installmentIdx(t) >= installmentIdx(tx));
+    const chosen = deletionScope(tx,mode);
     const folder=ds.id, owner=typeof Cloud !== "undefined" ? Cloud.getSyncState().owner : null;
     askConfirm("Confirmar exclusão", chosen.length + " lançamento(s) de “" + tx.desc + "” serão excluídos. " + (mode === "all" ? "Inclui os meses anteriores e seguintes desta série." : mode === "one" ? "As outras parcelas serão mantidas." : "Os meses anteriores serão mantidos."), () => {
       if(ds?.id!==folder || owner !== (typeof Cloud !== "undefined" ? Cloud.getSyncState().owner : null)) return;
+      if (!refreshImportTarget()) return;
+      const current = ds.transactions.find(t => t.id === tx.id);
+      const previousIds = new Set(chosen.map(t => t.id));
+      const latest = current ? deletionScope(current,mode) : [];
+      if (!current || latest.length !== previousIds.size || latest.some(t => !previousIds.has(t.id))) {
+        toast("A série mudou em outro aparelho. Confira as ocorrências antes de excluir."); return;
+      }
+      if (tx.fixed && mode !== "one" && tx.groupId) {
+        const anchor = ds.transactions.find(t => t.groupId === tx.groupId && t.repeatMonthlyDay);
+        if (anchor) stopRenewal(anchor);
+      }
       removeTxs(chosen.map(t=>t.id), chosen.length + " lançamento(s) excluído(s).");
     });
   }
@@ -1974,6 +2139,8 @@ const Dashboard = (() => {
     $("#tx-parc-wrap").classList.toggle("hidden", isEdit);
     $("#tx-parcelado").checked = false;
     $("#tx-fixa").checked = !!tx?.fixed;
+    const renew = $("#tx-renew");
+    renew.checked = renew.defaultChecked = !!(tx?.fixed && tx.groupId && ds.transactions.some(t => t.groupId === tx.groupId && t.repeatMonthlyDay));
     updateFixedOption(tx);
     $("#tx-nparc-wrap").classList.add("hidden");
     $("#tx-parc-hint").classList.add("hidden");
@@ -2035,6 +2202,8 @@ const Dashboard = (() => {
   function updateTxHints() {
     const parcOn = $("#tx-parcelado").checked;
     const fixaOn = $("#tx-fixa").checked;
+    const edited = editingId && ds.transactions.find(t => t.id === editingId);
+    $("#tx-renew-wrap").classList.toggle("hidden", !fixaOn || !!(edited?.fixed && !edited.groupId));
     $("#tx-nparc-wrap").classList.toggle("hidden", !parcOn);
     const hint = $("#tx-parc-hint");
     const code = normCur($("#tx-currency").value);
@@ -2049,7 +2218,11 @@ const Dashboard = (() => {
         : "Escolha de 2 a 48 parcelas inteiras. O valor deve permitir pelo menos uma unidade mínima da moeda por parcela.";
       hint.classList.remove("hidden");
     } else if (fixaOn) {
-      hint.textContent = editingId
+      const renew = $("#tx-renew");
+      hint.textContent = renew.checked
+        ? "Após a última ocorrência cadastrada, o app acrescenta cada mês ao abrir a pasta. Para encerrar, escolha “Deste mês em diante” ao excluir."
+        : renew.defaultChecked ? "A renovação automática termina na última ocorrência cadastrada."
+        : editingId
         ? ($("#tx-fixa").disabled ? "Este lançamento já faz parte de uma série mensal. Valor e vencimento podem ser editados para este mês."
           : `Este lançamento será o primeiro da série. Ao salvar, serão adicionadas ${FIXA_MESES-1} repetições mensais a partir do mês seguinte.`)
         : `Serão criados ${FIXA_MESES} lançamentos mensais${total && total > 0 ? ` de ${f(total)}` : ""}, a partir da data escolhida. Para encerrar, exclua a partir de um mês.`;
@@ -2170,12 +2343,15 @@ const Dashboard = (() => {
         delete edited.creditKind;
       }
       delete edited.paymentStatus; delete edited.paidOn;
+      if (edited.weeklyRevenue) WeeklyRevenue.rememberSource(edited);
       Object.assign(edited, fields, evidence, bill);
       if (dateChanged) { delete edited.dateEstimated; delete edited.dateEstimate; }
     }
     let message;
+    let fixedGroup = edited?.fixed ? edited.groupId : null;
     if (startFixed) {
       const groupId = uid();
+      fixedGroup = groupId;
       if (edited) Object.assign(edited, { groupId, fixed:true });
       for (let i = edited ? 1 : 0; i < FIXA_MESES; i++) {
         ds.transactions.push({ ...fields, id:uid(), groupId, fixed:true, date:monthlyDate(i),
@@ -2205,6 +2381,18 @@ const Dashboard = (() => {
         ...evidence, ...bill,
       });
       message = "Transação adicionada ✔";
+    }
+    const renew = $("#tx-renew");
+    if (fixedGroup && renew.checked !== renew.defaultChecked) {
+      const siblings = ds.transactions.filter(t => t.fixed && t.groupId === fixedGroup);
+      const active = siblings.find(t => t.repeatMonthlyDay);
+      if (active && !renew.checked) stopRenewal(active);
+      if (!active && renew.checked) {
+        const anchors = siblings.slice().sort((a,b) => (b.repeatMonth || b.date).localeCompare(a.repeatMonth || a.date));
+        const anchor = anchors[0];
+        anchor.repeatMonth ||= anchor.date.slice(0,7);
+        Object.assign(anchor,{repeatThrough:anchor.repeatMonth,repeatKey:uid(),repeatMonthlyDay:Number(date.slice(8))});
+      }
     }
     saveCur();
     $("#modal-tx").classList.add("hidden");
@@ -2436,6 +2624,12 @@ const Dashboard = (() => {
       });
     });
     $("#btn-more-rows").addEventListener("click", () => { rowLimit += 200; renderTable(); });
+    $("#tx-origin-review").addEventListener("toggle", () => {
+      if ($("#tx-origin-review").open) { originPage = 0; refreshOriginReview(); }
+      else closeOriginReview();
+    });
+    $("#tx-origin-prev").addEventListener("click", () => { originPage--; renderOriginPage(); });
+    $("#tx-origin-next").addEventListener("click", () => { originPage++; renderOriginPage(); });
 
     // Ações da tabela
     $("#tx-paid").addEventListener("change", updateTypeToggle);
@@ -2601,6 +2795,7 @@ const Dashboard = (() => {
       if ($("#tx-fixa").checked) $("#tx-parcelado").checked = false;
       updateTxHints();
     });
+    $("#tx-renew").addEventListener("change", updateTxHints);
     $("#tx-nparc").addEventListener("input", updateTxHints);
     $("#tx-amount").addEventListener("input", updateTxHints);
     $("#modal-tx").addEventListener("keydown", (ev) => {

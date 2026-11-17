@@ -32,6 +32,25 @@ const CloudMerge = (() => {
     if (same(remote, base)) return { ok: true, value: local };
     return { ok: false };
   }
+  function chooseTransaction(base, local, remote) {
+    const whole = choose(base, local, remote);
+    if (whole.ok || ![base, local, remote].every(record)) return whole;
+    // Classificação e descrição podem ser editadas independentemente da baixa.
+    // Valor, moeda, tipo, parcela, vencimento, origem e baixa permanecem um
+    // conjunto para nunca combinar metade de duas operações financeiras.
+    const parts = (tx) => {
+      const { category, categoryEdited, desc, ...financial } = tx;
+      const classification = {};
+      if (own(tx, "category")) classification.category = category;
+      if (own(tx, "categoryEdited")) classification.categoryEdited = categoryEdited;
+      return [financial, classification, own(tx, "desc") ? { desc } : {}];
+    };
+    const [before, left, right] = [base, local, remote].map(parts);
+    const merged = before.map((part, i) => choose(part, left[i], right[i]));
+    return merged.every(part => part.ok)
+      ? { ok: true, value: Object.assign(Object.create(null), ...merged.map(part => part.value)) }
+      : { ok: false };
+  }
   function merge(base, local, remote) {
     const b = transactions(base), l = transactions(local), r = transactions(remote);
     if (!b || !l || !r || !base.id || base.id !== local.id || base.id !== remote.id) return { ok: false, conflicts: ["structure"] };
@@ -61,7 +80,7 @@ const CloudMerge = (() => {
     }
     const merged = new Map();
     for (const id of new Set([...b.keys(), ...l.keys(), ...r.keys()])) {
-      const selected = choose(b.has(id) ? b.get(id) : absent, l.has(id) ? l.get(id) : absent, r.has(id) ? r.get(id) : absent);
+      const selected = chooseTransaction(b.has(id) ? b.get(id) : absent, l.has(id) ? l.get(id) : absent, r.has(id) ? r.get(id) : absent);
       if (!selected.ok) conflicts.push("transaction:" + id);
       else if (selected.value !== absent) merged.set(id, copy(selected.value));
     }

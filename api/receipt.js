@@ -694,6 +694,7 @@ module.exports = async (req, res) => {
 
 // Uso interno no servidor: o webhook aplica sua própria autenticação e prazo.
 // Nenhuma chave nem método interno é exposto pela resposta HTTP desta função.
+module.exports.openAIModel = MODEL_OPENAI;
 module.exports.extractSingle = async (image, categories, timeoutMs = 18000) => {
   const names = cleanNames(categories, ["Outros"]);
   const config = providerConfig();

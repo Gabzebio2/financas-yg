@@ -22,7 +22,7 @@ Deno.serve(async req=>{
   }
   const user=await backend.authenticate(req);
   const result=await backend.userAction(user,body);
-  if(['submit','retry'].includes(body.action))EdgeRuntime.waitUntil(backend.wake().catch(()=>console.warn('receipt_wake_retry')));
+  if(body.action==='retry'||(result.status==='queued' && ['upload','submit'].includes(body.action)))EdgeRuntime.waitUntil(backend.wake().catch(()=>console.warn('receipt_wake_retry')));
   return reply(result);
  }catch(e){
   const exposed=['login_required','folder_not_linked','active_job_limit','job_not_found','job_not_ready','retry_unavailable','upload_incomplete','job_too_large','invalid_transaction','invalid_transactions','upload_failed','upload_closed','invalid_page','invalid_job','invalid_action','c6_statement_incomplete','c6_series_changed','automatic_in_progress'];

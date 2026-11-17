@@ -112,19 +112,26 @@ function transaction(row) {
 function movementKey(tx) {
   return JSON.stringify([fold(tx.desc),tx.type,tx.currency,Number(tx.amount),tx.installment || '']);
 }
+function bankReferenceKey(tx) {
+  const account = accountKey(tx.account), reference = text(tx.referenceId);
+  if (!account || !reference || !validDate(tx.date)) return null;
+  return JSON.stringify(['reference',account,reference,tx.date,tx.type,tx.currency,Number(tx.amount),tx.installment || '']);
+}
 function indexRows(index, rows) {
   for (const row of rows) {
-    const key = movementKey(row);
-    if (!index.has(key)) index.set(key,[]);
-    index.get(key).push(row);
+    for (const key of [movementKey(row),bankReferenceKey(row)]) {
+      if (!key) continue;
+      if (!index.has(key)) index.set(key,[]);
+      index.get(key).push(row);
+    }
   }
 }
 function findMatch(tx, options, used) {
-  const account = accountKey(tx.account), reference = fold(tx.referenceId);
+  const account = accountKey(tx.account), reference = text(tx.referenceId);
   let best = null, bestScore = -1;
   for (const candidate of options || []) {
     if (used.has(candidate)) continue;
-    const otherAccount = accountKey(candidate.account), ref = fold(candidate.referenceId);
+    const otherAccount = accountKey(candidate.account), ref = text(candidate.referenceId);
     if (tx.c6Section && candidate.c6Section && tx.c6Section!==candidate.c6Section) continue;
     if (account && otherAccount && account!==otherAccount || reference && ref && reference!==ref) continue;
     if (tx.billDateObserved && candidate.billDateObserved && candidate.billClosingDate && tx.billClosingDate &&
@@ -208,7 +215,7 @@ export function planDocumentImport({pages,existing,categories=[],defaultCategory
       if (!usable(row)) {report.skipped++;continue;}
       if (row.c6Purchase) {series.push(row);continue;}
       const tx = transaction(row);
-      const match = findMatch(tx,index.get(movementKey(tx)),used);
+      const match = findMatch(tx,index.get(bankReferenceKey(tx)),used) || findMatch(tx,index.get(movementKey(tx)),used);
       if (match) {
         report.duplicates++;used.add(match);
         if(match.id) {if(row.c6)matchTx(match.id,tx,true);link(row,{id:match.id});}

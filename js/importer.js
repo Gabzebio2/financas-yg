@@ -270,7 +270,29 @@ const Importer = (() => {
     return null;
   }
 
-  function parseSimple(rows, layout, currencyHint = importCurrency) {
+  async function sheetConvention(file, sheet, rows, layout, choice) {
+    const {cols, headerRow} = layout;
+    if (cols.amount == null || cols.income != null || cols.expense != null) return null;
+    if (cols.type != null && !rows.slice(headerRow + 1).some(row =>
+      parseDateCell(row?.[cols.date]) && String(row?.[cols.amount] ?? "").trim() && !String(row?.[cols.type] ?? "").trim()
+    )) return null;
+    const header = rows.slice(0,headerRow + 1).flat().join(" ");
+    const title = stripAccents([file, sheet, header].join(" ").replace(/[_-]+/g," "));
+    if (/\b(fatura|cartao de credito|extrato (?:do |de )?cartao|tarjeta de credito|factura de tarjeta|credit card statement|card invoice)\b/.test(title)) return "invoice";
+    if (/\b(extrato|movimientos|extracto|bank statement|saldo)\b/.test(title)) return "bank";
+    if (choice.value) return choice.value;
+    const dialog = $("#import-signs-dialog");
+    if (typeof dialog?.showModal !== "function") return null;
+    $("#import-signs-name").textContent = file || sheet;
+    dialog.returnValue = "";
+    const answer = new Promise(resolve => dialog.addEventListener("close", () => resolve(dialog.returnValue), {once:true}));
+    dialog.showModal();
+    choice.value = await answer;
+    if (!["bank","invoice"].includes(choice.value)) throw Error("import_cancelled");
+    return choice.value;
+  }
+
+  function parseSimple(rows, layout, currencyHint = importCurrency, convention = null) {
     const { cols } = layout;
     const txs = [];
     let skipped = 0;
@@ -338,10 +360,12 @@ const Importer = (() => {
       if (amount == null || Math.abs(amount) === 0) { skipped++; continue; }
 
       let type = null;
-      if (cols.type != null && row[cols.type] != null) {
+      if (cols.type != null && String(row[cols.type] ?? "").trim()) {
         const tn = stripAccents(row[cols.type]);
         type = INCOME_WORDS.some((w) => tn.includes(w)) ? "receita" : "despesa";
-      } else if (hasNegative) {
+      } else if (convention === "invoice") {
+        type = amount < 0 ? "receita" : "despesa";
+      } else if (convention === "bank" || hasNegative) {
         type = amount < 0 ? "despesa" : "receita";
       } else {
         type = "despesa";
@@ -374,7 +398,7 @@ const Importer = (() => {
     }
     fileName = file.name.replace(/\.(xlsx?|xlsm|csv)$/i, "");
 
-    const results = [];
+    const results = [], signChoice = {};
     importCurrency = guessCurrency();
     for (const name of workbook.SheetNames) {
       const rows = sheetRows(name);
@@ -387,7 +411,11 @@ const Importer = (() => {
       }
       const sl = detectSimple(rows);
       if (sl) {
-        const r = parseSimple(rows, sl);
+        let convention;
+        try { convention = await sheetConvention(file.name, name, rows, sl, signChoice); }
+        catch (err) { if (err.message === "import_cancelled") return; throw err; }
+        if (version !== readVersion || !importContextValid()) return;
+        const r = parseSimple(rows, sl, importCurrency, convention);
         if (r.txs.length) { results.push({ sheet: name, format: "lista de transações", ...r }); continue; }
       }
       results.push({ sheet: name, format: null, txs: [], skipped: 0 });
@@ -654,7 +682,7 @@ const Importer = (() => {
     $("#map-table").innerHTML = `<thead><tr>${selects}</tr><tr>${headCells}</tr></thead><tbody>${dataRows}</tbody>`;
   }
 
-  function applyMapping() {
+  async function applyMapping() {
     const rows = sheetRows($("#map-sheet").value);
     const hr = Number($("#map-header-row").value) || 0;
     const cols = {};
@@ -663,7 +691,12 @@ const Importer = (() => {
     });
     if (cols.date == null) { toast("Marque qual coluna é a Data 📅"); return; }
     if (cols.amount == null && cols.income == null && cols.expense == null) { toast("Marque qual coluna é o Valor 💰"); return; }
-    const r = parseSimple(rows, { headerRow: hr, cols });
+    const layout = {headerRow:hr,cols}, version = readVersion;
+    let convention;
+    try { convention = await sheetConvention(fileName,$("#map-sheet").value,rows,layout,{}); }
+    catch (err) { if (err.message === "import_cancelled") return; throw err; }
+    if (version !== readVersion || !importContextValid()) return;
+    const r = parseSimple(rows, layout, importCurrency, convention);
     if (!r.txs.length) { toast("Nenhuma transação lida — confira o mapeamento e a linha do cabeçalho."); return; }
     showPreview([{ sheet: $("#map-sheet").value, format: "mapeamento manual", ...r }]);
   }
@@ -675,7 +708,7 @@ const Importer = (() => {
     if (!file || file.size > 30 * 1024 * 1024) throw new Error("Arquivo grande demais (máx. 30 MB).");
     const wb = await readWorkbook(file);
     const txs = [];
-    const report = { skipped: 0, unknownSheets: [], warnings: [] };
+    const report = { skipped: 0, unknownSheets: [], warnings: [] }, signChoice = {};
     const currency = guessCurrency(wb);
     for (const name of wb.SheetNames) {
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: null });
@@ -685,34 +718,12 @@ const Importer = (() => {
       const ml = detectMatrix(rows);
       if (ml) { const r = parseMatrix(rows, ml, currency); if (r.txs.length) { txs.push(...r.txs); report.skipped += r.skipped; report.warnings.push(...r.warnings); continue; } }
 
-      // 2) Tabela simples (Data, Descrição/Local, Valor). Convenção de LOTE
-      //    (fatura/cobrança): positivo = gasto (despesa); negativo = pagamento
-      //    ou estorno (receita) — oposto da convenção bancária do importador.
+      // A prévia individual e o lote interpretam cada arquivo da mesma forma.
       const sl = detectSimple(rows);
-      if (sl && (sl.cols.type != null || sl.cols.income != null || sl.cols.expense != null)) {
-        const result = parseSimple(rows, sl, currency); txs.push(...result.txs); report.skipped += result.skipped;
-        continue;
-      }
-      if (sl && sl.cols.date != null && sl.cols.amount != null) {
-        report.warnings.push("Planilha sem coluna de tipo: positivo foi interpretado como despesa e negativo como receita/estorno. Confira se isso corresponde ao extrato.");
-        for (let i = sl.headerRow + 1; i < rows.length; i++) {
-          const row = rows[i] || [];
-          const date = parseDateCell(row[sl.cols.date]);
-          const itemCurrency = rowCurrency(row, sl.cols, currency);
-          const amt = parseMoney(row[sl.cols.amount], itemCurrency);
-          if (!date || !itemCurrency || amt == null || Math.abs(amt) === 0) { if (row.some((v) => v != null && v !== "")) report.skipped++; continue; }
-          const desc = sl.cols.desc != null && row[sl.cols.desc] != null ? String(row[sl.cols.desc]).trim() : "";
-          txs.push({
-            date, desc: desc || "(sem descrição)",
-            amount: Math.abs(amt), type: amt < 0 ? "receita" : "despesa",
-            currency: itemCurrency,
-            account: sl.cols.account != null ? String(row[sl.cols.account] || "").trim() : "",
-            category: sl.cols.category != null ? String(row[sl.cols.category] || "").trim() : "",
-            ...(sl.cols.referenceId != null ? { referenceId: String(row[sl.cols.referenceId] || "").trim().slice(0, 160) } : {}),
-            installment: null, totalValue: null,
-          });
-        }
-      } else report.unknownSheets.push(name);
+      if (!sl) { report.unknownSheets.push(name); continue; }
+      const convention = await sheetConvention(file.name, name, rows, sl, signChoice);
+      const result = parseSimple(rows, sl, currency, convention);
+      txs.push(...result.txs); report.skipped += result.skipped;
     }
     classifySheetRows(txs, true);
     const result = txs.map((t) => ({ ...t, currency: t.currency || currency }));

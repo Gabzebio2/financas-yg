@@ -100,6 +100,41 @@ test('WhatsApp usa a descrição no rascunho e dá prioridade à categoria que o
 });
 const byPath = (e, match) => e.calls.filter(c => c.url.includes(match));
 
+test("OpenAI sozinho lê texto do WhatsApp e conserva a prévia até a confirmação",async()=>{
+  const fallback=coreFetch(),e=harness({env:{GEMINI_API_KEY:"",OPENAI_API_KEY:"synthetic-openai"},receiptActual:true,fetch:c=>{
+    if(c.url==="https://api.openai.com/v1/responses"){
+      assert.equal(c.json.store,false);assert.ok(c.json.model);assert.match(c.json.input,/Gastei/);
+      return response({status:"completed",output:[{type:"message",content:[{type:"output_text",text:JSON.stringify(tx())}]}]});
+    }
+    return fallback(c);
+  }});
+  assert.equal((await e.request("whatsapp")).status,200);
+  assert.equal(byPath(e,"api.openai.com").length,1);
+  assert.equal(byPath(e,"wa_finish_draft")[0].json.p_transaction.amount,12.34);
+  assert.equal(byPath(e,"wa_decide").length,0);
+});
+
+test("OpenAI sozinho lê foto do WhatsApp com o parser de comprovantes e conserva o rascunho", async () => {
+  const media = Buffer.from("synthetic-receipt");
+  const base = coreFetch({rows:[]});
+  const item = {documento:"comprovante",data:"2026-11-15",descricao:"Recebimento fictício",valor:123,moeda:"PYG",direcao:"recebido",categoria:"Receita",instituicao:"",revisar:[]};
+  const h = harness({receiptActual:true,env:{GEMINI_API_KEY:"",OPENAI_API_KEY:"synthetic-openai"},fetch:c=>{
+    if(c.url.includes("graph.facebook.com")&&!c.url.endsWith("/messages")) return response({url:"https://lookaside.fbsbx.com/media",mime_type:"image/jpeg",file_size:media.length});
+    if(c.url==="https://lookaside.fbsbx.com/media") return {ok:true,body:[media]};
+    if(c.url==="https://api.openai.com/v1/responses"){
+      assert.equal(c.json.store,false);
+      assert.ok(c.json.input.some(message=>message.content?.some(part=>part.type==="input_image")));
+      return response({status:"completed",output:[{type:"message",content:[{type:"output_text",text:JSON.stringify(item)}]}]});
+    }
+    return base(c);
+  }});
+  assert.equal((await h.request("whatsapp",{payload:payload([message({type:"image",image:{id:"987654321"}})])})).status,200);
+  assert.equal(byPath(h,"api.openai.com").length,1);
+  const saved=byPath(h,"wa_finish_draft")[0].json.p_transaction;
+  assert.equal(saved.amount,123);assert.equal(saved.type,"receita");assert.equal(saved.currency,"PYG");
+  assert.equal(byPath(h,"wa_decide").length,0);
+});
+
 test("diagnóstico de entrega mantém telefones, textos e identificadores fora dos logs", async () => {
   const lines = [];
   const record = (...args) => lines.push(clone(args));
@@ -182,11 +217,18 @@ test("verificação Meta valida token e challenge sem serviços externos", async
   assert.equal((await e.request("whatsapp", { method: "DELETE" })).status, 405); assert.equal(e.calls.length, 0);
 });
 
-test("piloto incompleto não aceita webhook como pronto", async () => {
-  for (const key of Object.keys(envDefaults())) {
+test("credenciais do canal ausentes impedem o recebimento antes de chamadas externas", async () => {
+  for (const key of Object.keys(envDefaults()).filter(k=>k!=="GEMINI_API_KEY")) {
     const e = harness({ env: { [key]: "" } });
     assert.equal((await e.request("whatsapp")).status, 503, key); assert.equal(e.calls.length, 0);
   }
+});
+test("sem provedor de IA o webhook continua aceitando status e sinaliza a falha de leitura no rascunho",async()=>{
+  const e=harness({env:{GEMINI_API_KEY:""},fetch:coreFetch()});
+  assert.equal((await e.request("whatsapp",{payload:payload([])})).status,200);
+  assert.equal((await e.request("whatsapp")).status,503);
+  assert.match(byPath(e,"wa_finish_draft")[0].json.p_warnings[0],/provedor de IA/);
+  assert.equal(byPath(e,"wa_decide").length,0);
 });
 
 test("orçamento absoluto esgotado impede iniciar novas chamadas externas", async () => {

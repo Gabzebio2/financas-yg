@@ -64,7 +64,7 @@ const WhatsApp = (() => {
         transaction: { date: text(tx.date, 40), desc: text(tx.desc, 240), amount: tx.amount, currency: text(tx.currency, 12), type: text(tx.type, 12), category: text(tx.category, 160), account: text(tx.account, 160) },
       };
     });
-    return { configured: raw.configured, enabled: raw.enabled, actionsReady: raw.actionsReady === true, channel, pending, webhookUrl: safeWebhook(raw.webhookUrl) };
+    return { configured: raw.configured, enabled: raw.enabled, actionsReady: raw.actionsReady === true, readingReady: raw.readingReady, channel, pending, webhookUrl: safeWebhook(raw.webhookUrl) };
   }
   function validDraft(draft) {
     const tx = draft.transaction;
@@ -106,6 +106,7 @@ const WhatsApp = (() => {
     };
     const status = descriptions[phase] || [pending.length ? `${pending.length} para revisar` : live ? "Recebimento ativo" : "Em preparação",
       live ? "O piloto está recebendo mensagens dos remetentes autorizados. Todo lançamento precisa de confirmação."
+        : data?.readingReady === false ? "É preciso configurar um provedor de IA no servidor para ler textos e comprovantes."
         : data?.configured ? "O canal está configurado, mas o recebimento está pausado. Confira as pendências já recebidas."
           : "A conexão com a Meta ainda está sendo preparada. O recebimento de mensagens não está ativo.",
       "Nenhuma mensagem pendente de revisão nesta conta."];

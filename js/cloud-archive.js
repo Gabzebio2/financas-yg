@@ -16,7 +16,7 @@ const CloudArchive = (() => {
 
   // Os callbacks locais são síncronos. O chamador mantém a operação na mesma
   // fila da sincronização e assertCurrent lança ao trocar conta/projeto.
-  async function reconcile({ client, userId, remoteRows, assertCurrent, ownsLocal, getLocal, removeLocal, request }) {
+  async function reconcile({ client, userId, remoteRows, assertCurrent, ownsLocal, getLocal, removeLocal, request, poll = false }) {
     if (!client || typeof client.from !== "function" || !validId(userId) ||
         ![assertCurrent, ownsLocal, getLocal, removeLocal].every((fn) => typeof fn === "function") ||
         request != null && typeof request !== "function") throw new TypeError("Contexto de arquivamento inválido.");
@@ -32,7 +32,7 @@ const CloudArchive = (() => {
     // A API limita o tamanho das respostas. Ler páginas evita deixar IDs antigos
     // fora da proteção; qualquer falha acontece antes da primeira remoção local.
     for (let start = 0; ; start += PAGE_SIZE) {
-      const query = client.from(TABLE).select("id,keeper_id,data").eq("user_id", userId)
+      const query = client.from(TABLE).select(poll ? "id,keeper_id" : "id,keeper_id,data").eq("user_id", userId)
         .order("id", { ascending: true }).range(start, start + PAGE_SIZE - 1);
       const response = await (request ? request(query) : query);
       guard();
@@ -40,7 +40,7 @@ const CloudArchive = (() => {
       if (!Array.isArray(response?.data)) throw error("Resposta inválida ao conferir as pastas arquivadas.");
       for (const row of response.data) {
         if (!row || !validId(row.id) || !validId(row.keeper_id) || row.id === row.keeper_id ||
-            !row.data || row.data.id !== row.id || seen.has(row.id) ||
+            (!poll && row.data?.id !== row.id) || seen.has(row.id) ||
             row.user_id != null && row.user_id !== userId) throw error("Registro de arquivamento inconsistente. Nenhuma cópia local foi removida.");
         if (remote.has(row.id)) throw error("A mesma pasta consta como ativa e arquivada na nuvem. A sincronização precisa de conferência.");
         seen.add(row.id); archives.push(row);
@@ -57,6 +57,16 @@ const CloudArchive = (() => {
       if (!local) continue;
       const block = () => blockedIds.push(archive.id);
       if (ownsLocal(archive.id) !== true) { block(); continue; }
+      if (poll) {
+        const query = client.from(TABLE).select("id,keeper_id,data").eq("user_id", userId).eq("id", archive.id);
+        const result = await (request ? request(query) : query);
+        guard();
+        const row = result?.data?.[0];
+        if (result?.error || result?.data?.length !== 1 || row?.id !== archive.id || row.keeper_id !== archive.keeper_id || row.data?.id !== row.id) {
+          throw error("O arquivo da pasta mudou durante a leitura. Sincronize novamente.");
+        }
+        archive.data = row.data;
+      }
       const keeperRow = remote.get(archive.keeper_id), keeper = keeperRow?.data;
       if (!keeper || keeperRow.id !== archive.keeper_id || keeper.id !== archive.keeper_id ||
           keeperRow.user_id != null && keeperRow.user_id !== userId ||

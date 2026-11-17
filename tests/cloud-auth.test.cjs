@@ -32,6 +32,9 @@ function harness({ enabled = true, supported = true, authHash = "", authSearch =
       classList: { add() {}, remove() {}, toggle() {} }, focus() {}, scrollIntoView() {} })); return nodes.get(selector); }, querySelectorAll: () => [] });
   const fetch = async (url, options = {}) => {
     network.push({ url, headers: options.headers, signal: options.signal });
+    if (url.startsWith("https://api.pwnedpasswords.com/range/")) {
+      return {ok:!server.rangeUnavailable,text:async()=>server.rangeBody ?? ("F".repeat(35)+":0")};
+    }
     if (url.endsWith("/settings")) {
       const settingsValue = server.enabled, gate = server.settingsGate; server.settingsGate = null;
       if (gate) await gate.promise;
@@ -95,7 +98,7 @@ function harness({ enabled = true, supported = true, authHash = "", authSearch =
     };
     clients.push(api); return api;
   };
-  const context = vm.createContext({ Date: ClockDate, Math, AbortController, AbortSignal, fetch,
+  const context = vm.createContext({ Date: ClockDate, Math, AbortController, AbortSignal, fetch, TextEncoder, crypto:require("node:crypto").webcrypto,
     console: { error() {}, warn() {}, log() {} }, window, document,
     navigator: { onLine: true, credentials: supported ? { get() {}, create() {} } : undefined },
     location: { origin, pathname: "/", hash: authHash, search: authSearch },
@@ -133,13 +136,13 @@ test("SDK recebe opt-in experimental e consulta somente settings público do pro
   assert.equal(h.server.passkeyCalls.length, 0);
 });
 
-function receiptJobsWithRealCloud(h){
+function receiptJobsWithRealCloud(h, {legacy = false} = {}){
   const calls=[];
   h.context.crypto=require('node:crypto').webcrypto;h.context.atob=atob;
   Object.assign(h.context.Dashboard,{getImportTargetId:()=> 'local0001',getCats:()=>['Outros']});
   const querySelector=h.context.document.querySelector;
   h.context.document.querySelector=s=>s.startsWith('#receipt-jobs')?null:querySelector(s);
-  h.context.fetch=async(url,options)=>{const body=JSON.parse(options.body);calls.push({url,body,headers:options.headers});return {ok:true,status:200,json:async()=>body.action==='create'?{id:body.id}:body.action==='list'?{jobs:[]}:{uploaded:true,status:'queued'}};};
+  h.context.fetch=async(url,options)=>{const body=JSON.parse(options.body);calls.push({url,body,headers:options.headers});return {ok:true,status:200,json:async()=>body.action==='create'?{id:body.id}:body.action==='list'?{jobs:[]}:legacy?{uploaded:true}:{uploaded:true,status:'queued'}};};
   vm.runInContext(fs.readFileSync(path.join(__dirname,'../js/receipt-jobs.js'),'utf8')+'\nthis.receipts=ReceiptJobs;',h.context);
   return {receipts:h.context.receipts,calls};
 }
@@ -151,10 +154,16 @@ test('documentos usa a sessão restaurada pelo Cloud real, sem exigir novo login
   const {receipts,calls}=receiptJobsWithRealCloud(h);
   const job=await receipts.submit(uploadTask(),[]);
   assert.equal(job,calls[0].body.id);
-  assert.deepEqual(calls.map(x=>x.body.action),['create','upload','submit','list']);
+  assert.deepEqual(calls.map(x=>x.body.action),['create','upload','list']);
   assert(calls.every(x=>x.headers.Authorization==='Bearer synthetic-user-a'));
   assert(!calls.some(x=>x.body.action==='commit'));
   assert(h.events.filter(x=>x.type==='fyg:cloudstate').every(x=>!JSON.stringify(x.detail).includes('synthetic-user-a')));
+});
+test('servidor anterior recebe submit quando a resposta de upload não informa status',async()=>{
+  const h=harness();h.server.initialSession=sessionFor('user-a');await h.cloud.init();
+  const {receipts,calls}=receiptJobsWithRealCloud(h,{legacy:true});
+  assert.ok(await receipts.submit(uploadTask(),[]));
+  assert.deepEqual(calls.map(x=>x.body.action),['create','upload','submit','list']);
 });
 test('identificação da conta acompanha troca, logout e mudança de projeto',async()=>{
   const h=harness();await h.ready();assert.equal(h.cloud.getSyncState().owner,null);
@@ -344,6 +353,21 @@ test("erro de credenciais fica separado da sincronização sem refletir mensagem
   assert.equal(h.server.persisted.size, 0);
 });
 
+test("senha nova exposta é recusada no app com consulta de prefixo, sem interferir no login normal", async () => {
+  const h=harness();await h.ready();h.email();
+  const password="exemplo-ficticio-para-regressao";
+  const hash=require("node:crypto").createHash("sha1").update(password).digest("hex").toUpperCase();
+  h.server.rangeBody=hash.slice(5)+":1";
+  h.context.document.querySelector("#cloud-pass").value=password;
+  assert.equal(await h.cloud.signInOrUp(true),false);assert.match(h.status(),/vazamentos/);
+  const calls=()=>h.network.filter(n=>n.url.startsWith("https://api.pwnedpasswords.com/"));
+  assert.equal(calls()[0].url,"https://api.pwnedpasswords.com/range/"+hash.slice(0,5));
+  assert.equal(h.server.signupCalls.length,0);
+  h.server.rangeUnavailable=true;
+  await h.cloud.signInOrUp(true);assert.match(h.status(),/segurança da nova senha/);
+  await h.cloud.signInOrUp(false);
+  assert.equal(calls().length,2);assert.equal(h.server.passwordCalls.length,1);
+});
 test("e-mails de acesso, cadastro e recuperação nunca recebem localhost no redirect", async () => {
   for (const action of ["link", "signup", "recover"]) {
     const h = harness({ origin: "http://localhost:3000" }); await h.ready(); h.email();

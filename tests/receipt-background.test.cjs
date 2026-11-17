@@ -20,9 +20,26 @@ test('programação C6 conserva cada posição e a data da compra na gravação'
  const [stored]=cleanTransactions([tx]);assert.equal(stored.purchaseDate,tx.purchaseDate);assert.equal(stored.seriesKey,key);assert.equal(stored.groupId,null);assert.equal(stored.installment,'3/5');
  for(const changed of [{purchaseDate:'2026-02-30'},{installment:'6/5'},{seriesKey:'x'}])assert.throws(()=>cleanTransactions([{...tx,...changed}]));
 });
+test('última página verificada vai à fila sem submit e um retry não grava o mesmo objeto',async()=>{
+ const {createBackend,digest}=await core(),bytes=Buffer.from('synthetic-page');
+ const page={page_index:0,media_type:'image/jpeg',byte_size:bytes.length,sha256:await digest(bytes),uploaded:false,object_path:user+'/'+id+'/0'};
+ let status='uploading',uploads=0,queued=0;
+ const b=createBackend({url:'https://db.test',serviceKey:'fake',publicKey:'fake',fetcher:async (raw,options={})=>{
+  const url=new URL(raw);
+  if(url.pathname==='/rest/v1/receipt_jobs')return json([{id,status,folder_id:'folder'}]);
+  if(url.pathname==='/rest/v1/receipt_job_pages')return json([page]);
+  if(url.pathname.includes('/storage/v1/object/')){assert.equal(options.method,'POST');uploads++;return json({});}
+  if(url.pathname.endsWith('/receipt_verify_upload')){assert.deepEqual(JSON.parse(options.body),{p_user:user,p_id:id,p_index:0});page.uploaded=true;queued++;status='queued';return json(status);}
+  throw Error('unexpected '+url.pathname);
+ }});
+ const upload=data=>b.userAction(user,{action:'upload',id,index:0,data});
+ await assert.rejects(upload(Buffer.from('changed').toString('base64')),/invalid_page/);
+ for(let i=0;i<2;i++)assert.deepEqual(await upload(bytes.toString('base64')),{uploaded:true,status:'queued'});
+ assert.equal(uploads,1);assert.equal(queued,1);
+});
 test('owner filter is required before get, commit, upload and retry; expired drafts unavailable',async()=>{
  const {createBackend}=await core();
- for(const action of ['get','commit','upload','retry','discard']){
+ for(const action of ['get','commit','upload','upload-manifest','retry','discard']){
   const calls=[];const b=createBackend({url:'https://db.test',serviceKey:'private',publicKey:'public',fetcher:async(url)=>{calls.push(url);return json([]);}});
   await assert.rejects(b.userAction(user,{action,id}),/job_not_found/);assert.equal(calls.length,1);assert(calls[0].includes('user_id=eq.'+user));assert(calls[0].includes('expires_at=gt.'));
  }

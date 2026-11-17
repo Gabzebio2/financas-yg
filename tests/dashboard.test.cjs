@@ -809,6 +809,71 @@ test('fatura C6 fecha em outubro: soma linhas impressas pelo fechamento e manté
   assert.doesNotMatch(get('#tx-tbody').innerHTML,/Venc\. previsto|05\/12\/2026/);
   api.setFilters({month:'2026-09'});assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['other']);
 });
+test('fatura vencida continua acessível no mês atual até ser paga, sem duplicar o débito',()=>{
+  const today=ctx.todayISO, board=get('#dash-bills');
+  try {
+    ctx.todayISO=()=> '2027-01-08';
+    const ds=dataset();
+    ds.transactions=[tx('c6antiga1',{account:'C6',date:'2026-11-04',billClosingDate:'2026-11-29',billDueDate:'2026-12-05',billDateObserved:true,amount:100})];
+    saveBase(ds);api.setFilters({month:'2027-01'});api.renderAll();
+    assert.match(board.innerHTML,/class="bill-history bill-overdue"\s*>/);
+    assert.match(board.innerHTML,/Faturas anteriores em atraso \(1\)/);
+    const match=board.innerHTML.match(/data-invoice-month="2026-11" data-invoice-version="([^"]+)" data-folder="([^"]+)"/);
+    assert(match);assert.equal(board.innerHTML.match(/data-invoice-month="2026-11"/g).length,1);
+    const row={dataset:{invoiceMonth:'2026-11',invoiceVersion:match[1],folder:match[2]}};
+    const button={dataset:{billAction:'pay'},closest:()=>row};
+    board.listeners.get('click')({target:{closest:()=>button}});
+    const result=api.getDataset();
+    assert.equal(result.transactions.length,1);
+    assert.equal(result.c6InvoicePayments['2026-11'].totals.BRL,100);
+    assert.equal(result.c6InvoicePayments['2026-11'].paidOn,'2027-01-08');
+    api.setFilters({month:'2026-12'});api.renderAll();
+    assert.doesNotMatch(board.innerHTML,/Faturas anteriores em atraso/);
+    assert.equal(board.innerHTML.match(/data-invoice-month="2026-11"/g).length,1);
+  } finally {ctx.todayISO=today;}
+});
+
+test('limites mudam por competência, incluem mês vazio e preservam um estouro mensal mesmo com sobra em outro mês',()=>{
+  const ds=dataset();
+  ds.transactions=[tx('outubro01',{date:'2026-10-07',amount:80}),tx('novembro1',{date:'2026-11-07',amount:80})];
+  ds.limits=[{id:'limit001',name:'Compras',categories:['Mercado'],amount:100,currency:'BRL',versions:[{from:'0000-00',amount:100,categories:['Mercado']}]}];
+  saveBase(ds);api.setFilters({mode:'range',from:'2026-10-01',to:'2026-11-30'});
+  let stats=api.limitStats()[0];assert.equal(stats.spent,160);assert.equal(stats.amount,200);assert.equal(stats.overMonths.length,0);
+  ds.limits[0].versions.push({from:'2026-11',amount:60,categories:['Saúde']});
+  ds.transactions.push(tx('novsaude1',{date:'2026-11-05',category:'Saúde',amount:65}));
+  api.setFilters({mode:'range',from:'2026-10-04',to:'2026-12-26'});stats=api.limitStats()[0];
+  assert.equal(stats.spent,145);assert.equal(stats.amount,220);assert.deepEqual(Array.from(stats.overMonths),['2026-11']);
+  api.setFilters({mode:'range',from:'2026-10-04',to:'2026-12-26',cats:new Set(['mercado'])});
+  stats=api.limitStats()[0];assert.equal(stats.spent,80);assert.equal(stats.amount,100);
+});
+
+test('recorrência contínua só por opção, gera mês 13 uma vez por aparelho e recorda encerramento',()=>{
+  const today=ctx.todayISO;
+  try {
+    ctx.todayISO=()=> '2026-01-31'; const ds=dataset();saveBase(ds);
+    api.openTxModal(null,{pending:true});
+    get('#tx-amount').value='80';get('#tx-date').value='2026-01-31';get('#tx-desc').value='Internet';get('#tx-cat').value='Mercado';
+    get('#tx-fixa').checked=true;get('#tx-renew').checked=true;api.saveTxModal();
+    const initial=JSON.parse(JSON.stringify(api.getDataset()));
+    assert.equal(initial.transactions.length,12);
+    const anchor=initial.transactions.find(t=>t.repeatMonthlyDay);assert.equal(anchor.repeatThrough,'2026-12');assert.equal(anchor.repeatMonthlyDay,31);
+    assert.equal(initial.transactions[1].date,'2026-02-28');
+    ctx.todayISO=()=> '2027-02-01';api.renderAll();api.renderAll();
+    const renewed=JSON.parse(JSON.stringify(api.getDataset()));
+    const adds=renewed.transactions.slice(12);assert.equal(adds.length,2);
+    assert.deepEqual(adds.map(t=>t.date),['2027-01-31','2027-02-28']);assert(adds.every(t=>t.paymentStatus==='pending' && !t.paidOn));
+    saveBase(initial);api.renderAll();assert.deepEqual(Array.from(api.getDataset().transactions.slice(12),t=>t.id),adds.map(t=>t.id));
+    // Backup real, IDs preservados, deve reconhecer que fevereiro já foi gerado.
+    ctx.auditData=renewed;const restored=vm.runInContext('sanitizeDataset(auditData,{preserveIds:true,preserveContent:true,rejectInvalidTransactions:true})',ctx);
+    saveBase(restored);api.renderAll();assert.equal(api.getDataset().transactions.length,14);
+    const last=api.getDataset().transactions.at(-1);api.requestDeleteTx(last.id);api.deleteSeries('following');acceptReceiptConfirmation();
+    ctx.todayISO=()=> '2027-04-01';api.renderAll();assert.equal(api.getDataset().transactions.length,13);
+    assert(!api.getDataset().transactions.some(t=>t.repeatMonthlyDay || t.date>='2027-02-01'));
+    const finite=dataset();finite.transactions=initial.transactions.map(({repeatMonthlyDay,repeatKey,repeatThrough,repeatMonth,...t})=>t);
+    saveBase(finite);api.renderAll();assert.equal(api.getDataset().transactions.length,12);
+  } finally {ctx.todayISO=today;}
+});
+
 test('Ver lançamentos reúne só os registros do documento e volta ao filtro mensal',()=>{
   const ds=dataset();
   ds.transactions=[tx('receipt_first_0',{date:'2026-05-03'}),tx('receipt_first_1'),tx('receipt_second_0')];
@@ -820,6 +885,47 @@ test('Ver lançamentos reúne só os registros do documento e volta ao filtro me
   assert.deepEqual(Array.from(api.tableTxs(),t=>t.id),['receipt_first_0','receipt_first_1']);
   get('#btn-close-receipt-filter').listeners.get('click')();
   assert.equal(api.tableTxs().length,0);
+});
+
+test('conferência histórica reúne origens fortes de todos os meses, mantém compras independentes e não grava',()=>{
+  const d=dataset(),photo={hash:'a'.repeat(64),row:'b'.repeat(32),occurrence:1};
+  const bank=tx('b1',{account:'C6',referenceId:'Banco-326',date:'2025-01-20',installment:'2/5',photoSource:photo});
+  const week={account:'Litoral',date:'2026-01-05',currency:'USD'};
+  d.transactions=[
+    bank,{...bank,id:'b2',account:'C6 Bank',desc:'Texto alterado'},
+    {...bank,id:'parcela',installment:'3/5',photoSource:undefined,desc:'Parcela distinta'},
+    {...bank,id:'ocorrencia',referenceId:'Banco-328',photoSource:{...photo,occurrence:2},desc:'Linha distinta'},
+    {...bank,id:'outrabanco',account:'Ueno',photoSource:undefined,desc:'Banco distinto'},
+    {...bank,id:'outrosentido',type:'receita',photoSource:undefined,desc:'Sentido distinto'},
+    {...bank,id:'outradata',date:'2026-01-22',photoSource:undefined,desc:'Data distinta'},
+    {...bank,id:'outramoeda',currency:'USD',photoSource:undefined,desc:'Moeda distinta'},
+    {...bank,id:'outrovalor',amount:53,photoSource:undefined,desc:'Valor distinto'},
+    tx('s1',{weeklyRevenue:true,weeklySource:week,desc:'Semana original'}),
+    tx('s2',{weeklyRevenue:true,weeklySource:week,date:'2026-01-08',amount:21,desc:'Semana renomeada'}),
+    tx('semref',{desc:'Original avulsa'}),tx('semref2',{desc:'Compra parecida'}),
+  ];
+  saveBase(d);api.setFilters({month:'2026-10',search:'não existe'});
+  const before=JSON.stringify([...storage]),beforeDataset=JSON.stringify(api.getDataset());
+  const view=get('#tx-origin-review'),results=get('#tx-origin-results');
+  view.open=true;view.listeners.get('toggle')();
+  assert.match(get('#tx-origin-status').textContent,/2 grupos/);
+  assert.match(results.innerHTML,/Referência bancária Banco-326.*Mesma foto, linha e ocorrência/);
+  assert.match(results.innerHTML,/Texto alterado/);assert.match(results.innerHTML,/Semana renomeada/);
+  assert.match(results.innerHTML,/05\/01\/2026/);assert.doesNotMatch(results.innerHTML,/distint[ao]|avulsa|parecida/);
+  assert.equal((results.innerHTML.match(/<li>/g)||[]).length,4);
+  assert.equal(JSON.stringify([...storage]),before);assert.equal(JSON.stringify(api.getDataset()),beforeDataset);
+  view.open=false;view.listeners.get('toggle')();assert.equal(results.innerHTML,'');
+});
+
+test('conferência pagina inclusive grupos grandes e permite consultar todas as ocorrências',()=>{
+  const d=dataset();d.transactions=Array.from({length:24},(_,i)=>tx('read'+i,{referenceId:'T-2026',desc:'Registro '+i}));
+  saveBase(d);const view=get('#tx-origin-review'),results=get('#tx-origin-results');
+  view.open=true;view.listeners.get('toggle')();
+  assert.equal((results.innerHTML.match(/<li>/g)||[]).length,20);assert.match(get('#tx-origin-status').textContent,/Página 1 de 2/);
+  get('#tx-origin-next').listeners.get('click')();assert.equal((results.innerHTML.match(/<li>/g)||[]).length,4);
+  assert.match(results.innerHTML,/Registro 23/);assert.equal(get('#tx-origin-next').disabled,true);
+  get('#tx-origin-prev').listeners.get('click')();assert.match(results.innerHTML,/Registro 0/);
+  view.open=false;view.listeners.get('toggle')();
 });
 
 (async()=>{

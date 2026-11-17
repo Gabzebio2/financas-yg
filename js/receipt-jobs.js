@@ -3,7 +3,7 @@
 const ReceiptJobs=(()=>{
  const URL='https://mhgagjhwsjjjwwvopjgu.supabase.co/functions/v1/receipt-jobs';
  let timer=null,version=0,lastOwner=null,lastFolder=null,busy=false,uploading=false;
- let rendered=null,lastJobs=[];
+ let rendered=null,lastJobs=[],resumeTarget=null;
  let seenPhotos=new Set(),syncedJobs=new Set(),retrySyncAfter=0;
  const photoKey=()=> 'fyg:photo-notices:'+owner()+':'+folder();
  function loadSeen(){
@@ -61,6 +61,42 @@ const ReceiptJobs=(()=>{
   const data=await res.json().catch(()=>({}));if(!res.ok)throw Error(data.error||'service_unavailable');
   if(owner()!==context.owner||folder()!==context.folder)throw Error('context_changed');return data;
  }
+ async function pageInfo(part){
+  const bytes=Uint8Array.from(atob(part.data),c=>c.charCodeAt(0));
+  const sha256=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');
+  return {mediaType:part.mediaType,bytes:bytes.length,sha256};
+ }
+ async function uploadPart(id,index,data,context){
+  for(let attempt=1;;attempt++){
+   try{return await request({action:'upload',id,index,data},context);}
+   catch(e){if(attempt===3||['login_required','context_changed','invalid_page','job_not_found','upload_closed'].includes(e.message))throw e;}
+  }
+ }
+ async function resumeUpload(id,files,context){
+  if(uploading)throw Error('upload_in_progress');
+  uploading=true;
+  try{
+   const manifest=await request({action:'upload-manifest',id},context);
+   if(manifest.folder!==context.folder)throw Error('context_changed');
+   if(manifest.status!=='uploading'){await refresh();return;}
+   const missing=new Map(manifest.missing.map(p=>[p.page_index,p]));
+   let matched=0;
+   for(const file of files){
+    for await(const part of Receipt.prepareParts(file,{singlePage:true})){
+     const info=await pageInfo(part);
+     for(const [index,p] of missing){
+      if(p.sha256!==info.sha256||p.media_type!==info.mediaType||p.byte_size!==info.bytes)continue;
+      await uploadPart(id,index,part.data,context);missing.delete(index);matched++;
+     }
+     if(!missing.size)break;
+    }
+    if(!missing.size)break;
+   }
+   if(!missing.size){await request({action:'submit',id},context);toast('Envio completo. A leitura continuará em segundo plano.');}
+   else toast(matched?'As páginas enviadas foram guardadas. Selecione os demais arquivos originais para terminar.':'Os arquivos escolhidos não correspondem às páginas pendentes. Selecione os originais deste envio.');
+   await refresh();
+  }finally{uploading=false;}
+ }
  async function submit(tasks,extraRows,onProgress,options={}){
   if(uploading)throw Error('upload_in_progress');uploading=true;
   const context={owner:owner(),folder:folder()},id=crypto.randomUUID();
@@ -70,22 +106,17 @@ const ReceiptJobs=(()=>{
    const pages=[];
    const documentAuto=!extraRows.length && tasks.length>0 && tasks.every(t=>t.part.mediaType==='application/pdf');
    for(const t of tasks){
-    const bytes=Uint8Array.from(atob(t.part.data),c=>c.charCodeAt(0));
-    const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');
-    pages.push({mediaType:t.part.mediaType,bytes:bytes.length,sha256:hash,label:t.label,documentId:t.documentId,context:{...t.part.documentContext,...(documentAuto?{documentAuto:true,documentCategory:options.category || null}:{}),...(options.photoAuto?{photoAuto:true,photoCategory:options.category || null}:{})}});
+    pages.push({...await pageInfo(t.part),label:t.label,documentId:t.documentId,context:{...t.part.documentContext,...(documentAuto?{documentAuto:true,documentCategory:options.category || null}:{}),...(options.photoAuto?{photoAuto:true,photoCategory:options.category || null}:{})}});
    }
    await request({action:'create',id,folder:context.folder,pages,categories:Dashboard.getCats(),cards:CARDS,extraRows},context);
    created=true;
+   let status;
    for(let i=0;i<tasks.length;i++){
     onProgress?.(`Enviando com privacidade · ${i+1}/${tasks.length} páginas. Mantenha o app aberto até terminar o envio.`);
-    // Uploads are immutable and idempotent, so a lost response can be retried safely.
-    let error;
-    for(let attempt=0;attempt<3;attempt++){
-     try{await request({action:'upload',id,index:i,data:tasks[i].part.data},context);error=null;break;}catch(e){error=e;if(['login_required','context_changed'].includes(e.message))break;}
-    }
-    if(error)throw error;
+    status=(await uploadPart(id,i,tasks[i].part.data,context)).status;
    }
-   await request({action:'submit',id},context);await refresh();return id;
+   if(!status||status==='uploading')await request({action:'submit',id},context);
+   await refresh();return id;
   }catch(e){e.receiptJobCreated=created;throw e;}finally{uploading=false;}
  }
  function render(jobs){
@@ -113,7 +144,7 @@ const ReceiptJobs=(()=>{
   list.innerHTML=jobs.map(j=>{
    const status=removed.has(j.id)?'Lançamentos removidos da pasta':j.photo_notice ? (j.photo_notice.items?.length ? (j.photo_notice.items.length===1?'1 lançamento incluído automaticamente':j.photo_notice.items.length+' lançamentos incluídos automaticamente') : j.status==='ready'?'Foto precisa de ajuste':j.photo_corrected_count?'Ajustes incluídos na pasta':'Nenhum lançamento novo') : j.status==='ready'?'Pronto para conferir e incluir':j.status==='committed'?'Incluído na pasta':j.status==='uploading'?`Envio incompleto · ${j.uploaded}/${j.total_pages} páginas`:j.status==='error'?'Leitura interrompida — o progresso foi preservado':`Leitura ${j.first}/${j.total_pages} · conferência ${j.second}/${j.total_pages}`;
    const summary=j.document_notice?.coverageIssue?'Conciliação incompleta':removed.has(j.id)?status:j.document_notice ? (j.document_notice.included===1?'1 lançamento incluído automaticamente':j.document_notice.included>0?`${j.document_notice.included} lançamentos incluídos automaticamente`:j.document_notice.printedIds?.length?'Os movimentos da fatura já estão na pasta':'Nenhum lançamento novo') : j.document_auto && j.status==='ready'?'Incluindo na pasta…':status;
-   const buttons=j.status==='ready'&&!j.document_auto?`<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="open">${j.photo_notice?'Ver pendência':'Conferir e incluir'}</button>`:j.status==='error'&&j.retry_count<3?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="retry">Retomar leitura</button>`:'';
+   const buttons=j.status==='uploading'?`<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="resume">${j.uploaded===j.total_pages?'Iniciar leitura':'Retomar envio'}</button>`:j.status==='ready'&&!j.document_auto?`<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="open">${j.photo_notice?'Ver pendência':'Conferir e incluir'}</button>`:j.status==='error'&&j.retry_count<3?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="retry">Retomar leitura</button>`:'';
    const printed=!removed.has(j.id) && j.document_notice?.printedIds?.length ? `<button class="btn btn-primary btn-sm" data-job="${j.id}" data-action="printed">Ver itens da fatura</button>`:'';
    const view=!removed.has(j.id) && (j.document_notice ? j.document_notice.included>0 || j.document_notice.matchedIds?.length : j.photo_notice ? j.photo_notice.items?.length || j.photo_corrected_count : j.status==='committed') ? `<button class="btn ${printed?'btn-ghost':'btn-primary'} btn-sm" data-job="${j.id}" data-action="view">Ver lançamentos</button>`:'';
    const discard=['uploading','ready','error','committed'].includes(j.status)?`<button class="btn btn-ghost btn-sm" data-job="${j.id}" data-action="discard">Excluir documento</button>`:'';
@@ -154,6 +185,14 @@ const ReceiptJobs=(()=>{
   }finally{deleting.delete(key);}
  }
  document.addEventListener('DOMContentLoaded',()=>{
+  const resumeFiles=document.querySelector('#receipt-resume-files');
+  resumeFiles?.addEventListener('change',async()=>{
+   const files=Array.from(resumeFiles.files||[]),target=resumeTarget;
+   resumeTarget=null;resumeFiles.value='';
+   if(!files.length||!target)return;
+   try{await resumeUpload(target.id,files,target.context);}
+   catch(err){toast(message(err));}
+  });
   document.querySelector('#hero-notifications')?.addEventListener('click',openNotifications);
   document.querySelector('#receipt-notifications-close')?.addEventListener('click',closeNotifications);
   document.querySelector('#receipt-jobs')?.addEventListener('click',e=>{if(e.target===e.currentTarget){const r=e.currentTarget.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)closeNotifications();}});
@@ -179,6 +218,11 @@ const ReceiptJobs=(()=>{
       try{await discard(id,context);toast('Documento excluído. Você já pode enviá-lo novamente.');}
       catch(err){toast(message(err));}
      });
+    }
+    else if(action==='resume'){
+     const context={owner:owner(),folder:folder()},job=lastJobs.find(j=>j.id===id);
+     if(job && job.uploaded===job.total_pages)await resumeUpload(id,[],context);
+     else if(job && resumeFiles){resumeTarget={id,context};resumeFiles.value='';resumeFiles.click();}
     }
     else if(action==='retry'){await request({action,id});await refresh();}
    }catch(err){toast(message(err));}finally{button.disabled=false;}

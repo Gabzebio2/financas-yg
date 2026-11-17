@@ -69,19 +69,63 @@ const WeeklyRevenue = (() => {
     if(!entries.length)throw Error('Não encontrei ganhos numéricos nas contas da aba Semanal.');
     return {accounts,entries,skipped,snapshots};
   }
-  function apply(ds, entries, currency, imported, makeId){
-    const idx=new Map(ds.transactions.filter(t=>t.weeklyRevenue).map(t=>[key(t.account,t.date,t.currency),t]));
+  function rememberSource(tx){
+    if(tx.weeklyRevenue && Number.isFinite(tx.weeklyImportedAmount) && !tx.weeklySource){
+      tx.weeklySource={account:tx.account,date:tx.date,currency:tx.currency};
+    }
+  }
+  async function identifyEntries(entries,currency){
+    const encoder=new TextEncoder();
+    for(let start=0;start<entries.length;start+=128){
+      await Promise.all(entries.slice(start,start+128).map(async row=>{
+        const bytes=await crypto.subtle.digest('SHA-256',encoder.encode(key(row.account,row.date,currency)));
+        row.sourceId='wk'+Array.from(new Uint8Array(bytes,0,16),byte=>byte.toString(16).padStart(2,'0')).join('');
+      }));
+    }
+  }
+  function apply(ds, entries, currency, imported, makeId, review={}){
+    const idx=new Map(), legacyByAmount=new Map();
+    const usedIds=new Set(ds.transactions.map(tx=>tx.id));
+    const inputKeys=new Set(entries.map(row=>key(row.account,row.date,currency)));
+    for(const tx of ds.transactions){
+      if(!tx.weeklyRevenue)continue;
+      const source=imported && tx.weeklySource || tx;
+      const k=key(source.account,source.date,source.currency);
+      if(idx.has(k))idx.set(k,null); // More than one existing row requires a decision.
+      else idx.set(k,tx);
+      if(imported && !tx.weeklySource && Number.isFinite(tx.weeklyImportedAmount) && !inputKeys.has(k) && tx.currency===currency){
+        const matches=legacyByAmount.get(tx.weeklyImportedAmount)||[];
+        matches.push(tx);legacyByAmount.set(tx.weeklyImportedAmount,matches);
+      }
+    }
     let added=0,updated=0,conflicts=0;
     for(const row of entries){
       const k=key(row.account,row.date,currency),old=idx.get(k),value=cents(row.amount);
+      if(idx.has(k) && !old){conflicts++;continue;}
+      if(imported && !old && row.sourceId && usedIds.has(row.sourceId)){conflicts++;continue;}
+      if(imported && !old){
+        const possible=(legacyByAmount.get(value)||[]).filter(tx=>
+          (normalized(row.account)===normalized(tx.account) && Math.abs(Date.parse(row.date)-Date.parse(tx.date))<=6*86400000) ||
+          (row.date===tx.date && normalized(tx.desc)===normalized('Ganho semanal · '+row.account)));
+        if(possible.length){
+          const identity=JSON.stringify([k,value,possible.map(tx=>[tx.id,tx.date,tx.account,tx.amount,tx.type]).sort()]);
+          if(!review.distinct?.has(identity)){
+            review.uncertain?.push({identity,row,existing:possible});conflicts++;continue;
+          }
+        }
+      }
       const signed=old && (old.type==='despesa'?-1:1)*old.amount;
-      if(old && imported && signed!==value && old.weeklyImportedAmount!==signed){conflicts++;continue;}
+      if(old && imported){
+        rememberSource(old);
+        if(signed!==value && (old.weeklyImportedAmount!==signed || old.currency!==currency)){conflicts++;continue;}
+        if(!old.weeklySource && signed===value)old.weeklySource={account:row.account,date:row.date,currency};
+      }
       if(old && signed===value && (!imported || old.weeklyImportedAmount===value))continue;
-      const t=old || {id:makeId(),date:row.date,account:row.account,desc:'Ganho semanal · '+row.account,
+      const t=old || {id:(imported && row.sourceId)||makeId(),date:row.date,account:row.account,desc:'Ganho semanal · '+row.account,
         category:'Receita semanal',weeklyRevenue:true,groupId:null,installment:null,totalValue:null,fixed:false,currency};
       t.amount=Math.abs(value);t.type=value<0?'despesa':'receita';
-      if(imported)t.weeklyImportedAmount=value;
-      if(!old){ds.transactions.push(t);idx.set(k,t);added++;}else updated++;
+      if(imported){t.weeklyImportedAmount=value;rememberSource(t);}
+      if(!old){ds.transactions.push(t);idx.set(k,t);usedIds.add(t.id);added++;}else updated++;
     }
     return {added,updated,conflicts};
   }
@@ -116,6 +160,6 @@ const WeeklyRevenue = (() => {
     const rows=[...accounts].sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]));
     return {total,reported,rows};
   }
-  return {parse,apply,normalized,key,nextWeek,periodModel,selectionSummary};
+  return {parse,apply,rememberSource,identifyEntries,normalized,key,nextWeek,periodModel,selectionSummary};
 })();
 if(typeof module!=='undefined'&&module.exports)module.exports=WeeklyRevenue;

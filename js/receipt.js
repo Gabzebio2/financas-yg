@@ -148,7 +148,8 @@ const Receipt = (() => {
       for (let start = 0; start < totalPages;) {
         let count = Math.min(options.singlePage ? 1 : 2, totalPages - start), data;
         for (;;) {
-          const part = await PDFLib.PDFDocument.create();
+          // The same source page must keep its checksum if a transfer is resumed later.
+          const part = await PDFLib.PDFDocument.create({updateMetadata:false});
           const pages = await part.copyPages(pdf, Array.from({ length: count }, (_, i) => start + i));
           pages.forEach((page) => part.addPage(page));
           data = await part.saveAsBase64({ useObjectStreams: true });

@@ -105,6 +105,20 @@ test('programação é idempotente e preserva duas compras iguais no original',a
   const repaired=planDocumentImport({pages:[p],existing});assert.equal(repaired.transactions.length,1);
   assert.equal(repaired.transactions[0].installment,'4/5');assert.equal(repaired.duplicates,9);
 });
+test('referência bancária reconhece a linha renomeada e preserva movimentos distintos',async()=>{
+  const {planDocumentImport}=await planner();
+  const old=saved({account:'Ueno',currency:'PYG',amount:25000,desc:'Farmácia',referenceId:'BANCO-123'});
+  const printed=item({instituicao:'Ueno',moeda:'PYG',valor:25000,descricao:'Farmácia - filial',referencia:'BANCO-123'});
+  const input=(rows,existing)=>planDocumentImport({existing,pages:[page('extrato',rows)]});
+  const r=input([printed,{...printed,referencia:'BANCO-124'}],[old]);
+  assert.equal(r.duplicates,1);assert.deepEqual(r.transactions.map(t=>t.referenceId),['BANCO-124']);
+  for(const change of [{data:'2026-08-12'},{tipo:'receita'},{valor:25001},{moeda:'BRL'},{instituicao:'Itaú'},{referencia:'banco-123'}]){
+    assert.equal(input([{...printed,...change}],[old]).transactions.length,1);
+  }
+  const repeated=input([printed,{...printed,referencia:'BANCO-124'}],[old,...r.transactions.map(t=>({...t,id:'second'}))]);
+  assert.equal(repeated.transactions.length,0);assert.equal(repeated.duplicates,2);
+  assert.equal(old.desc,'Farmácia');
+});
 test('ocorrências iguais de linhas avulsas em um documento consomem apenas uma ocorrência existente',async()=>{
   const {planDocumentImport}=await planner(),p=page('one',[item(),item(),item({tipo:'receita'})]);
   const {transactions,duplicates}=planDocumentImport({pages:[p,{...p,document_id:'same-file-again'}],existing:[saved()]});

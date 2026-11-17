@@ -24,6 +24,26 @@ test('resultado abre prévia sem gravar; atualização igual não recria botões
  const button={dataset:{action:'open',job:'test'}};await h.node('#receipt-jobs').fire('click',{target:{closest:()=>button}});
  assert.equal(h.node('#receipt-jobs').open,false);assert.equal(h.opened.length,1);assert.equal(h.opened[0].backgroundJob.job.id,'test');assert(!h.requests.some(r=>r.action==='commit'));
 });
+test('sino retoma somente páginas faltantes do arquivo original no mesmo envio',async()=>{
+ const h=setup([job('uploading')]);await settle();
+ const input=h.node('#receipt-resume-files');input.click=()=>{};h.ctx.atob=atob;
+ const remaining=Buffer.from('page2'),hash=require('node:crypto').createHash('sha256').update(remaining).digest('hex');
+ h.ctx.Receipt={async *prepareParts(file){for(const data of file.pages)yield {data:Buffer.from(data).toString('base64'),mediaType:'application/pdf'};}};
+ const actions=[],fallback=h.ctx.fetch;
+ h.ctx.fetch=async(u,opt)=>{
+   const body=JSON.parse(opt.body);actions.push(body);
+   if(body.action==='upload-manifest')return {ok:true,json:async()=>({status:'uploading',folder:'folder',missing:[{page_index:1,sha256:hash,byte_size:remaining.length,media_type:'application/pdf'}]})};
+   return fallback(u,opt);
+ };
+ const click=()=>h.node('#receipt-jobs').fire('click',{target:{closest:()=>({dataset:{action:'resume',job:'test'}})}});
+ assert.match(h.node('[data-jobs-list]').innerHTML,/Retomar envio/);
+ await click();input.files=[{pages:['different']}];await input.fire('change');
+ assert(!actions.some(x=>x.action==='upload'||x.action==='submit'));
+ await click();input.files=[{pages:['page1','page2']}];await input.fire('change');
+ assert.deepEqual(actions.filter(x=>x.action==='upload').map(x=>[x.id,x.index,x.data]),[['test',1,remaining.toString('base64')]]);
+ assert.equal(actions.filter(x=>x.action==='submit').length,1);
+ assert(!actions.some(x=>x.action==='create'||x.action==='commit'));
+});
 test('logout e troca de pasta limpam notificações e fecham o diálogo',async()=>{
  const h=setup([job()]);await settle();await h.node('#hero-notifications').fire('click');await settle();
  h.setUser(null);await h.api.refresh();assert.equal(h.node('#receipt-jobs').open,false);assert.equal(h.node('#receipt-notification-count').classList.contains('hidden'),true);assert.doesNotMatch(h.node('[data-jobs-list]').innerHTML,/Extrato fictício/);

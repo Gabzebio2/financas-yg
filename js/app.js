@@ -546,7 +546,12 @@ function askConfirm(title, text, cb, options) {
   button.textContent = options?.confirmLabel || "Excluir";
   button.classList.toggle("btn-danger", !options?.confirmLabel);
   button.classList.toggle("btn-primary", !!options?.confirmLabel);
-  confirmCallback = cb;
+  const choice = $("#modal-confirm-choice");
+  choice.classList.toggle("hidden", !options?.checkboxLabel);
+  const checkbox = $("#modal-confirm-check");
+  checkbox.checked = false;
+  $("#modal-confirm-check-label").textContent = options?.checkboxLabel || "";
+  confirmCallback = options?.checkboxLabel ? () => cb(checkbox.checked) : cb;
   $("#modal-confirm").classList.remove("hidden");
 }
 function closeConfirmModal() {
@@ -570,7 +575,7 @@ function renderFolders() {
   const owner = accountFolderOwner();
   const idx = accountFolderIndex();
   const grid = $("#folders-grid");
-  for (const selector of ["#card-new","#card-business","#card-upload","#btn-import-backup","#btn-export-backup"]) {
+  for (const selector of ["#card-new","#card-business","#card-upload","#btn-import-backup","#btn-copy-backup","#btn-export-backup"]) {
     const button = $(selector);
     if (button) button.disabled = !owner;
   }
@@ -713,6 +718,21 @@ function cleanCashback(t) {
   return c && Number.isFinite(c.amount) && c.amount>0 && c.amount<=Number.MAX_SAFE_INTEGER && typeof c.currency==='string' && /^[A-Z]{2,10}$/.test(c.currency)
     ? {cashback:{amount:c.amount,currency:c.currency}} : {};
 }
+function unsupportedFinancialValue(raw) {
+  // Nas versões anteriores, a sentinela DEFAULT persistida num valor era BRL.
+  const currency = code => code != null && code !== "DEFAULT" && !CURRENCY_CODES.includes(code);
+  for (const [i, t] of (Array.isArray(raw?.transactions) ? raw.transactions : []).entries()) {
+    if (!t) continue;
+    if (currency(t.currency)) return `lançamento ${i+1} com moeda incompatível (${String(t.currency).slice(0,16)})`;
+    if (t.type != null && !["receita","despesa"].includes(t.type)) return `lançamento ${i+1} com tipo incompatível (${String(t.type).slice(0,20)})`;
+  }
+  for (const [name, list] of [["meta",raw?.metas],["limite",raw?.limits]]) {
+    if (!Array.isArray(list)) continue;
+    const index = list.findIndex(item => currency(item?.currency));
+    if (index >= 0) return `${name} ${index+1} com moeda incompatível`;
+  }
+  return currency(raw?.weekly?.currency) ? "receitas semanais com moeda incompatível" : "";
+}
 function cleanAdvance(t) {
   const a=t?.advance;
   return a && isValidISODate(a.scheduledDate) && isValidISODate(a.paidDate) && a.paidDate===t.date && a.paidDate<a.scheduledDate && typeof t.installment==="string" && RE_PARC.test(t.installment)
@@ -739,6 +759,7 @@ function cleanDateEstimate(transaction) {
 // Só preenche campos adicionados em versões novas e protege a renderização.
 function normalizeStoredDataset(raw) {
   if (!raw || !Array.isArray(raw.transactions)) return null;
+  if (unsupportedFinancialValue(raw)) return null;
   if (raw.c6InvoicePayments !== undefined && !validC6InvoicePayments(raw.c6InvoicePayments)) return null;
   if (raw.whatsappRevision != null && (!Number.isSafeInteger(raw.whatsappRevision) || raw.whatsappRevision < 0)) return null;
   if ([raw.categories, raw.metas, raw.limits].some((value) => value != null && !Array.isArray(value))) return null;
@@ -790,6 +811,7 @@ function normalizeStoredDataset(raw) {
 
 function sanitizeDataset(raw, opts) {
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.transactions) || raw.transactions.length > 100000) return null;
+  if (unsupportedFinancialValue(raw)) return null;
   if (raw.c6InvoicePayments !== undefined && !validC6InvoicePayments(raw.c6InvoicePayments)) return null;
   if (raw.whatsappRevision != null && (!Number.isSafeInteger(raw.whatsappRevision) || raw.whatsappRevision < 0)) return null;
   if (opts?.rejectInvalidTransactions && [raw.categories, raw.metas, raw.limits].some((value) => value != null && !Array.isArray(value))) return null;
@@ -820,7 +842,7 @@ function sanitizeDataset(raw, opts) {
   };
   const usedIds = new Set([ds.id]);
   const uniqueId = (value, receipt = false) => {
-    let id = receipt && preserve && RE_RECEIPT_ID.test(value) ? value : keepOrNewId(value, preserve);
+    let id = preserve && receipt && safeBackupId(value) ? value : keepOrNewId(value, preserve);
     while (usedIds.has(id)) id = uid();
     usedIds.add(id);
     return id;
@@ -858,7 +880,7 @@ function sanitizeDataset(raw, opts) {
   const groupMap = new Map();
   const mapGroup = (g) => {
     if (typeof g !== "string" || !g) return null;
-    if (preserve && (RE_SAFE_ID.test(g) || /^c6_[a-f0-9]{32}$/.test(g) || RE_RECEIPT_ID.test(g))) return g;
+    if (preserve && safeBackupId(g)) return g;
     if (!groupMap.has(g)) groupMap.set(g, uid());
     return groupMap.get(g);
   };
@@ -874,6 +896,10 @@ function sanitizeDataset(raw, opts) {
       id: uniqueId(t.id, true),
       groupId: mapGroup(t.groupId),
       fixed: t.fixed === true,
+      ...(t.fixed === true && t.groupId && isValidISODate(t.repeatMonth + "-01") && {repeatMonth:t.repeatMonth}),
+      ...(t.fixed === true && t.groupId && Number.isInteger(t.repeatMonthlyDay) && t.repeatMonthlyDay >= 1 && t.repeatMonthlyDay <= 31 &&
+        /^[a-z0-9]{6,24}$/.test(t.repeatKey || "") && isValidISODate(t.repeatThrough + "-01") &&
+        {repeatMonthlyDay:t.repeatMonthlyDay,repeatThrough:t.repeatThrough,repeatKey:t.repeatKey}),
       date,
       ...cleanDateEstimate(t), ...cleanAdvance(t), ...cleanCashback(t), ...cleanBillFields(t), ...cleanPurchaseSchedule(t), ...cleanCardCycle(t),
       desc: text(t.desc, 120).trim() || "(sem descrição)",
@@ -883,6 +909,9 @@ function sanitizeDataset(raw, opts) {
       ...(typeof t.referenceId === "string" && t.referenceId.trim() ? { referenceId: text(t.referenceId, 160).trim() } : {}),
       ...(typeof t.sourceEvidence === "string" && t.sourceEvidence.trim() ? { sourceEvidence: text(t.sourceEvidence, 300).trim() } : {}),
       ...(raw.profile==="pj" && t.weeklyRevenue===true ? {weeklyRevenue:true,
+        ...(t.weeklySource && typeof t.weeklySource.account==="string" && t.weeklySource.account.trim() && t.weeklySource.account.length<=120 &&
+          isValidISODate(t.weeklySource.date) && CURRENCY_CODES.includes(t.weeklySource.currency) ?
+          {weeklySource:{account:t.weeklySource.account,date:t.weeklySource.date,currency:t.weeklySource.currency}} : {}),
         ...(Number.isFinite(t.weeklyImportedAmount) ? {weeklyImportedAmount:t.weeklyImportedAmount}:{})} : {}),
       ...(t.photoSource && /^[a-f0-9]{64}$/.test(t.photoSource.hash) && /^[a-f0-9]{32}$/.test(t.photoSource.row) &&
         Number.isSafeInteger(t.photoSource.occurrence) && t.photoSource.occurrence > 0 ?
@@ -972,15 +1001,15 @@ function buildSyncPayload() {
 function exportBackup() {
   // O backup preserva os objetos originais, inclusive registros que precisam
   // de reparo. A leitura da interface não deve reduzir o conteúdo exportado.
-  const data = {
-    app: "financas-yg", version: 1, exportedAt: new Date().toISOString(),
-    datasets: accountFolderIndex().map((e) => Store._rawDataset(e.id)).filter(Boolean),
-  };
-  if (!data.datasets.length) { toast("Nada para exportar ainda."); return; }
+  downloadFolderBackup(accountFolderIndex().map(e => Store._rawDataset(e.id)).filter(Boolean), "backup");
+}
+function downloadFolderBackup(datasets, purpose) {
+  if (!datasets.length) { toast("Nada para exportar ainda."); return; }
+  const data = {app:"financas-yg", version:1, exportedAt:new Date().toISOString(), datasets};
   const blob = new Blob([JSON.stringify(data, null, 1)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `financas-yg-backup-${todayISO()}.json`;
+  a.download = `financas-yg-${purpose}-${todayISO()}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -988,28 +1017,118 @@ function exportBackup() {
   toast("Backup exportado ✔");
 }
 
-function importBackup(file) {
+function safeBackupId(value) {
+  return typeof value === "string" && /^[a-z0-9_-]{1,200}$/i.test(value) && !["__proto__","prototype","constructor"].includes(value);
+}
+function planBackupRestore(rawList, copyMode, restoreInvoicePayments = false) {
+  const existing = accountFolderIndex().map(e => Store._rawDataset(e.id)).filter(Boolean);
+  const seen = new Set(), changes = [];
+  const availablePayments = [];
+  let priorSettings = false;
+  let added = 0, created = 0, retained = 0;
+  for (const raw of rawList) {
+    const issue = unsupportedFinancialValue(raw);
+    if (issue) throw new Error(`Pasta “${String(raw?.name || "do backup").slice(0,80)}”: ${issue}.`);
+    const ds = sanitizeDataset(raw, {preserveIds:!copyMode, preserveContent:true, rejectInvalidTransactions:true});
+    if (!ds) throw new Error("O backup contém dados ou datas incompatíveis. Nenhuma pasta foi restaurada.");
+    if (copyMode) {
+      ds.name = `${ds.name} · cópia`; changes.push(ds); created++; added += ds.transactions.length;
+      continue;
+    }
+    if (!safeBackupId(raw.id) || !RE_SAFE_ID.test(raw.id) || seen.has(raw.id) ||
+        ["transactions","metas","limits"].some(key => ds[key].some((item,i) => item.id !== raw[key]?.[i]?.id))) {
+      throw new Error("Há identificadores ausentes ou repetidos no backup. Use Criar cópia para abrir esses dados em pastas separadas.");
+    }
+    seen.add(raw.id);
+    const current = existing.find(folder => folder.id === ds.id);
+    if (!current) {
+      if (Store._rawDataset(ds.id) || (typeof Cloud !== "undefined" && Cloud.isReservedFolderId?.(ds.id)) ||
+          existing.some(folder => folder.name === ds.name && folder.createdAt === ds.createdAt)) {
+        throw new Error(`“${ds.name}” já tem uma cópia ou um vínculo anterior. Use Criar cópia para restaurar separadamente.`);
+      }
+      changes.push(ds); created++; added += ds.transactions.length;
+      continue;
+    }
+    if (!Store.loadDataset(current.id)) throw new Error(`“${ds.name}” precisa de recuperação. Use Criar cópia para manter as duas versões.`);
+    const currentIds = new Set(current.transactions.map(t => t.id));
+    const missing = ds.transactions.filter(t => !currentIds.has(t.id));
+    retained += ds.transactions.length - missing.length;
+    const result = {...current, transactions:[...current.transactions,...missing]};
+    let modified = missing.length > 0;
+    for (const key of ["categories","metas","limits"]) {
+      const items = current[key] || [];
+      const identity = key === "categories" ? item => stripAccents(item.name) : item => item.id;
+      const ids = new Set(items.map(identity));
+      const extra = ds[key].filter(item => !ids.has(identity(item)));
+      if (extra.length) { result[key] = [...items,...extra]; modified = true; }
+    }
+    // Um mês sem baixa também pode ser uma fatura reaberta pelo usuário.
+    for (const [month,payment] of Object.entries(ds.c6InvoicePayments || {})) {
+      if (current.c6InvoicePayments?.[month]) continue;
+      availablePayments.push([ds.id,month,payment]);
+      if (restoreInvoicePayments) {
+        result.c6InvoicePayments = {...result.c6InvoicePayments,[month]:payment};
+        modified = true;
+      }
+    }
+    if (ds.limits.some(limit => {
+      const present = current.limits?.find(item => item.id === limit.id);
+      return present && limit.versions.some(v => !present.versions?.some(p => p.from === v.from));
+    }) || ds.metas.some(meta => {
+      const present = current.metas?.find(item => item.id === meta.id);
+      return present && meta.saved != null && present.saved !== meta.saved;
+    }) || ds.weekly?.accounts.some(account => !current.weekly?.accounts?.includes(account))) priorSettings = true;
+    if (modified) changes.push(result);
+    added += missing.length;
+  }
+  return {changes, added, created, retained, availablePayments, priorSettings};
+}
+function importBackup(file, copyMode = false, preview = false) {
   if (!file) return;
   const owner = accountFolderOwner();
   if (!owner) { showFolderLogin(); return; }
   if (file.size > 20 * 1024 * 1024) { toast("Arquivo de backup grande demais (máx. 20 MB)."); return; }
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     if (owner !== accountFolderOwner()) { toast("A conta mudou. Selecione o backup novamente."); return; }
     try {
       const data = JSON.parse(reader.result);
       if (!data || data.app !== "financas-yg" || !Array.isArray(data.datasets) || (data.version != null && data.version !== 1)) throw new Error("formato");
       // Valida tudo antes de escrever; arquivos parcialmente inválidos não
       // geram pastas incompletas nem sucesso aparente com totais alterados.
-      const datasets = data.datasets.map((raw) => sanitizeDataset(raw, { preserveContent: true, rejectInvalidTransactions: true }));
-      if (datasets.some((ds) => !ds)) throw new Error("dados");
-      Store.saveDatasets(datasets);
-      const count = datasets.length;
-      renderFolders();
-      toast(count ? `${count} pasta(s) restaurada(s) do backup ✔` : "Nenhuma pasta válida no arquivo 😕");
+      const review = plan => askConfirm(copyMode ? "Criar cópias das pastas?" : "Restaurar backup?",
+        `${plan.created} pasta(s) nova(s) · ${plan.added} lançamento(s) para incluir · ${plan.retained} já presente(s). As edições existentes serão preservadas.` +
+        (plan.availablePayments.length ? `\nO backup registra ${plan.availablePayments.length} fatura(s) C6 como paga(s) que estão sem baixa na pasta.` : "") +
+        (plan.priorSettings ? "\nHá diferenças nas metas, limites ou configurações semanais. Use Criar cópia para consultar a versão do backup." : ""),
+        selected => save(plan,selected), {confirmLabel:copyMode ? "Criar cópias" : "Restaurar",
+          checkboxLabel:plan.availablePayments.length ? "Também marcar essas faturas como pagas, com a data e o valor do backup" : ""});
+      const save = (approved, restorePayments = false) => {
+        if (owner !== accountFolderOwner()) return;
+        try {
+          // Replanejar aqui inclui edições que chegaram enquanto o resumo estava aberto.
+          const next = preview ? planBackupRestore(data.datasets, copyMode, restorePayments) : approved;
+          if (["added","created","retained","priorSettings"].some(key => approved[key] !== next[key]) ||
+              JSON.stringify(approved.availablePayments) !== JSON.stringify(next.availablePayments)) { review(next); return; }
+          if (!next.changes.length) { toast("Nenhuma alteração aplicada. Os lançamentos existentes foram preservados."); return; }
+          Store.saveDatasets(next.changes);
+          renderFolders();
+          toast(`${next.added} lançamento(s) adicionado(s) · ${next.created} pasta(s) criada(s).` +
+            (restorePayments ? ` ${next.availablePayments.length} baixa(s) de fatura restaurada(s).` : ""));
+        } catch (error) { if (error.name !== "StorageError") toast(error.message); }
+      };
+      // Em um aparelho novo o catálogo local pode ainda não conhecer a pasta.
+      // Confira sua existência antes de tratar o ID do backup como novo.
+      if (preview && !copyMode && data.datasets.some(ds => safeBackupId(ds?.id) && !Cloud.ownsFolder(ds.id))) {
+        if (!await Cloud.syncNow({fresh:true})) throw new Error("Não foi possível conferir as pastas da conta. Tente restaurar novamente quando a sincronização estiver disponível.");
+        if (owner !== accountFolderOwner()) throw new Error("A conta mudou. Selecione o backup novamente.");
+      }
+      const plan = planBackupRestore(data.datasets, copyMode);
+      if (!plan.changes.length && !plan.availablePayments.length && !plan.priorSettings) { toast("Este backup já está na conta."); return; }
+      if (preview) review(plan);
+      else save(plan);
     } catch (error) {
       if (error.name === "StorageError") return; // Store já mostrou a causa real
-      toast("Backup inválido ou com datas/valores inconsistentes. Nenhuma pasta foi restaurada.");
+      toast(error instanceof SyntaxError || error.message === "formato" ? "Formato de backup inválido." : error.message);
     }
   };
   reader.onerror = () => toast("Não foi possível ler o backup. Selecione o arquivo novamente.");
@@ -1039,7 +1158,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#btn-back").addEventListener("click", goHome);
 
   // Home: ações principais
-  let uploadOwner, backupOwner;
+  let uploadOwner, backupOwner, backupCopy = false;
   $("#card-upload").addEventListener("click", () => {
     uploadOwner = accountFolderOwner();
     if (uploadOwner) $("#file-input").click(); else showFolderLogin();
@@ -1088,13 +1207,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Backup
   $("#btn-export-backup").addEventListener("click", exportBackup);
-  $("#btn-import-backup").addEventListener("click", () => {
+  $("#btn-cloud-offline-recovery")?.addEventListener("click", () => Cloud.exportOfflineRecovery());
+  function selectBackup(copyMode) {
     backupOwner = accountFolderOwner();
+    backupCopy = copyMode;
     if (backupOwner) $("#backup-input").click(); else showFolderLogin();
-  });
+  }
+  $("#btn-import-backup").addEventListener("click", () => selectBackup(false));
+  $("#btn-copy-backup")?.addEventListener("click", () => selectBackup(true));
   $("#backup-input").addEventListener("change", (ev) => {
     const file = ev.target.files[0];
-    if (file && backupOwner && backupOwner === accountFolderOwner()) importBackup(file);
+    if (file && backupOwner && backupOwner === accountFolderOwner()) importBackup(file, backupCopy, true);
     ev.target.value = "";
   });
 

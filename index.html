@@ -6,7 +6,7 @@
 <!-- Segurança: só scripts do próprio app e conexões aos serviços autorizados
      (api.anthropic.com p/ leitura de comprovante; *.supabase.co p/ nuvem).
      "file:" mantém o app funcionando quando aberto localmente com dois cliques. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://*.supabase.co wss://*.supabase.co https://open.er-api.com https://cdn.jsdelivr.net https://docs.google.com https://*.googleusercontent.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file:; img-src 'self' data: file:; connect-src 'self' https://api.anthropic.com https://*.supabase.co wss://*.supabase.co https://api.pwnedpasswords.com https://open.er-api.com https://cdn.jsdelivr.net https://latest.currency-api.pages.dev https://docs.google.com https://*.googleusercontent.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#17161e">
@@ -14,7 +14,7 @@
 <title>Finanças YG</title>
 <script src="js/theme.js?v=20261023-guarani"></script>
 <link rel="stylesheet" href="css/style.css?v=20261027-import">
-<link rel="stylesheet" href="css/design.css?v=20261116-painel">
+<link rel="stylesheet" href="css/design.css?v=20261117-revisao">
 <link rel="stylesheet" href="css/whatsapp.css?v=20261023-pilot">
 <link rel="stylesheet" href="css/receipt-jobs.css?v=20261106-statement-coverage">
 </head>
@@ -118,6 +118,7 @@
       </div>
       <p class="drive-status" id="cloud-status"></p>
       <p class="hint" id="cloud-queue-status" role="status"></p>
+      <button type="button" class="btn btn-ghost btn-sm hidden" id="btn-cloud-offline-recovery">Baixar alterações recuperadas deste aparelho</button>
       <div class="hidden" id="cloud-repair-actions">
         <p class="hint" id="cloud-repair-hint" role="status"></p>
         <div class="drive-connected-btns">
@@ -152,7 +153,8 @@
         <button class="btn btn-ghost btn-sm" id="btn-export-backup" disabled title="Salva todas as pastas em um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Exportar backup</button>
         <button class="btn btn-ghost btn-sm" id="btn-import-backup" disabled title="Restaura pastas de um arquivo .json"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V3m-5 5 5-5 5 5M4 15v5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5"/></svg> Importar backup</button>
       </div>
-    <p class="hint" id="storage-hint">Seus dados ficam salvos neste navegador, neste computador. Exporte um backup de vez em quando por segurança.</p>
+    <button type="button" class="btn-link" id="btn-copy-backup" disabled>Criar cópia a partir de um backup</button>
+    <p class="hint" id="storage-hint">Restaurar recupera lançamentos ausentes. Criar cópia abre as pastas do arquivo separadamente.</p>
       </div>
     </details>
     <details class="wa-panel" id="whatsapp-panel">
@@ -267,6 +269,7 @@
     <dialog id="receipt-jobs" class="receipt-jobs" aria-labelledby="receipt-notifications-title">
       <header class="receipt-notifications-header"><div><h2 id="receipt-notifications-title">Notificações</h2><p>Leituras e lançamentos desta pasta</p></div><button type="button" class="btn-icon" id="receipt-notifications-close" aria-label="Fechar notificações"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg></button></header>
       <p data-jobs-error class="receipt-job-error" role="status"></p>
+      <input type="file" id="receipt-resume-files" accept="image/jpeg,image/png,image/webp,application/pdf" multiple hidden>
       <div data-jobs-list class="receipt-notifications-list"></div>
       <p class="receipt-notifications-privacy">Arquivos privados por 14 dias. Os lançamentos incluídos permanecem na pasta.</p>
     </dialog>
@@ -400,10 +403,12 @@
       </div>
       <div class="card chart-card">
         <h3>Entradas e saídas</h3><p class="chart-subtitle">Receitas e despesas por mês</p>
+        <p class="hint" id="chart-evo-note" hidden>Os pontos sem cotação ficam em branco.</p>
         <div class="chart-box"><canvas id="chart-evo">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
       <div class="card chart-card">
         <h3>Evolução do saldo</h3><p class="chart-subtitle">Resultado mensal e saldo acumulado</p>
+        <p class="hint" id="chart-saldo-note" hidden>Os saldos que dependem de uma cotação ausente ficam em branco.</p>
         <div class="chart-box"><canvas id="chart-saldo">Gráfico financeiro. Os valores detalhados estão no resumo e na lista de transações.</canvas></div>
       </div>
       <div class="card chart-card">
@@ -440,6 +445,12 @@
         <h3>Transações <span id="tx-count" class="badge"></span></h3>
         <button class="btn btn-ghost btn-sm" id="btn-export-csv" title="Exportar todas as transações que correspondem aos filtros"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m-5-5 5 5 5-5M4 17v3h16v-3"/></svg> Exportar CSV</button>
       </div>
+      <details class="tx-origin-review" id="tx-origin-review">
+        <summary>Conferir possíveis duplicatas</summary>
+        <p class="hint">Consulta de todo o histórico desta pasta. Cada grupo mostra por que os lançamentos podem ter a mesma origem.</p>
+        <div id="tx-origin-results"></div>
+        <div class="tx-origin-pages"><button class="btn btn-ghost btn-sm" type="button" id="tx-origin-prev">Anterior</button><span role="status" id="tx-origin-status"></span><button class="btn btn-ghost btn-sm" type="button" id="tx-origin-next">Próxima</button></div>
+      </details>
       <div class="transaction-filters"><label class="search-field"><span class="sr-only">Buscar transações</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg><input type="search" id="tx-search" placeholder="Buscar descrição, categoria ou conta…"></label><label><span class="sr-only">Tipo de transação</span><select id="tx-type-filter"><option value="all">Todos os tipos</option><option value="receita">Receitas</option><option value="despesa">Despesas</option></select></label><label><span class="sr-only">Filtrar por conta</span><select id="tx-account-filter"><option value="all">Todas as contas</option></select></label><button class="btn-link" id="btn-clear-tx-filters">Limpar filtros</button></div><p class="filter-help">Os filtros refinam a lista e a exportação. Os saldos acima mostram o período.</p>
       <div class="filter-help hidden" id="tx-receipt-filter"><strong id="tx-receipt-label">Lançamentos deste documento · todos os meses</strong> <button type="button" class="btn-link" id="btn-close-receipt-filter">Voltar à lista do período</button></div>
       <div class="bulk-bar hidden" id="tx-bulk-bar">
@@ -545,6 +556,9 @@
       <label class="span2 checkline" id="tx-fixa-wrap">
         <input type="checkbox" id="tx-fixa" aria-describedby="tx-parc-hint"><span id="tx-fixa-label">Despesa fixa (repete todo mês)</span>
       </label>
+      <label class="span2 checkline hidden" id="tx-renew-wrap">
+        <input type="checkbox" id="tx-renew"> Continuar todo mês até eu encerrar
+      </label>
       <p class="hint span2 hidden" id="tx-parc-hint"></p>
     </div>
     <div class="modal-actions">
@@ -585,11 +599,22 @@
   </form>
 </dialog>
 
+<dialog class="weekly-dialog" id="import-signs-dialog" aria-labelledby="import-signs-title">
+  <header><h2 id="import-signs-title">Como esta planilha mostra os valores?</h2></header>
+  <form method="dialog">
+    <p><strong id="import-signs-name"></strong> não informa o tipo de cada movimento. Escolha como interpretar os sinais deste arquivo.</p>
+    <button class="btn btn-primary" value="bank">Extrato de conta · − gasto, + entrada</button>
+    <button class="btn btn-ghost" value="invoice">Fatura de cartão · + gasto, − crédito</button>
+    <button class="btn btn-ghost" value="cancel">Cancelar este arquivo</button>
+  </form>
+</dialog>
+
 <!-- Confirmação genérica -->
 <div class="modal-backdrop hidden" id="modal-confirm">
   <div class="modal modal-sm">
     <h3 id="modal-confirm-title">Tem certeza?</h3>
     <p id="modal-confirm-text"></p>
+    <label id="modal-confirm-choice" class="hidden"><input type="checkbox" id="modal-confirm-check"> <span id="modal-confirm-check-label"></span></label>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="btn-confirm-cancel">Cancelar</button>
       <button class="btn btn-danger" id="btn-confirm-ok">Excluir</button>
@@ -836,21 +861,21 @@
 <script src="js/installment-schedule.js?v=20261107-c6-invoices"></script>
 <script src="js/import-dates.js?v=20261106-auto-document"></script>
 <script src="js/transaction-categories.js?v=20261109-categorias"></script>
-<script src="js/app.js?v=20261116-pagamento"></script>
+<script src="js/app.js?v=20261117-revisao"></script>
 <script src="js/rates.js?v=20261023-guarani"></script>
-<script src="js/importer.js?v=20261109-categorias"></script>
-<script src="js/weekly-revenue.js?v=20261103-week-cards"></script>
-<script src="js/business.js?v=20261103-bills"></script>
-<script src="js/dashboard.js?v=20261116-painel"></script>
-<script src="js/receipt.js?v=20261109-categorias"></script>
-<script src="js/batch.js?v=20261109-categorias"></script>
+<script src="js/importer.js?v=20261116-extratos"></script>
+<script src="js/weekly-revenue.js?v=20261117-revisao"></script>
+<script src="js/business.js?v=20261117-revisao"></script>
+<script src="js/dashboard.js?v=20261117-revisao"></script>
+<script src="js/receipt.js?v=20261116-envio"></script>
+<script src="js/batch.js?v=20261116-extratos"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
-<script src="js/cloud-archive.js?v=20261106-archive-sync"></script>
-<script src="js/cloud-merge.js?v=20261107-c6-invoices"></script>
-<script src="js/cloud.js?v=20261106-archive-sync"></script>
-<script src="js/receipt-jobs.js?v=20261107-tx-dates"></script>
+<script src="js/cloud-archive.js?v=20261117-revisao"></script>
+<script src="js/cloud-merge.js?v=20261117-revisao"></script>
+<script src="js/cloud.js?v=20261117-revisao"></script>
+<script src="js/receipt-jobs.js?v=20261116-envio"></script>
 <script src="js/navigation.js?v=20261106-archive-sync"></script>
-<script src="js/whatsapp.js?v=20261023-pilot"></script>
+<script src="js/whatsapp.js?v=20261116-leitura"></script>
 </body>
 </html>

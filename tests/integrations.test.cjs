@@ -254,6 +254,33 @@ function importerWithCore(rows, sheetName = 'Planilha') {
   return { ...env, store, importer, opened: () => opened, file: { name: 'moedas.xlsx', size: 100, arrayBuffer: async () => new ArrayBuffer(0) } };
 }
 
+test('cada arquivo conserva os mesmos sinais no lote e na seleção individual', async () => {
+  const rows=[['Data','Descrição','Valor'],['2026-11-01','Compra',-30],['2026-11-02','Depósito',100]];
+  for(const [name,expected] of [['extrato.xlsx',['despesa','receita']],['fatura.csv.xlsx',['receita','despesa']],['Extrato Cartão de Crédito.xlsx',['receita','despesa']]]){
+    const h=importerWithCore(rows),file={...h.file,name};
+    const batched=await h.importer.readForBatch(file);
+    await h.importer.handleFile(file); h.importer.savePending();
+    const saved=h.store.loadDataset(h.opened());
+    for(const items of [batched,saved.transactions]){
+      assert.deepEqual(Array.from(items,t=>t.type),expected);
+      assert.deepEqual(Array.from(items,t=>t.amount),[30,100]);
+    }
+  }
+});
+test('a convenção escolhida para arquivo ambíguo tem prioridade mesmo com uma única entrada positiva',async()=>{
+  const h=importerWithCore([['Data','Descrição','Valor'],['2026-11-01','Movimento',100]]);
+  const dialog=h.context.$('#import-signs-dialog');
+  for(const [choice,type] of [['bank','receita'],['invoice','despesa']]){
+    dialog.showModal=()=>{dialog.returnValue=choice;dialog.listeners.get('close')();};
+    const items=await h.importer.readForBatch(h.file);assert.equal(items[0].type,type);
+  }
+});
+test('linha com tipo em branco herda o sinal do extrato sem sobrescrever o tipo das outras',async()=>{
+  const h=importerWithCore([['Data','Descrição','Valor','Tipo'],['2026-11-01','Entrada',100,' '],['2026-11-02','Débito',25,'despesa']]);
+  const items=await h.importer.readForBatch({...h.file,name:'extrato.csv.xlsx'});
+  assert.deepEqual(Array.from(items,t=>[t.type,t.amount]),[['receita',100],['despesa',25]]);
+});
+
 test('planilha classifica campos vazios e mantém categorias explícitas e contas empresariais', async () => {
   const env = importerWithCore([
     ['Data','Descrição','Tipo','Valor','Categoria'],

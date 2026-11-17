@@ -992,6 +992,7 @@ const Batch = (() => {
         reviewWarnings.push("Confira a moeda sugerida pela planilha. O seletor do lote permite corrigi-la antes de salvar.");
       } catch (e) {
         if (!contextValid(version)) return;
+        if(e.message==="import_cancelled"){progress.status="failed";progress.message="arquivo cancelado";falhas.push(file.name+" cancelado");continue;}
         progress.status = "failed"; progress.message = "arquivo não lido";
         console.error(e);
         falhas.push(`"${file.name}" inválido`);

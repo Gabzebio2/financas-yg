@@ -1307,6 +1307,30 @@ body.hide-money .bill-amount { filter:blur(7px); }
 .category-distribution:has(.category-chart-legend:empty) { display:block; }
 .category-distribution:has(.category-chart-legend:empty) .category-ring { max-width:none; height:185px; aspect-ratio:auto; }
 body.hide-money :is(.chart-amount,.chart-share) { filter:blur(7px); user-select:none; }
+.bill-overdue summary { color:var(--red); }
+.tx-origin-review { margin:8px 0 14px; color:var(--text-soft); font-size:.85rem; }
+.tx-origin-review summary { width:fit-content; cursor:pointer; color:var(--primary-text); padding:6px 0; }
+.tx-origin-review section { margin:12px 0; padding:12px; border:1px solid var(--border); border-radius:12px; }
+.tx-origin-review h4 { margin:0 0 6px; font-size:.83rem; overflow-wrap:anywhere; }
+.tx-origin-review ul { list-style:none; margin:0; padding:0; }
+.tx-origin-review li { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; padding:7px 0; gap:4px 12px; border-top:1px solid var(--border); }
+.tx-origin-review li>span:first-child { min-width:0; flex:1 1 180px; overflow-wrap:anywhere; }
+.tx-origin-review strong,.tx-origin-review small { display:block; }
+.tx-origin-review strong { color:var(--text); font-weight:600; }
+.tx-origin-pages { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.tx-origin-review .origin-amount { font-variant-numeric:tabular-nums; white-space:nowrap; }
+body.hide-money .origin-amount { visibility:hidden; position:relative; }
+body.hide-money .origin-amount::after { content:"••••"; position:absolute; inset:0; text-align:right; visibility:visible; }
+body.hide-money #screen-dash :is(.private-total,.limit-nums,.bill-amount,.chart-amount,.chart-share,.weekly-result-value,.weekly-card-value,.weekly-accounts strong) {
+  position:relative; visibility:hidden; filter:none; user-select:none;
+}
+body.hide-money #screen-dash :is(.private-total,.limit-nums,.bill-amount,.chart-amount,.chart-share,.weekly-result-value,.weekly-card-value,.weekly-accounts strong)::after {
+  content:"••••"; position:absolute; inset-inline-start:0; inset-block-start:0; color:var(--text-soft); visibility:visible;
+}
+body.hide-money #screen-dash :is(#hero-saldo,#hero-rec,#hero-desp,#hero-acc,#weekly-announcement,.weekly-meter,.fx-rows,.progress-bar),
+body.hide-money #screen-dash .chart-box canvas { visibility:hidden !important; }
+body.hide-money #screen-dash :is(#hero-saldo,#hero-rec,#hero-desp,#hero-acc)::after { visibility:visible; }
+body.hide-money #hero-acc::after { content:"••••"; font-size:.9rem; }
 @container (max-width: 330px) {
   .category-distribution { grid-template-columns:1fr; gap:12px; }
   .category-distribution .category-ring { width:138px; }

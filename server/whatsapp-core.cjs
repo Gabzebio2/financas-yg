@@ -23,7 +23,8 @@ const fail = (code, status) => { throw new Failure(code, status); };
 const plain = v => !!v && typeof v === "object" && !Array.isArray(v);
 const text = (v, max = 120) => typeof v === "string" ? v.trim().slice(0, max) : "";
 const mask = v => "•••• " + String(v || "").replace(/\D/g, "").slice(-4);
-const ready = (env = process.env) => !!((env.WHATSAPP_BRIDGE_SECRET || env.SUPABASE_SERVICE_ROLE_KEY) && env.WHATSAPP_APP_SECRET && env.WHATSAPP_VERIFY_TOKEN && env.WHATSAPP_ACCESS_TOKEN && /^v\d{1,3}\.0$/.test(env.WHATSAPP_GRAPH_VERSION || "") && (env.GEMINI_API_KEY || env.ANTHROPIC_API_KEY));
+const ready = (env = process.env) => !!((env.WHATSAPP_BRIDGE_SECRET || env.SUPABASE_SERVICE_ROLE_KEY) && env.WHATSAPP_APP_SECRET && env.WHATSAPP_VERIFY_TOKEN && env.WHATSAPP_ACCESS_TOKEN && /^v\d{1,3}\.0$/.test(env.WHATSAPP_GRAPH_VERSION || ""));
+const readingReady = (env = process.env) => !!(env.GEMINI_API_KEY || env.ANTHROPIC_API_KEY || env.OPENAI_API_KEY || env.OPENAI_KEYZAO);
 function same(a, b) {
   const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || ""));
   return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
@@ -194,11 +195,26 @@ async function extractText(input, categories, at, timeZone) {
     const data = await jsonResponse(response), item = data?.candidates?.[0];
     if (!response.ok || item?.finishReason !== "STOP") fail("ai_unavailable");
     raw = item.content?.parts?.filter(p => !p.thought).map(p => p.text || "").join("");
-  } else {
+  } else if (process.env.ANTHROPIC_API_KEY) {
     response = await fetch("https://api.anthropic.com/v1/messages", { method: "POST", headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model: "claude-haiku-4-5", max_tokens: 1200, messages: [{ role: "user", content: prompt }] }), signal: timeout(18000), redirect: "error" });
     const data = await jsonResponse(response);
     if (!response.ok || data?.stop_reason !== "end_turn") fail("ai_unavailable");
     raw = data.content?.filter(p => p.type === "text").map(p => p.text || "").join("");
+  } else {
+    const key = process.env.OPENAI_API_KEY || process.env.OPENAI_KEYZAO;
+    if (!key) fail("reader_not_configured");
+    response = await fetch("https://api.openai.com/v1/responses", {
+      method:"POST", headers:{"Content-Type":"application/json",Authorization:"Bearer " + key},
+      body:JSON.stringify({model:require("../api/receipt.js").openAIModel,store:false,reasoning:{effort:"low"},
+        input:prompt,max_output_tokens:1600,text:{format:{type:"json_object"}}}),
+      signal:timeout(18000),redirect:"error"
+    });
+    const data=await jsonResponse(response);
+    if(!response.ok || data?.status!=="completed" || !Array.isArray(data.output))fail("ai_unavailable");
+    const messages=data.output.filter(entry=>entry.type==="message");
+    const parts=messages.flatMap(entry=>entry.content||[]);
+    if(messages.some(entry=>entry.status && entry.status!=="completed") || parts.some(p=>p.type==="refusal"))fail("ai_unavailable");
+    raw=parts.filter(p=>p.type==="output_text" && typeof p.text==="string").map(p=>p.text).join("");
   }
   try { return JSON.parse(String(raw).replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch { fail("ai_unavailable"); }
 }
@@ -272,6 +288,7 @@ async function handleEvent(event) {
       result = candidate(parsed, categories, preferred);
       if (parsed?.dateAssumed) result.warnings.push("Data de envio usada: confira se corresponde à operação.");
     } else {
+      if (!readingReady()) fail("reader_not_configured");
       const image = await downloadMedia(media?.id, phone);
       const remaining = (budget.getStore() || (Date.now() + 18000)) - Date.now();
       if (remaining < 1000) fail("time_budget_exhausted");
@@ -282,10 +299,12 @@ async function handleEvent(event) {
     }
   } catch (error) {
     retry = error.status !== 422; errorCode = retry ? "processing_unavailable" : null;
-    result = { transaction: {}, warnings: [retry ? "Leitura temporariamente indisponível. O serviço tentará novamente; se persistir, rejeite este rascunho e reenvie." : "Arquivo não suportado. Envie foto JPEG/PNG/WebP ou PDF de até 3 MB, com uma operação por mensagem."] };
+    const reason = error.code === "reader_not_configured" ? "Configure o provedor de IA no servidor para ler esta mensagem." :
+      retry ? "Leitura temporariamente indisponível. O serviço tentará novamente; se persistir, rejeite este rascunho e reenvie." : "Arquivo não suportado. Envie foto JPEG/PNG/WebP ou PDF de até 3 MB, com uma operação por mensagem.";
+    result = { transaction: {}, warnings: [reason] };
   }
   await rpc("wa_finish_draft", { p_draft_id: claim.draftId, p_lease_token: claim.leaseToken, p_transaction: result.transaction, p_warnings: [...new Set(result.warnings)].slice(0, 20), p_error: errorCode });
   if (retry) fail("processing_unavailable");
   await notifyDraft(event, claim.draftId);
 }
-module.exports = { SUPABASE, PUBLIC_KEY, SITE, UUID, ready, same, validSignature, rawBody, authenticate, rest, rpc, candidate, canConfirm, messageEvents, handleEvent, mediaURL, localDate, Failure, mask, withBudget };
+module.exports = { SUPABASE, PUBLIC_KEY, SITE, UUID, ready, readingReady, same, validSignature, rawBody, authenticate, rest, rpc, candidate, canConfirm, messageEvents, handleEvent, mediaURL, localDate, Failure, mask, withBudget };

@@ -57,22 +57,24 @@ function harness({ values = new Map(), server = makeServer(), auto = false } = {
   });
   class Query {
     constructor(user) { this.user = user; this.operation = "select"; this.filters = []; }
-    select() { return this; }
+    select(columns) { this.columns = columns; return this; }
     order() { return this; }
     range(start, end) { this.start = start; this.end = end; return this; }
     insert(payload) { this.operation = "insert"; this.payload = copy(payload); return this; }
     update(payload) { this.operation = "update"; this.payload = copy(payload); return this; }
     delete() { this.operation = "delete"; return this; }
     eq(key, value) { this.filters.push([key, value]); return this; }
+    in(key, values) { this.ids = values; return this; }
     is(key, value) { return this.eq(key, value); }
     abortSignal(signal) { this.signal = signal; return this; }
     then(resolve, reject) { return this.execute().then(resolve, reject); }
     async execute() {
-      const call = { user: this.user, operation: this.operation, filters: copy(this.filters), payload: this.payload && copy(this.payload) };
+      const call = { user: this.user, columns:this.columns, ids:this.ids, operation: this.operation, filters: copy(this.filters), payload: this.payload && copy(this.payload) };
       server.calls.push(call);
       if (server.paused) return { error: { message: "Project is paused", status: 503 } };
       if (this.operation === "select") {
-        const data = [...server.rows.values()].filter((row) => row.user_id === this.user && this.filters.every(([field, value]) => row[field] === value)).map(copy);
+        const data = [...server.rows.values()].filter((row) => row.user_id === this.user && (!this.ids || this.ids.includes(row.id)) && this.filters.every(([field, value]) => row[field] === value))
+          .map(row => this.columns === "id,updated_at" ? {id:row.id,updated_at:row.updated_at} : copy(row));
         if (server.holdSelect) { const gate = server.holdSelect; server.holdSelect = null; await gate.promise; }
         data.sort((a,b)=>a.id.localeCompare(b.id));
         const start = this.start ?? 0, end = Math.min((this.end ?? data.length) + 1, start + (server.pageLimit ?? data.length));
@@ -162,6 +164,20 @@ function putInvalidRemote(h, id = "invalid001", user = "user-a") {
 function storedQueue(h) {
   return JSON.parse([...h.values].find(([key]) => key.startsWith("fyg:cloud-queue:v1:"))[1]);
 }
+
+test("moeda e tipo incompatíveis na nuvem preservam a linha remota e a versão local íntegra", async () => {
+  for (const change of [{currency:"CAD"},{type:"transfer"}]) {
+    const h = await seeded();
+    const row = h.remote();
+    row.updated_at = row.data.updatedAt = "2027-02-01T00:00:00.000Z";
+    Object.assign(row.data.transactions[0], change);
+    const original = copy(row);
+    assert.equal(await h.sync(), false);
+    assert.deepEqual(h.remote(), original);
+    assert.equal(h.local().transactions[0].currency, "BRL");
+    assert.equal(h.local().transactions[0].type, "despesa");
+  }
+});
 
 test("pausa mantém lançamentos e fila duráveis; recarregar e reativar envia uma só vez", async () => {
   const h = await seeded({ auto: true });
@@ -365,6 +381,49 @@ test("resposta sem contagem não remove uma pasta do último catálogo confirmad
   h.server.rows.clear();h.server.omitCount=true;
   assert.equal(await h.sync(),false);assert(h.cloud.ownsFolder("folder0001"));assert(h.local());
   h.server.omitCount=false;assert(await h.sync());assert(!h.cloud.ownsFolder("folder0001"));assert(h.local());
+});
+
+test("edição órfã é recuperável depois de recarregar, apenas na própria conta e sem recriar pasta na nuvem", async () => {
+  const h=await seeded();
+  h.add("Pagamento offline");
+  h.server.rows.clear();
+  assert(await h.sync()); assert(await h.sync());
+  const prior=[...h.values.keys()].filter(key=>key.startsWith("fyg:offline-recovery:"));
+  assert.equal(prior.length,1);
+  const reload=harness({values:h.values,server:h.server});
+  reload.login("user-b");assert.equal(reload.cloud.exportOfflineRecovery(),false);assert.equal(reload.downloads.length,0);
+  reload.login("user-a");assert.equal(reload.cloud.exportOfflineRecovery(),true);
+  const file=JSON.parse(await reload.downloads[0].blob.text());
+  assert.equal(file.datasets.length,1);assert.notEqual(file.datasets[0].id,"folder0001");
+  assert.deepEqual(file.datasets[0].transactions.map(tx=>tx.desc),["Base","Pagamento offline"]);
+  assert.equal(reload.cloud.ownsFolder("folder0001"),false);assert.equal(reload.server.rows.size,0);
+});
+
+test("sem espaço para recuperar uma edição offline, a pendência é preservada e tenta novamente", async () => {
+  const h=await seeded();h.add("Pagamento offline");h.server.rows.clear();
+  h.storage.fail=key=>key.startsWith("fyg:offline-recovery:");
+  assert.equal(await h.sync(),false);assert.equal(h.cloud.getSyncState().pendingUploads,1);
+  assert.equal(h.local().transactions.length,2);assert.equal(h.server.rows.size,0);
+  h.storage.fail=null;assert(await h.sync());assert(h.cloud.exportOfflineRecovery());
+  assert.equal(h.cloud.getSyncState().pendingUploads,0);assert.equal(h.server.rows.size,0);
+});
+
+test("catálogo incremental transfere apenas as pastas alteradas e confirma exclusões", async () => {
+  const h=await seeded({auto:true});h.create("folder0002");await h.sync();await h.sync();
+  h.server.calls.length=0;
+  assert(await h.cloud.syncNow({automatic:true,poll:true}));
+  assert.deepEqual(h.server.calls.map(call=>call.columns),["id,updated_at"]);
+  changeRemote(h);h.server.rows.delete("user-a|folder0002");
+  h.server.calls.length=0;
+  assert(await h.cloud.syncNow({automatic:true,poll:true}));
+  const reads=h.server.calls.filter(call=>call.operation==="select");
+  assert.deepEqual(reads.map(call=>call.columns),["id,updated_at","id,data,updated_at"]);
+  assert.deepEqual(Array.from(reads[1].ids),["folder0001"]);
+  assert.equal(h.cloud.ownsFolder("folder0002"),false);
+  assert.equal(h.local().transactions.filter(tx=>tx.desc==="Outro aparelho").length,1);
+  h.server.calls.length=0;
+  assert(await h.cloud.syncNow({automatic:true,poll:true}));
+  assert.equal(h.server.calls.length,1);
 });
 
 test("autosync desligado continua registrando fila e interrompe uma tentativa automática ativa", async () => {

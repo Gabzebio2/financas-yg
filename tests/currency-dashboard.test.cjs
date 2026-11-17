@@ -327,6 +327,23 @@ test('cotação ausente não vira valor nominal ou zero e preserva os originais 
   }
 });
 
+test('cotação ausente em outro mês preserva os gastos por categoria e conta e só interrompe os pontos que dependem dela',()=>{
+  const h=harness(), ds=dataset({displayCurrency:'BRL',transactions:[
+    tx('outusd01',{date:'2026-10-02',amount:5,currency:'USDT'}),
+    tx('outbrl01',{date:'2026-10-07',amount:9}),
+    tx('novbrl01',{date:'2026-11-12',amount:80})
+  ]});
+  h.load(ds);h.unavailable.add('USDT');h.api.setFilters({month:'2026-11'});h.api.renderAll();
+  const values=id=>plain(h.chartConfigs.get(h.get('#'+id)).data.datasets.map(d=>d.data));
+  assert.deepEqual(values('chart-cat'),[[80]]);assert.deepEqual(values('chart-conta'),[[80]]);
+  assert.deepEqual(values('chart-evo'),[[0,0],[null,80]]);assert.deepEqual(values('chart-saldo'),[[null,-80],[null,null]]);
+  assert.equal(h.get('#chart-evo-note').hidden,false);
+  h.api.setFilters({mode:'range',from:'2026-11-01',to:'2026-11-30'});h.api.renderAll();
+  assert.deepEqual(values('chart-evo'),[[0],[80]]);assert.equal(h.get('#chart-evo-note').hidden,true);
+  assert.deepEqual(values('chart-saldo'),[[-80],[null]]);
+  h.unavailable.clear();h.api.renderAll();assert.equal(h.get('#chart-saldo-note').hidden,true);
+});
+
 test('Por moeda omite proporção com ajustes negativos e indica participações pequenas sem arredondar para zero',()=>{
   const h=harness(), ds=dataset({transactions:[
     tx('usd',{amount:1000,currency:'USD'}),tx('tiny',{amount:1,currency:'PYG'}),

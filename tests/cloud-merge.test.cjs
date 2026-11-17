@@ -4,6 +4,30 @@ const assert = require("node:assert/strict");
 const Merge = require("../js/cloud-merge.js");
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
+test("categoria e baixa em aparelhos diferentes se combinam; alterações monetárias concorrentes permanecem protegidas", () => {
+  const b = base();
+  Object.assign(b.transactions[0], {category:"Outros",paymentStatus:"pending",type:"despesa"});
+  const l = clone(b), r = clone(b);
+  Object.assign(l.transactions[0], {category:"Mercado",categoryEdited:true});
+  Object.assign(r.transactions[0], {paymentStatus:"paid",paidOn:"2026-11-16"});
+  const result = Merge.merge(b,l,r);
+  assert(result.ok);
+  assert.deepEqual(result.dataset.transactions,[{...l.transactions[0],paymentStatus:"paid",paidOn:"2026-11-16"}]);
+  l.transactions[0].amount = 12;
+  r.transactions[0].currency = "USD";
+  assert.equal(Merge.merge(b,l,r).ok,false);
+});
+
+test("encerrar recorrência e gerar novas competências simultaneamente conserva o conflito", () => {
+  const b=base();
+  Object.assign(b.transactions[0],{fixed:true,groupId:"series001",repeatMonthlyDay:13,repeatKey:"phone01",repeatThrough:"2027-01"});
+  const l=clone(b), r=clone(b);
+  delete l.transactions[0].repeatMonthlyDay; delete l.transactions[0].repeatKey; delete l.transactions[0].repeatThrough;
+  r.transactions[0].repeatThrough="2027-02";
+  r.transactions.push({id:"mrphone01x202702",groupId:"series001",fixed:true,repeatMonth:"2027-02",amount:25});
+  assert.equal(Merge.merge(b,l,r).ok,false);
+});
+
 test("baixas C6 de ciclos distintos sincronizam inclusive se outro aparelho reabrir a anterior", () => {
   const b = base();
   const november = {paidOn:"2026-12-05",totals:{BRL:120}}, december = {paidOn:"2027-01-05",totals:{BRL:40}};
