@@ -557,14 +557,14 @@
       <button type="button" class="btn entry-slip-trigger" id="btn-receipt-upload" aria-describedby="tx-photo-hint" title="Escolher imagem, PDF, Excel ou CSV"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 13h6m-6 4h5"/></svg>Arquivo</button>
       <span class="receipt-status hidden" id="receipt-status" role="status"></span>
       <button type="button" class="btn-link hidden" id="btn-apikey-remove"
-        title="Apaga a chave de IA salva neste navegador">Remover chave</button>
+        title="Remove a chave de IA desta aba">Remover chave</button>
       <input type="file" id="receipt-input-upload" accept="image/*,.pdf,application/pdf,.xlsx,.xls,.xlsm,.csv" multiple hidden>
       <div id="apikey-wrap" class="hidden">
         <p class="hint">Para a IA ler comprovantes, cole sua chave da API Anthropic
-          (crie em <b>console.anthropic.com</b> → API Keys). Ela fica salva só neste navegador.</p>
+          (crie em <b>console.anthropic.com</b> → API Keys). A chave é usada só nesta aba e é descartada ao recarregar ou trocar de conta.</p>
         <div class="apikey-row">
-          <input type="password" id="apikey-input" aria-label="Chave da API" placeholder="sk-ant-...">
-          <button type="button" class="btn btn-primary btn-sm" id="btn-apikey-save">Salvar chave</button>
+          <input type="password" id="apikey-input" aria-label="Chave da API" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+          <button type="button" class="btn btn-primary btn-sm" id="btn-apikey-save">Usar nesta aba</button>
         </div>
       </div>
       <div class="entry-slip-folder" aria-label="Pasta de destino"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 6h6l2 2h10v12H3z"/></svg><span id="tx-photo-folder"></span></div>
@@ -939,14 +939,14 @@
 <script src="js/weekly-revenue.js?v=20261117-revisao"></script>
 <script src="js/business.js?v=20261117-interface"></script>
 <script src="js/dashboard.js?v=20261117-arquivo-painel"></script>
-<script src="js/receipt.js?v=20261117-arquivo-painel"></script>
-<script src="js/batch.js?v=20261117-interface"></script>
+<script src="js/receipt.js?v=20261117-seguranca"></script>
+<script src="js/batch.js?v=20261117-seguranca"></script>
 <script src="js/cloud-repair.js?v=20261023-guarani"></script>
 <script src="js/folder-cleanup.js?v=20261023-guarani"></script>
 <script src="js/cloud-archive.js?v=20261117-revisao"></script>
 <script src="js/cloud-merge.js?v=20261117-revisao"></script>
-<script src="js/cloud.js?v=20261117-interface"></script>
-<script src="js/receipt-jobs.js?v=20261117-interface"></script>
+<script src="js/cloud.js?v=20261117-seguranca"></script>
+<script src="js/receipt-jobs.js?v=20261117-seguranca"></script>
 <script src="js/navigation.js?v=20261117-foco-comprovante"></script>
 <script src="js/whatsapp.js?v=20261116-leitura"></script>
 </body>

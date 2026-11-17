@@ -48,6 +48,7 @@
 !/api/receipt-document.js
 
 !/server/document-reader.cjs
+!/server/receipt-quota.cjs
 !/server/image-groups.cjs
 !/server/receipt-photo.cjs
 

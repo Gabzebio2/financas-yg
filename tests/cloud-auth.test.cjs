@@ -136,8 +136,23 @@ test("SDK recebe opt-in experimental e consulta somente settings público do pro
   assert.equal(h.server.passkeyCalls.length, 0);
 });
 
+test("site oficial mantém o projeto embutido mesmo com configuração antiga e alteração em outra aba", async () => {
+  const h = harness();
+  h.config();
+  await h.ready();
+  h.login("user-a");
+  const owner = "https://mhgagjhwsjjjwwvopjgu.supabase.co|user-a";
+  assert.equal(h.cloud.getSyncState().owner, owner);
+  h.config("https://secondproject.supabase.co");
+  h.cloud.ensureClient();
+  assert.equal(h.cloud.getSyncState().owner, owner);
+  assert.equal(h.clients.length, 1);
+  assert.ok(h.network.every(call => new URL(call.url).origin === owner.split("|")[0]));
+});
+
 function receiptJobsWithRealCloud(h, {legacy = false} = {}){
   const calls=[];
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../js/receipt.js'),'utf8'), h.context);
   h.context.crypto=require('node:crypto').webcrypto;h.context.atob=atob;
   Object.assign(h.context.Dashboard,{getImportTargetId:()=> 'local0001',getCats:()=>['Outros']});
   const querySelector=h.context.document.querySelector;
@@ -166,7 +181,7 @@ test('servidor anterior recebe submit quando a resposta de upload não informa s
   assert.deepEqual(calls.map(x=>x.body.action),['create','upload','submit','list']);
 });
 test('identificação da conta acompanha troca, logout e mudança de projeto',async()=>{
-  const h=harness();await h.ready();assert.equal(h.cloud.getSyncState().owner,null);
+  const h=harness({ origin: "http://localhost" });await h.ready();assert.equal(h.cloud.getSyncState().owner,null);
   h.login('user-a');const before=h.cloud.getSyncState().owner;assert(before.endsWith('|user-a'));
   h.login('user-b');assert(h.cloud.getSyncState().owner.endsWith('|user-b'));assert.notEqual(h.cloud.getSyncState().owner,before);
   await h.cloud.logout();assert.equal(h.cloud.getSyncState().owner,null);
@@ -177,6 +192,28 @@ test('sem sessão o upload não faz requisição e não promete resultado em Doc
   let error;try{await receipts.submit(uploadTask(),[]);}catch(e){error=e;}
   assert.equal(error.message,'login_required');assert.equal(calls.length,0);
   assert.match(receipts.uploadMessage(error),/não foi enviado/);assert.doesNotMatch(receipts.uploadMessage(error),/em Documentos/);
+});
+test('limite do envio em segundo plano orienta aguardar sem anunciar documento enviado', async () => {
+  const h = harness(); await h.ready();
+  const {receipts} = receiptJobsWithRealCloud(h);
+  assert.match(receipts.uploadMessage(new Error("receipt_daily_limit")), /limite diário.*\d{2}:\d{2}.*não foi enviado/i);
+  assert.match(receipts.message(new Error("rate_limit")), /aguarde/i);
+});
+test('página com cota diária esgotada permanece no envio já criado e não é reenviada automaticamente', async () => {
+  const h = harness(); await h.ready(); h.login();
+  const {receipts} = receiptJobsWithRealCloud(h), actions = [];
+  h.context.fetch = async (_,options) => {
+    const {action,id} = JSON.parse(options.body); actions.push(action);
+    return action === "upload"
+      ? {ok:false,status:429,json:async()=>({error:"receipt_daily_limit",retryAfter:3600})}
+      : {ok:true,status:200,json:async()=>({id,jobs:[]})};
+  };
+  await assert.rejects(receipts.submit(uploadTask(),[]), err => {
+    assert.equal(err.receiptJobCreated,true);
+    assert.match(receipts.uploadMessage(err),/limite diário.*\d{2}:\d{2}.*sino/i);
+    return true;
+  });
+  assert.equal(actions.filter(a => a === "upload").length,1);
 });
 test('erro após criar envio encaminha só então para Documentos',async()=>{
  const h=harness();await h.ready();h.login();const {receipts}=receiptJobsWithRealCloud(h);
@@ -193,7 +230,7 @@ test('trocar de conta durante a criação impede enviar o arquivo na sessão seg
 });
 
 test("settings antigo não habilita passkeys no novo projeto e falha preserva estado desconhecido", async () => {
-  const h = harness(), gate = deferred(); h.server.settingsGate = gate;
+  const h = harness({ origin: "http://localhost" }), gate = deferred(); h.server.settingsGate = gate;
   h.cloud.ensureClient(); h.config(); h.server.enabled = false;
   await h.ready(); gate.resolve(); await settle();
   assert.equal(h.cloud.getAuthOptions().passkeysEnabled, false);
@@ -235,7 +272,7 @@ test("e-mail inválido e sessão conectada impedem envio; erro de limite permane
 
 test("resposta tardia de e-mail não muda a interface de outra conta ou projeto", async () => {
   for (const change of ["account", "project"]) {
-    const h = harness(); await h.ready(); h.email(); const gate = deferred(); h.server.otpGate = gate;
+    const h = harness({ origin: "http://localhost" }); await h.ready(); h.email(); const gate = deferred(); h.server.otpGate = gate;
     const pending = h.cloud.sendSignInLink();
     if (change === "account") h.login("user-b"); else h.config();
     h.context.document.querySelector("#cloud-access-status").textContent = "Novo contexto";
@@ -257,7 +294,7 @@ test("passkey login aceita seu próprio SIGNED_IN, persiste sessão validada e s
 test("cancelamento na verificação impede o SDK de persistir sessão antes ou depois de ler JSON", async () => {
   for (const phase of ["fetch", "json"]) {
     for (const change of ["logout", "account", "project"]) {
-      const h = harness(); await h.ready(); const gate = deferred();
+      const h = harness({ origin: "http://localhost" }); await h.ready(); const gate = deferred();
       h.server[phase === "fetch" ? "verifyGate" : "jsonGate"] = gate;
       const pending = h.cloud.signInWithPasskey(); await settle();
       if (change === "logout") await h.cloud.logout();
@@ -404,7 +441,7 @@ test("senha tem exclusão mútua e prazo de vinte segundos; resposta atrasada n�
 
 test("senha e OTP cancelados não persistem sessão após logout, troca de conta ou projeto", async () => {
   for (const action of ["password", "otp"]) for (const phase of ["fetch", "json"]) for (const change of ["logout", "account", "project"]) {
-    const h = harness(); await h.ready(); h.email();
+    const h = harness({ origin: "http://localhost" }); await h.ready(); h.email();
     if (action === "otp") { await h.cloud.sendSignInCode(); h.context.document.querySelector("#cloud-code").value = "12345678"; }
     else h.context.document.querySelector("#cloud-pass").value = "synthetic-password";
     const gate = deferred(); h.server[phase === "fetch" ? "verifyGate" : "jsonGate"] = gate;
@@ -475,15 +512,20 @@ test("código expirado informa causa e mantém formulário sem autenticar", asyn
   assert.equal(h.cloud.getAuthOptions().codeRequested, true); assert.equal(h.server.persisted.size, 0);
 });
 
-test("SDK Supabase local real confirma senha e OTP; cancelamento impede persistência nativa", async () => {
+function bundledSupabase() {
   const sdkContext = vm.createContext({ console: { warn() {}, error() {}, log() {} }, URL, URLSearchParams, Headers, Request, Response,
     AbortController, AbortSignal, TextEncoder, TextDecoder, atob, btoa, setTimeout, clearTimeout, setInterval, clearInterval,
     crypto: require("node:crypto").webcrypto, WebSocket: class { constructor() { throw new Error("Rede real proibida no teste."); } } });
   vm.runInContext(fs.readFileSync(path.join(__dirname, "../lib/supabase.min.js"), "utf8") + "\nthis.sdk = supabase;", sdkContext);
+  return sdkContext.sdk;
+}
+
+test("SDK Supabase local real confirma senha e OTP; cancelamento impede persistência nativa", async () => {
+  const sdk = bundledSupabase();
   for (const action of ["password", "otp"]) for (const cancel of [false, true]) {
     const h = harness(); await h.ready(); h.email();
     const persisted = new Map(), localClient = h.clients[0];
-    const native = sdkContext.sdk.createClient(localClient.url, "synthetic-public-key", {
+    const native = sdk.createClient(localClient.url, "synthetic-public-key", {
       auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: true, storageKey: "synthetic-session",
         storage: { getItem: (key) => persisted.get(key) || null, setItem: (key, value) => persisted.set(key, value), removeItem: (key) => persisted.delete(key) } },
       global: { fetch: localClient.options.global.fetch },
@@ -503,4 +545,42 @@ test("SDK Supabase local real confirma senha e OTP; cancelamento impede persist�
     assert.equal(h.cloud.getToken(), cancel ? null : "synthetic-user-a");
     subscription.unsubscribe(); await native.auth.stopAutoRefresh();
   }
+});
+
+test("revogação indisponível no SDK real deixa o navegador sem sessão inclusive após reabrir o cliente", async () => {
+  const h = harness(); await h.ready(); h.login();
+  const sdk = bundledSupabase(), appClient = h.clients[0], key = appClient.options.auth.storageKey;
+  const initial = { ...sessionFor("user-a"), token_type:"bearer", expires_in:3600, expires_at:Math.floor(Date.now()/1000)+3600, refresh_token:"synthetic-refresh" };
+  h.values.set(key, JSON.stringify(initial));
+  const options = {
+    auth: { autoRefreshToken:false, detectSessionInUrl:false, persistSession:true, storageKey:key,
+      storage:{ getItem:name=>h.values.get(name)??null, setItem:(name,value)=>h.values.set(name,value), removeItem:name=>h.values.delete(name) } },
+    global:{ fetch: async url=>{
+      assert.match(String(url), /\/auth\/v1\/logout\?scope=local$/);
+      return new Response(JSON.stringify({message:"Serviço indisponível"}), {status:500, headers:{"Content-Type":"application/json"}});
+    } },
+  };
+  const native = sdk.createClient(appClient.url, "synthetic-public-key", options);
+  assert.equal((await native.auth.getSession()).data.session.user.id, "user-a");
+  appClient.auth.signOut = native.auth.signOut.bind(native.auth);
+  appClient.auth.dispose = native.auth.dispose.bind(native.auth);
+  await h.cloud.logout();
+  const reopened = sdk.createClient(appClient.url, "synthetic-public-key", options);
+  assert.equal((await reopened.auth.getSession()).data.session, null);
+  assert.equal(h.cloud.getToken(), null);
+  await reopened.auth.dispose();
+});
+
+test("resposta de saída anterior preserva uma conta diferente que entrou enquanto a nuvem respondia", async () => {
+  const h = harness(); await h.ready(); h.login();
+  const done = deferred(), client = h.clients[0], key = client.options.auth.storageKey;
+  client.auth.signOut = () => done.promise;
+  const exiting = h.cloud.logout();
+  h.login("user-a","TOKEN_REFRESHED");
+  assert.equal(h.cloud.getToken(), null);
+  h.login("user-b");
+  h.values.set(key, JSON.stringify(sessionFor("user-b")));
+  done.resolve({error:new Error("Sem rede")}); await exiting;
+  assert.equal(h.cloud.getToken(),"synthetic-user-b");
+  assert.equal(JSON.parse(h.values.get(key)).user.id,"user-b");
 });

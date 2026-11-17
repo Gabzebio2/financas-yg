@@ -2,6 +2,32 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const core=()=>import('../supabase/functions/receipt-jobs/core.mjs');
 const user='10000000-0000-4000-8000-000000000001',id='20000000-0000-4000-8000-000000000001';
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
+test('o leitor aceita JSON no limite e mede uploads em bytes UTF-8',async()=>{
+ const {readJobRequest}=await core();
+ const body=JSON.stringify({pasta:'Finanças'}), size=Buffer.byteLength(body);
+ const request=()=>new Request('https://example.invalid',{method:'POST',body});
+ assert.deepEqual(await readJobRequest(request(),size),{pasta:'Finanças'});
+ await assert.rejects(readJobRequest(request(),size-1),/payload_too_large/);
+ await assert.rejects(readJobRequest(new Request('https://example.invalid',{method:'POST',body:'null'})),/invalid_request/);
+});
+test('o limite diário retorna 429 e um prazo de espera sem expor erros internos',async()=>{
+ const {readJobRequest}=await core();
+ let serve, backendError='receipt_daily_limit';
+ const code=fs.readFileSync(require.resolve('../supabase/functions/receipt-jobs/index.ts'),'utf8').replace(/^import[^\n]+\n/,'');
+ vm.runInNewContext(code,{
+  Deno:{env:{get:()=>undefined},serve:handler=>{serve=handler;}},Response,readJobRequest,
+  createBackend:()=>({authenticate:async()=>user,userAction:async()=>{throw Error(backendError);}})
+ });
+ const request=()=>new Request('https://example.invalid',{method:'POST',headers:{authorization:'Bearer test'},body:'{"action":"create"}'});
+ const response=await serve(request());
+ const payload=await response.json();
+ assert.equal(response.status,429);
+ assert.equal(payload.error,'receipt_daily_limit');
+ assert.equal(response.headers.get('retry-after'),String(payload.retryAfter));
+ assert.ok(payload.retryAfter>=1&&payload.retryAfter<=86400);
+ backendError='internal diagnostic';
+ assert.deepEqual(await (await serve(request())).json(),{error:'service_unavailable'});
+});
 test('cron wake signatures are scoped, expire and never expose the reusable worker secret',async()=>{
  const {verifyWake}=await core(),secret='private-secret',stamp=String(Math.floor(Date.now()/1000)),nonce=crypto.randomUUID();
  const signature=crypto.createHmac('sha256',secret).update('receipt-wake.'+stamp+'.'+nonce).digest('hex'),value=stamp+'.'+nonce+'.'+signature;

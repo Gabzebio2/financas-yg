@@ -54,6 +54,7 @@ function harness(options = {}) {
       if (name === "node:crypto") return crypto;
       if (name === "node:async_hooks") return require("node:async_hooks");
       if (name === "../server/whatsapp-core.cjs") return load("server/whatsapp-core.cjs");
+      if (name === "../server/receipt-quota.cjs") return load("server/receipt-quota.cjs");
       if (name === "../js/transaction-categories.js") return load("js/transaction-categories.js");
       if (name === "../server/receipt-platforms.cjs") return load("server/receipt-platforms.cjs");
       if (name === "../server/statement-table.cjs") return load("server/statement-table.cjs");

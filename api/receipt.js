@@ -23,6 +23,7 @@ const CURRENCY_PRECISION = { BRL: 2, CLP: 0, PYG: 0, USD: 2, EUR: 2, GBP: 2, USD
 const CURRENCY_CODES = Object.keys(CURRENCY_PRECISION);
 const { PLATFORMS, accountName, sourceAccount, platformPrompt } = require('../server/receipt-platforms.cjs');
 const { STATEMENT_PROMPT } = require('../server/statement-table.cjs');
+const { reserveDirectRead } = require('../server/receipt-quota.cjs');
 const transactionCategories = require('../js/transaction-categories.js');
 
 const EVIDENCE_PROMPT = `\nPara conferir a extração, inclua em cada operação:
@@ -227,6 +228,7 @@ async function geminiFetch(key, model, image, categories, cards, multi, withSche
     {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": key },
+      redirect: "error",
       body: JSON.stringify({
         contents: [{
           parts: [
@@ -323,6 +325,7 @@ async function callAnthropic(key, image, categories, cards, multi, timeoutMs = 4
     signal: AbortSignal.timeout(timeoutMs),
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+    redirect: "error",
     body: JSON.stringify({
       model: MODEL_ANTHROPIC,
       max_tokens: multi ? 16384 : 4096,
@@ -621,12 +624,15 @@ module.exports = async (req, res) => {
   const authHeader = typeof req.headers?.authorization === "string" ? req.headers.authorization : "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   if (!token) { res.status(401).json({ error: "sem_login" }); return; }
+  let userId;
   try {
     const u = await fetch(SUPABASE_URL + "/auth/v1/user", {
       signal: AbortSignal.timeout(8000),
       headers: { Authorization: "Bearer " + token, apikey: SUPABASE_ANON },
+      redirect: "error",
     });
     if (!u.ok) { res.status(u.status >= 500 ? 502 : 401).json({ error: u.status >= 500 ? "auth_indisponivel" : "login_invalido" }); return; }
+    userId = (await u.json()).id;
   } catch {
     res.status(502).json({ error: "auth_indisponivel" }); return;
   }
@@ -658,6 +664,7 @@ module.exports = async (req, res) => {
   }
 
   // 3) Chama a IA com a chave secreta (só o resultado volta ao app)
+  if (!await reserveDirectRead(fetch, SUPABASE_URL, SUPABASE_ANON, authHeader, userId, process.env.RECEIPT_WORKER_SECRET, res)) return;
   try {
     const out = reviewing
       ? await callOpenAI(config.key, image, categories, cards, true, 45000, context, true)

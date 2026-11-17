@@ -16,13 +16,14 @@ function apiEnvironment(payload, options = {}) {
   const provider = options.provider || 'gemini';
   const context = vm.createContext({
     require: require('node:module').createRequire(path.join(app, 'api/receipt.js')),
-    module: { exports: {} }, process: { env: provider === 'gemini' ? { GEMINI_API_KEY: 'synthetic-test-key' } : { ANTHROPIC_API_KEY: 'synthetic-test-key' } },
+    module: { exports: {} }, process: { env: { RECEIPT_WORKER_SECRET: 'synthetic-worker', ...(provider === 'gemini' ? { GEMINI_API_KEY: 'synthetic-test-key' } : { ANTHROPIC_API_KEY: 'synthetic-test-key' }) } },
     console: { error() {} }, AbortSignal, setTimeout: (callback) => { callback(); return 1; },
     fetch: async (url, init) => {
+      if (url.endsWith('/rpc/receipt_reserve_direct_read')) return response(0);
       calls.push({ url, init });
       if (url.includes('/auth/v1/user')) {
         if (options.authError) throw options.authError;
-        return response({}, options.authStatus || 200);
+        return response({id:'test-user'}, options.authStatus || 200);
       }
       if (options.providerError) throw options.providerError;
       if (options.providerStatus) return response({ error: { message: 'synthetic provider failure' } }, options.providerStatus);
@@ -46,9 +47,9 @@ function apiEnvironment(payload, options = {}) {
 }
 
 function browserEnvironment(payload, options = {}) {
-  const nodes = new Map(), callbacks = [], filled = [], calls = [], storage = new Map();
+  const nodes = new Map(), listeners = new Map(), filled = [], calls = [], storage = new Map();
   let observer;
-  if (!options.proxy) storage.set('fyg:anthropic-key', 'sk-ant-synthetic-test-key');
+  if (options.legacyKey) storage.set('fyg:anthropic-key', 'sk-ant-old-synthetic-key');
   const $ = (id) => {
     if (!nodes.has(id)) {
       const classes = new Set();
@@ -66,13 +67,13 @@ function browserEnvironment(payload, options = {}) {
     CURRENCY_CODES: ['BRL', 'CLP', 'PYG', 'USD', 'EUR', 'GBP', 'USDT', 'USDC'],
     curFrac: (c) => ['USDT', 'USDC'].includes(c) ? 6 : ['CLP', 'PYG'].includes(c) ? 0 : 2,
     askConfirm: (_, __, fn) => fn(),
-    document: { addEventListener: (_, fn) => callbacks.push(fn) },
-    location: { protocol: 'https:', hostname: 'synthetic.invalid' },
+    document: { addEventListener: (name, fn) => listeners.set(name, fn) },
+    location: { protocol: 'https:', hostname: options.proxy ? 'synthetic.invalid' : 'localhost' },
     localStorage: { getItem: (key) => storage.get(key) || null, setItem: (key, value) => { if (options.storageFails) throw new Error('quota'); storage.set(key, value); }, removeItem: (key) => storage.delete(key) },
     MutationObserver: class { constructor(fn) { observer = fn; } observe() {} },
     FileReader: class { readAsDataURL() { this.result = options.fileData ?? 'data:application/pdf;base64,aGVsbG8='; this.onload(); } },
     Dashboard: { getCats: () => options.categories || ['Alimentação', 'Lazer', 'Outros'], fillTxFromReceipt: (item) => filled.push(plain(item)) },
-    Cloud: { getToken: () => 'synthetic-session' },
+    Cloud: { getToken: () => 'synthetic-session', getSyncState: () => ({ owner: 'ownerA' }) },
     Store: { saveDataset() { throw new Error('Recognition must never save a transaction'); } },
     fetch: async (url, init) => {
       calls.push({ url, init });
@@ -82,8 +83,12 @@ function browserEnvironment(payload, options = {}) {
     },
   });
   vm.runInContext(fs.readFileSync(path.join(app, 'js/receipt.js'), 'utf8') + '\nthis.receipt = Receipt;', context);
-  callbacks.forEach((callback) => callback());
-  return { context, $, calls, filled, storage, receipt: context.receipt, close() { $('#modal-tx').classList.add('hidden'); observer(); }, analyze: () => context.receipt.analyze({ type: 'application/pdf', name: 'synthetic.pdf', size: 8 }) };
+  listeners.get('DOMContentLoaded')();
+  if (!options.proxy && !options.noKey) {
+    $('#apikey-input').value = 'sk-ant-synthetic-test-key';
+    $('#btn-apikey-save').listeners.get('click')();
+  }
+  return { context, $, calls, filled, storage, receipt: context.receipt, changeOwner(owner) { context.Cloud.getSyncState = () => ({ owner }); listeners.get('fyg:cloudstate')(); }, close() { $('#modal-tx').classList.add('hidden'); observer(); }, analyze: () => context.receipt.analyze({ type: 'application/pdf', name: 'synthetic.pdf', size: 8 }) };
 }
 
 test('API classifica o comprovante individual e o lote com as mesmas categorias', async () => {
@@ -309,17 +314,43 @@ test('fechar formulário enquanto IA lê impede que resposta antiga preencha out
   assert.equal(env.filled.length, 0);
 });
 
-test('arquivo ausente ou PDF vazio falha antes de enviar; chave não informa sucesso quando storage falha', async () => {
+test('arquivo ausente ou PDF vazio falha antes de enviar', async () => {
   const env = browserEnvironment(single(), { storageFails: true });
   await assert.rejects(env.receipt.prepareFile(null), /imagem/);
   await assert.rejects(env.receipt.prepareFile({ type: 'application/pdf', size: 0 }), /leitura/);
   const invalid = browserEnvironment(single(), { fileData: 'data:application/pdf;base64,' });
   await assert.rejects(invalid.receipt.prepareFile({ type: 'application/pdf', size: 5 }), /leitura/);
   assert.equal(invalid.calls.length, 0);
+});
+
+test('site publicado remove chave antiga e envia o comprovante somente ao servidor autenticado', async () => {
+  const env = browserEnvironment(single(), { proxy: true, legacyKey: true });
+  assert.equal(env.storage.has('fyg:anthropic-key'), false);
+  await env.analyze();
+  assert.equal(env.calls.length, 1);
+  assert.equal(env.calls[0].url, '/api/receipt');
+  assert.equal(env.calls[0].init.headers['x-api-key'], undefined);
+  assert.equal(env.filled.length, 1);
+});
+
+test('modo local descarta chave ao sair da conta e cancela o arquivo que aguardava chave', async () => {
+  const env = browserEnvironment(single(), { legacyKey: true });
+  await env.analyze();
+  assert.equal(env.filled.length, 1);
+  assert.equal(env.storage.has('fyg:anthropic-key'), false);
+  env.changeOwner(null);
+  env.changeOwner('ownerA');
+  await env.analyze();
+  assert.equal(env.calls.length, 1);
+  env.changeOwner('ownerB');
   env.$('#apikey-input').value = 'sk-ant-new-synthetic';
   env.$('#btn-apikey-save').listeners.get('click')();
-  assert.match(env.$('#receipt-status').textContent, /Não foi possível salvar/);
-  assert.equal(env.storage.get('fyg:anthropic-key'), 'sk-ant-synthetic-test-key');
+  await Promise.resolve();
+  assert.equal(env.calls.length, 1);
+  await env.analyze();
+  assert.equal(env.calls.length, 2);
+  assert.equal(env.calls[1].init.headers['x-api-key'], 'sk-ant-new-synthetic');
+  assert.equal(env.storage.has('fyg:anthropic-key'), false);
 });
 
 test('resposta do comprovante de outra conta ou pasta não preenche formulário atual', async () => {
@@ -338,4 +369,12 @@ test('comprovante preserva referência e evidência e mostra erros de créditos/
     const failed = browserEnvironment({ error }, { proxy: true, status: 503 }); await failed.analyze();
     assert.match(failed.$('#receipt-status').textContent, pattern); assert.equal(failed.filled.length, 0);
   }
+});
+
+test('limite diário informa data e hora da próxima leitura sem reenvio imediato', async () => {
+  const env = browserEnvironment({error:'receipt_daily_limit', retryAfter:2600}, {proxy:true, status:429});
+  await env.analyze();
+  assert.match(env.$('#receipt-status').textContent, /limite diário.*\d{2}\/\d{2}.*\d{2}:\d{2}/i);
+  assert.equal(env.calls.length, 1);
+  assert.equal(env.filled.length, 0);
 });

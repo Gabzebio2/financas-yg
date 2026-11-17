@@ -2,17 +2,20 @@
 "use strict";
 
 const Receipt = (() => {
-  const KEY_STORAGE = "fyg:anthropic-key";
+  // Versões anteriores persistiam uma chave de provedor compartilhada entre contas.
+  try { localStorage.removeItem("fyg:anthropic-key"); } catch { /* armazenamento indisponível */ }
+  let localKey = null;
   const MODEL = "claude-haiku-4-5";
   const MAX_EDGE = 2200; // limita o envio; texto muito pequeno ainda pode exigir recorte
   const PROXY_PATH = "/api/receipt"; // servidor seguro (Vercel) — a chave fica lá, não aqui
   let pendingFile = null; // arquivo aguardando a chave ser salva
   let requestVersion = 0;
   let requestContext = null;
+  const currentOwner = () => typeof Cloud !== "undefined" && Cloud.getSyncState ? Cloud.getSyncState().owner : null;
   function requestCurrent(version) {
     return version === requestVersion && requestContext &&
       (Dashboard.getImportTargetId?.() ?? null) === requestContext.target &&
-      (typeof Cloud !== "undefined" && Cloud.getSyncState ? Cloud.getSyncState().owner : null) === requestContext.owner;
+      currentOwner() === requestContext.owner;
   }
 
   // Onde há servidor próprio (Vercel/domínio), usamos o proxy seguro e o app
@@ -21,16 +24,15 @@ const Receipt = (() => {
   function proxyAvailable() {
     if (location.protocol === "file:") return false;
     const h = location.hostname;
-    if (h === "localhost" || h === "127.0.0.1" || h.endsWith("github.io")) return false;
+    if (h === "localhost" || h === "127.0.0.1" || h.endsWith(".github.io")) return false;
     return true;
   }
 
   function getKey() {
-    try { return localStorage.getItem(KEY_STORAGE) || ""; }
-    catch { return ""; }
+    if (localKey && localKey.owner !== currentOwner()) localKey = null;
+    return localKey?.value || "";
   }
 
-  // Mostra/esconde o link de remover a chave conforme haja chave salva
   function refreshKeyUI() {
     $("#btn-apikey-remove").classList.toggle("hidden", !getKey());
   }
@@ -296,6 +298,13 @@ const Receipt = (() => {
       : "Preenchido para revisão. Confira valor, data, conta e categoria antes de salvar.", parsed.revisar.length ? "err" : "ok");
   }
 
+  function dailyLimitMessage(retryAfter) {
+    const reset = new Date();
+    if (Number.isSafeInteger(retryAfter) && retryAfter > 0 && retryAfter <= 86400) reset.setTime(reset.getTime() + retryAfter * 1000);
+    else reset.setUTCHours(24, 0, 0, 0);
+    return "Limite diário de leitura atingido. Tente novamente a partir de " +
+      reset.toLocaleString("pt-BR", {day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit"}) + ".";
+  }
   function analysisError(error) {
     const code = error?.message || error;
     if (code === "use_lote") return "Este documento parece uma fatura ou lista. Use “Anexar comprovante” para revisar cada lançamento.";
@@ -313,13 +322,9 @@ const Receipt = (() => {
   async function analyze(file) {
     if (!file) return;
     const version = ++requestVersion;
-    requestContext = { target: Dashboard.getImportTargetId?.() ?? null,
-      owner: typeof Cloud !== "undefined" && Cloud.getSyncState ? Cloud.getSyncState().owner : null };
+    requestContext = { target: Dashboard.getImportTargetId?.() ?? null, owner: currentOwner() };
+    if (proxyAvailable()) return analyzeViaProxy(file, version);
     const key = getKey();
-    // Preferência: se NÃO há chave manual salva e existe servidor próprio,
-    // usa o proxy seguro (não pede chave). Uma chave manual salva tem prioridade
-    // (modo avançado / uso local).
-    if (!key && proxyAvailable()) return analyzeViaProxy(file, version);
     if (!key) {
       pendingFile = file;
       $("#apikey-wrap").classList.remove("hidden");
@@ -426,13 +431,13 @@ const Receipt = (() => {
       });
       if (!requestCurrent(version)) return;
       if (res.status === 401) { setStatus("Sua sessão expirou. Entre novamente na seção nuvem.", "err"); return; }
-      if (res.status === 429) { setStatus("Muitas leituras em sequência — aguarde um minuto e tente de novo.", "err"); return; }
       if (res.status === 501) { setStatus("A leitura por IA ainda não foi ativada no servidor (falta configurar a chave na Vercel).", "err"); return; }
       if (!res.ok) {
-        let code = "";
-        try { code = (await res.json())?.error || ""; } catch { /* sem corpo JSON */ }
+        const data = await res.json().catch(() => ({}));
+        const code = data?.error || "";
         if (!requestCurrent(version)) return;
-        setStatus(["auth_indisponivel", "tempo_ia", "saldo_ia", "configuracao_ia"].includes(code) ? analysisError(code) : res.status === 503
+        setStatus(code === "receipt_daily_limit" ? dailyLimitMessage(data.retryAfter) : res.status === 429 ? "Muitas leituras em sequência. Aguarde e tente novamente." :
+          ["auth_indisponivel", "tempo_ia", "saldo_ia", "configuracao_ia"].includes(code) ? analysisError(code) : res.status === 503
           ? "A IA está temporariamente indisponível. Aguarde alguns instantes e tente novamente."
           : analysisError(code), "err");
         return;
@@ -451,10 +456,24 @@ const Receipt = (() => {
   /* ---------- Eventos ---------- */
   document.addEventListener("DOMContentLoaded", () => {
     const modal = $("#modal-tx");
+    let previousOwner = currentOwner();
+    document.addEventListener("fyg:cloudstate", () => {
+      const owner = currentOwner();
+      if (owner === previousOwner) return;
+      previousOwner = owner;
+      localKey = null;
+      requestVersion++;
+      pendingFile = null;
+      $("#apikey-input").value = "";
+      $("#apikey-wrap").classList.add("hidden");
+      refreshKeyUI();
+    });
     new MutationObserver(() => {
       if (modal.classList.contains("hidden")) {
         requestVersion++;
         pendingFile = null;
+        $("#apikey-input").value = "";
+        $("#apikey-wrap").classList.add("hidden");
       }
     }).observe(modal, { attributes: true, attributeFilter: ["class"] });
     $("#btn-receipt-upload").addEventListener("click", () => $("#receipt-input-upload").click());
@@ -472,31 +491,30 @@ const Receipt = (() => {
       Batch.openWithFiles(files);
     });
     $("#btn-apikey-save").addEventListener("click", () => {
+      if (proxyAvailable() || (pendingFile && !requestCurrent(requestVersion))) return;
       const key = $("#apikey-input").value.trim();
       if (!key.startsWith("sk-ant-")) { toast("A chave deve começar com sk-ant- 🔑"); return; }
-      try { localStorage.setItem(KEY_STORAGE, key); }
-      catch { setStatus("Não foi possível salvar a chave neste navegador. Verifique o armazenamento ou use o app publicado com login.", "err"); return; }
+      localKey = { owner: currentOwner(), value: key };
       $("#apikey-input").value = "";
       $("#apikey-wrap").classList.add("hidden");
       refreshKeyUI();
-      toast("Chave salva neste navegador ✔");
+      toast("Chave disponível nesta aba ✔");
       if (pendingFile) { const f = pendingFile; pendingFile = null; analyze(f); }
       else setStatus("");
     });
     $("#btn-apikey-remove").addEventListener("click", () => {
       askConfirm("Remover chave de IA?",
-        "A chave salva neste navegador será apagada. Você pode colar outra quando quiser.", () => {
-          try { localStorage.removeItem(KEY_STORAGE); }
-          catch { setStatus("Não foi possível remover a chave. Verifique as permissões de armazenamento do navegador.", "err"); return; }
+        "A chave será removida desta aba. Você pode colar outra quando quiser.", () => {
+          localKey = null;
           requestVersion++;
           pendingFile = null;
           refreshKeyUI();
           setStatus("");
-          toast("Chave removida deste navegador ✔");
+          toast("Chave removida desta aba ✔");
         });
     });
     refreshKeyUI();
   });
 
-  return { documentReaderVersion: 2, analyze, prepareImage, prepareFile, prepareParts, prepFailMsg };
+  return { documentReaderVersion: 2, analyze, prepareImage, prepareFile, prepareParts, prepFailMsg, dailyLimitMessage };
 })();

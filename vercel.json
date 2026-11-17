@@ -1,4 +1,26 @@
 {
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "Content-Security-Policy", "value": "frame-ancestors 'none'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "financas-yg.vercel.app" }],
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://mhgagjhwsjjjwwvopjgu.supabase.co wss://mhgagjhwsjjjwwvopjgu.supabase.co https://api.pwnedpasswords.com https://open.er-api.com https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/ https://latest.currency-api.pages.dev https://docs.google.com https://*.googleusercontent.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" }
+      ]
+    },
+    {
+      "source": "/api/:path*",
+      "headers": [{ "key": "Cache-Control", "value": "private, no-store" }]
+    }
+  ],
   "functions": {
     "api/receipt-document.js": {
       "maxDuration": 180

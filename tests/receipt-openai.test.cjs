@@ -27,11 +27,12 @@ function harness(providerBody = completed(), options = {}) {
   const context = vm.createContext({
     require: require('node:module').createRequire(path.join(__dirname, '../api/receipt.js')),
     module: { exports: {} },
-    process: { env: { OPENAI_API_KEY: SECRET, GEMINI_API_KEY: "synthetic-gemini", ANTHROPIC_API_KEY: "synthetic-anthropic", ...options.env } },
+    process: { env: { RECEIPT_WORKER_SECRET: "synthetic-worker", OPENAI_API_KEY: SECRET, GEMINI_API_KEY: "synthetic-gemini", ANTHROPIC_API_KEY: "synthetic-anthropic", ...options.env } },
     AbortSignal: { timeout: ms => { timers.push(ms); return { timeout: ms }; } },
     console: { error: (...args) => logs.push(args), warn: (...args) => logs.push(args) },
     setTimeout: callback => { callback(); return 1; },
     fetch: async (url, init = {}) => {
+      if (url.endsWith('/rpc/receipt_reserve_direct_read')) return reply(0);
       calls.push({ url, init });
       if (url.includes("/auth/v1/user")) {
         if (options.authError) throw options.authError;

@@ -764,7 +764,11 @@ const Batch = (() => {
         t.quick=false;setStatus('Este print é mais extenso. Continuando com a leitura completa…');
         return post(t,null);
       }
-      if(!res.ok||!Array.isArray(data.itens)||!data.ledger)throw Error(data.error||'leitura_indisponivel');return data;
+      if(!res.ok||!Array.isArray(data.itens)||!data.ledger){
+        const code=res.status===429 && data.error!=='receipt_daily_limit'?'rate_limit':data.error||'leitura_indisponivel';
+        throw Object.assign(Error(code),{retryAfter:data.retryAfter});
+      }
+      return data;
     };
     // Complete the first stage across ALL pages, then compare the original to
     // each first draft. Completion is never inferred merely from equal counts.
@@ -790,7 +794,10 @@ const Batch = (() => {
         }catch(e){
           if(!contextValid(version))return;
           documentFailure=true;t.progress.status='failed';t.progress.message=stage==='first'?'Primeira leitura não concluída':'Comparação não concluída';
-          setStatus('A leitura parou em '+t.label+'. '+(e.message==='saldo_ia'?'O serviço de IA está sem créditos. ':'')+'Use Continuar leitura para retomar desta etapa. Nenhum lançamento foi salvo.','err');
+          const reason = e.message === 'receipt_daily_limit' ? Receipt.dailyLimitMessage(e.retryAfter) :
+            e.message === 'rate_limit' ? 'Muitas leituras em sequência. Aguarde antes de retomar.' :
+            (e.message === 'saldo_ia' ? 'O serviço de IA está sem créditos. ' : '') + 'Use Continuar leitura para retomar desta etapa.';
+          setStatus('A leitura parou em '+t.label+'. '+reason+' Nenhum lançamento foi salvo.','err');
           documentProgress();$("#btn-batch-retry").classList.remove("hidden");renderPreview();return;
         }
     };
@@ -892,6 +899,7 @@ const Batch = (() => {
               }
               if (!res.ok || data.error || !Array.isArray(data.itens)) {
                 const message = data.error === "auth_indisponivel" ? "Não foi possível verificar sua sessão agora." :
+                  data.error === "receipt_daily_limit" ? Receipt.dailyLimitMessage(data.retryAfter) :
                   data.error === "saldo_ia" ? "O serviço de leitura está sem créditos. Os itens já lidos continuam na prévia." :
                   data.error === "configuracao_ia" ? "A leitura por IA precisa de ajuste na configuração do servidor. Os itens já lidos continuam na prévia." :
                   res.status === 401 ? "Sua sessão expirou. Entre novamente." : res.status === 429 ? "Limite de leitura atingido. Aguarde e envie as partes restantes." : "Não foi possível ler esta parte.";

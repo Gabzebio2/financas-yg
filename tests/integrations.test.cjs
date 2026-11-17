@@ -453,8 +453,12 @@ function apiEnv(providerReply) {
   let calls = 0;
   const env = environment({
     require: require('node:module').createRequire(path.join(app, 'api/receipt.js')),
-    module: { exports: {} }, process: { env: { GEMINI_API_KEY: 'test-key' } },
-    fetch: async (url) => { calls++; return { ok: true, status: 200, json: async () => url.includes('/auth/v1/user') ? { id: 'test-user' } : providerReply }; },
+    module: { exports: {} }, process: { env: { GEMINI_API_KEY: 'test-key', RECEIPT_WORKER_SECRET: 'synthetic-worker' } },
+    fetch: async (url) => {
+      if (url.endsWith('/rpc/receipt_reserve_direct_read')) return { ok: true, json: async () => 0 };
+      calls++;
+      return { ok: true, status: 200, json: async () => url.includes('/auth/v1/user') ? { id: 'test-user' } : providerReply };
+    },
   });
   vm.runInContext(fs.readFileSync(path.join(app, 'api/receipt.js'), 'utf8'), env.context);
   const response = { headers: {}, setHeader(k,v) { this.headers[k]=v; }, status(n) { this.code=n; return this; }, json(body) { this.body=body; } };

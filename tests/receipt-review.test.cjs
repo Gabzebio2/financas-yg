@@ -16,12 +16,13 @@ function harness(data = second(), options = {}) {
   const context = vm.createContext({
     require: require('node:module').createRequire(path.join(__dirname, '../api/receipt.js')),
     module: { exports: {} }, console: { error() {}, warn() {} },
-    process: { env: { OPENAI_API_KEY: "synthetic-secret", ...options.env } },
+    process: { env: { RECEIPT_WORKER_SECRET: "synthetic-worker", OPENAI_API_KEY: "synthetic-secret", ...options.env } },
     AbortSignal: { timeout: ms => { timers.push(ms); return {}; } },
     setTimeout: callback => { callback(); return 1; },
     fetch: async (url, init = {}) => {
+      if (url.endsWith('/rpc/receipt_reserve_direct_read')) return { ok: true, json: async () => 0 };
       calls.push({ url, init });
-      if (url.includes("/auth/v1/user")) return { ok: !options.authStatus, status: options.authStatus || 200 };
+      if (url.includes("/auth/v1/user")) return { ok: !options.authStatus, status: options.authStatus || 200, json: async () => ({id:"test-user"}) };
       assert.equal(url, "https://api.openai.com/v1/responses");
       if (options.error) throw options.error;
       const status = options.status || 200;

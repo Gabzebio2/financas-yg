@@ -4,6 +4,40 @@ import * as categoryModule from '../../../js/transaction-categories.js';
 const transactionCategories = categoryModule.default || globalThis.TransactionCategories;
 export const BUCKET='receipt-documents';
 export const CURRENCIES=['BRL','PYG','CLP','USD','EUR','GBP','USDT','USDC'];
+export async function readJobRequest(request, maxBytes = 8500000) {
+  if (Number(request.headers.get('content-length')) > maxBytes) throw Error('payload_too_large');
+  if (!request.body) throw Error('invalid_request');
+  const reader = request.body.getReader();
+  let bytes = new Uint8Array(Math.min(4096, maxBytes));
+  let size = 0;
+  try {
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      const required = size + value.byteLength;
+      if (required > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw Error('payload_too_large');
+      }
+      if (required > bytes.length) {
+        const next = new Uint8Array(Math.min(maxBytes, Math.max(required, bytes.length * 2)));
+        next.set(bytes.subarray(0, size));
+        bytes = next;
+      }
+      bytes.set(value, size);
+      size = required;
+    }
+    const decoded = new TextDecoder('utf-8', {fatal: true}).decode(bytes.subarray(0, size));
+    const body = JSON.parse(decoded);
+    if (!body || Array.isArray(body) || typeof body !== 'object') throw Error('invalid_request');
+    return body;
+  } catch (error) {
+    if (error.message === 'payload_too_large') throw error;
+    throw Error('invalid_request');
+  } finally {
+    reader.releaseLock();
+  }
+}
 export const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v);
 export const names=v=>Array.isArray(v)?v.filter(x=>typeof x==='string'&&x.trim()).slice(0,40).map(x=>x.slice(0,80)):[];
 export async function digest(bytes){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');}
@@ -49,7 +83,7 @@ export function createBackend({url,serviceKey,publicKey,fetcher=fetch}){
  const adminHeaders={apikey:serviceKey,Authorization:'Bearer '+serviceKey};
  async function admin(path,options={}){
   const r=await fetcher(url+path,{...options,headers:{...adminHeaders,...options.headers},redirect:'error',signal:options.signal||AbortSignal.timeout(20000)});
-  if(!r.ok){const e=await r.json().catch(()=>({}));const allowed=['folder_not_linked','active_job_limit','job_not_found','job_not_ready','invalid_transaction','retry_unavailable','upload_incomplete','job_too_large','c6_series_changed','c6_coverage_mismatch'];throw Error(allowed.includes(e.message)?e.message:'storage_unavailable');}
+  if(!r.ok){const e=await r.json().catch(()=>({}));const allowed=['folder_not_linked','active_job_limit','receipt_daily_limit','job_not_found','job_not_ready','invalid_transaction','retry_unavailable','upload_incomplete','job_too_large','c6_series_changed','c6_coverage_mismatch'];throw Error(allowed.includes(e.message)?e.message:'storage_unavailable');}
   if(r.status===204)return null;return r.json();
  }
  const rpc=(name,args={})=>admin('/rest/v1/rpc/'+name,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args)});

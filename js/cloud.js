@@ -13,6 +13,7 @@ const Cloud = (() => {
   const CFG_STORAGE = "fyg:supabase-config";   // {url, anonKey} por aparelho
   const AUTOSYNC_STORAGE = "fyg:cloud-autosync";
   const AUTH_REDIRECT_URL = "https://financas-yg.vercel.app/";
+  const officialSite = location.origin + "/" === AUTH_REDIRECT_URL;
   const TABLE = "pastas";
 
   // Conexão padrão do projeto — embutida para não precisar colar em cada
@@ -44,6 +45,7 @@ const Cloud = (() => {
   let passkeysEnabled = null, signupsAllowed = null, authOptionsLoading = false, authOptionsError = "";
   let authOperation = null, authSettingsRequest = null, authCooldownTimer = null, linkCooldownUntil = 0;
   let pendingCodeEmail = "", recoveryOwner = "";
+  let signingOut = null;
   const authCallbackParameters = String(location.hash || "") + "&" + String(location.search || "");
   const authCallbackError = /(?:^|[?#&])error_code=otp_expired(?:&|$)/.test(authCallbackParameters)
     ? "Este link de acesso expirou ou já foi usado. Peça um novo e use somente o e-mail mais recente."
@@ -435,12 +437,19 @@ const Cloud = (() => {
   }
 
   function getCfg() {
+    if (officialSite) return { url: DEFAULT_URL, anonKey: DEFAULT_KEY };
     try {
       const c = JSON.parse(localStorage.getItem(CFG_STORAGE));
       if (c && /^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(c.url) && typeof c.anonKey === "string" && c.anonKey.length > 20) return c;
     } catch { /* config local inválida: cai no padrão */ }
     if (DEFAULT_URL && DEFAULT_KEY.length > 20) return { url: DEFAULT_URL, anonKey: DEFAULT_KEY };
     return null;
+  }
+
+  function sessionStorageKey(cfg) {
+    // Mantém a chave padrão do SDK para preservar sessões existentes.
+    const project = /^https:\/\/([a-z0-9-]+)\.supabase\.co$/i.exec(cfg?.url);
+    return project ? "sb-" + project[1] + "-auth-token" : null;
   }
 
   function setStatus(msg, cls) {
@@ -466,8 +475,8 @@ const Cloud = (() => {
   function getAuthOptions() {
     const supported = typeof window !== "undefined" && window.isSecureContext === true &&
       typeof window.PublicKeyCredential === "function" && typeof navigator?.credentials?.get === "function" && typeof navigator?.credentials?.create === "function";
-    return { passkeysEnabled, signupsAllowed, passkeysSupported: supported, busy: !!authOperation,
-      busyAction: authOperation?.action || null, linkCooldownUntil, loading: authOptionsLoading,
+    return { passkeysEnabled, signupsAllowed, passkeysSupported: supported, busy: !!authOperation || !!signingOut,
+      busyAction: authOperation?.action || (signingOut ? "logout" : null), linkCooldownUntil, loading: authOptionsLoading,
       codeRequested: !!pendingCodeEmail, recoveryActive: !!recoveryOwner && recoveryOwner === activeOwner,
       error: authOptionsError || null };
   }
@@ -497,7 +506,7 @@ const Cloud = (() => {
   }
 
   function beginAuthOperation(action, c) {
-    if (authOperation) return null;
+    if (authOperation || signingOut) return null;
     const ticket = { action, c, version: connectionVersion, owner: activeOwner, controller: new AbortController(), expectedUserId: null };
     ticket.interrupted = new Promise((_, reject) => { ticket.reject = reject; });
     // Uma cerimônia biométrica pode levar mais tempo que a requisição de e-mail.
@@ -719,7 +728,7 @@ const Cloud = (() => {
       return null;
     }
     clientCfg = { url: cfg.url, anonKey: cfg.anonKey };
-    client = supabase.createClient(clientCfg.url, clientCfg.anonKey, { auth: { experimental: { passkey: true } },
+    client = supabase.createClient(clientCfg.url, clientCfg.anonKey, { auth: { storageKey: sessionStorageKey(clientCfg), experimental: { passkey: true } },
       ...(typeof fetch === "function" ? { global: { fetch: guardedAuthFetch } } : {}) });
     const currentClient = client;
     const { data } = client.auth.onAuthStateChange((ev, s) => {
@@ -762,6 +771,7 @@ const Cloud = (() => {
   }
 
   function activateSession(nextSession, event, acceptedAuth = null) {
+    if (nextSession && signingOut?.client === client && nextSession.user?.id === signingOut.user) return;
     // Um evento de autenticação pode chegar antes do evento storage de outra aba.
     // Nunca atribua a sessão do cliente antigo ao novo projeto configurado.
     if (!matchesClientCfg()) { resetConnection(); refreshUI(); return; }
@@ -1392,35 +1402,53 @@ const Cloud = (() => {
 
 
   async function logout() {
+    if (signingOut) return;
     cancelAuthOperation(); setAccessStatus("");
     pendingCodeEmail = ""; recoveryOwner = "";
     for (const selector of ["#cloud-pass", "#cloud-newpass", "#cloud-code"]) if ($(selector)) $(selector).value = "";
     $("#cloud-newpass-wrap")?.classList.add("hidden");
-    const previousSession = session;
-    const previousInvalidRemoteIds = new Set(invalidRemoteIds);
-    const previousMergeConflictIds = new Set(mergeConflictIds);
-    const previousRepairState = { repairableRemoteCount, repairableDateCount, repairDatePreview, lastRepairCount };
+    const leavingUser = session?.user?.id;
+    const storageKey = sessionStorageKey(clientCfg);
     const c = client;
+    const operation = signingOut = { client: c, user: leavingUser };
     cancelSchedule();
     cancelRequests();
-    connectionVersion++;
+    const version = ++connectionVersion;
     session = null;
     activeOwner = "";
     invalidRemoteIds.clear();
     mergeConflictIds.clear();
     resetRepairState();
+    refreshUI();
     publishState();
     try {
       const result = await c?.auth.signOut({ scope: "local" });
       if (result?.error) throw result.error;
     } catch {
-      if (client === c) {
-        session = previousSession; activeOwner = ownerFor(previousSession); invalidRemoteIds = previousInvalidRemoteIds; mergeConflictIds = previousMergeConflictIds;
-        ({ repairableRemoteCount, repairableDateCount, repairDatePreview, lastRepairCount } = previousRepairState);
-      }
-      refreshUI(); publishState();
-      setStatus("Não foi possível sair da conta. Confira a conexão e tente novamente.", "err");
+      if (c !== client || version !== connectionVersion) return;
+      // O SDK mantém a sessão quando a revogação remota falha. Encerre o
+      // cliente desta aba e descarte apenas os registros de autenticação.
+      resetConnection();
+      let localError = false;
+      try {
+        if (storageKey) {
+          const saved = localStorage.getItem(storageKey);
+          let savedUser;
+          try { savedUser = saved && JSON.parse(saved)?.user?.id; } catch { /* sessão inválida também pode ser removida */ }
+          if (!savedUser || savedUser === leavingUser) {
+            for (const suffix of ["", "-code-verifier", "-user"]) localStorage.removeItem(storageKey + suffix);
+          }
+        }
+      } catch { localError = true; }
+      try { await c?.auth.dispose?.(); } catch { /* cliente já foi desligado do app */ }
+      refreshUI();
+      setAccessStatus(localError
+        ? "A conta foi fechada nesta aba, mas o navegador impediu a remoção da sessão. Antes de compartilhar o aparelho, reconecte-se e tente sair novamente."
+        : "Você saiu deste navegador. A nuvem não confirmou a revogação da sessão.", localError);
       return;
+    } finally {
+      if (signingOut === operation) signingOut = null;
+      publishAuthOptions();
     }
     if (c !== client) return;
     refreshUI();
@@ -1530,6 +1558,7 @@ const Cloud = (() => {
 
   /* ---------- Configuração (URL + chave anon) ---------- */
   function showCfgSetup() {
+    if (officialSite) return;
     const accountPanel = document.querySelector("#home-account");
     if (accountPanel) accountPanel.open = true;
     const cfg = getCfg();
@@ -1586,6 +1615,7 @@ const Cloud = (() => {
 
     $("#btn-cloud-setup-link").addEventListener("click", showCfgSetup);
     $("#btn-cloud-cfg-save").addEventListener("click", () => {
+      if (officialSite) return;
       const url = $("#cloud-url-input").value.trim().replace(/\/+$/, "");
       const anonKey = $("#cloud-key-input").value.trim();
       if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(url)) {
@@ -1600,6 +1630,7 @@ const Cloud = (() => {
       toast("Conexão configurada ✔ Agora crie sua conta ou entre.");
     });
     $("#btn-cloud-cfg-clear").addEventListener("click", () => {
+      if (officialSite) return;
       localStorage.removeItem(CFG_STORAGE);
       resetConnection();
       $("#cloud-cfg-wrap").classList.add("hidden");
@@ -1621,7 +1652,17 @@ const Cloud = (() => {
     window.addEventListener("focus", refreshVisible);
     window.addEventListener("offline", () => { cancelSchedule(); publishState(); });
     window.addEventListener("storage", (event) => {
-      if (event.key === CFG_STORAGE) {
+      if (event.key && event.key === sessionStorageKey(getCfg())) {
+        if (event.newValue === null && session && !localStorage.getItem(event.key)) {
+          const oldClient = client;
+          resetConnection();
+          void oldClient?.auth.dispose?.();
+          refreshUI();
+        } else if (event.newValue && !client) {
+          void init();
+        }
+      } else if (event.key === CFG_STORAGE) {
+        if (officialSite) return;
         resetConnection(); refreshUI();
       } else if (event.key === AUTOSYNC_STORAGE) {
         if (!isAuto()) { cancelSchedule(); cancelRequests(); connectionVersion++; }

@@ -48,7 +48,11 @@ const ReceiptJobs=(()=>{
  const owner=()=>typeof Cloud!=='undefined'?Cloud.getSyncState().owner:null;
  const folder=()=>typeof Dashboard!=='undefined'?Dashboard.getImportTargetId():null;
  const messages={login_required:'Entre na sua conta para enviar e recuperar documentos.',folder_not_linked:'Sincronize esta pasta com sua conta antes de enviar documentos.',active_job_limit:'Há muitos documentos guardados. Conclua ou descarte os envios anteriores.',job_not_found:'Este documento expirou ou pertence a outra conta.',job_not_ready:'A leitura ainda não terminou. Aguarde o resultado.',retry_unavailable:'Não foi possível retomar. Envie o documento novamente.',upload_incomplete:'O envio não terminou. Mantenha o app aberto durante o envio.',job_too_large:'O lote ultrapassa 100 MB após a preparação. Divida os arquivos.',invalid_transaction:'Confira os campos destacados antes de incluir.',saldo_ia:'A leitura aguarda créditos no serviço de IA.'};
- function message(e){return messages[e?.message]||'Não foi possível conectar agora. Seus documentos já enviados continuam guardados; tente novamente.';}
+ function message(e){
+  if(e?.message==='receipt_daily_limit')return Receipt.dailyLimitMessage(e.retryAfter);
+  if(e?.message==='rate_limit')return 'Muitas leituras em sequência. Aguarde e tente novamente.';
+  return messages[e?.message]||'Não foi possível conectar agora. Seus documentos já enviados continuam guardados; tente novamente.';
+ }
  function uploadMessage(e){return message(e)+(e?.receiptJobCreated?' Confira o andamento no sino de notificações antes de reenviar.':' O arquivo não foi enviado para leitura.');}
  async function request(body,context={owner:owner(),folder:folder()}){
   if(!context.owner||owner()!==context.owner)throw Error('login_required');
@@ -58,7 +62,11 @@ const ReceiptJobs=(()=>{
   const send=()=>{if(owner()!==context.owner||folder()!==context.folder)throw Error('context_changed');return fetch(URL,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify(body),signal:AbortSignal.timeout(body.action==='upload'?65000:30000)});};
   let res=await send();
   if(res.status===401){await Cloud.syncNow();if(owner()!==context.owner)throw Error('login_required');const next=await Cloud.getToken();if(next&&next!==token){token=next;res=await send();}}
-  const data=await res.json().catch(()=>({}));if(!res.ok)throw Error(data.error||'service_unavailable');
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok){
+   const code=res.status===429 && data.error!=='receipt_daily_limit'?'rate_limit':data.error||'service_unavailable';
+   throw Object.assign(Error(code),{retryAfter:data.retryAfter});
+  }
   if(owner()!==context.owner||folder()!==context.folder)throw Error('context_changed');return data;
  }
  async function pageInfo(part){
@@ -69,7 +77,7 @@ const ReceiptJobs=(()=>{
  async function uploadPart(id,index,data,context){
   for(let attempt=1;;attempt++){
    try{return await request({action:'upload',id,index,data},context);}
-   catch(e){if(attempt===3||['login_required','context_changed','invalid_page','job_not_found','upload_closed'].includes(e.message))throw e;}
+   catch(e){if(attempt===3||['login_required','context_changed','invalid_page','job_not_found','upload_closed','rate_limit','receipt_daily_limit'].includes(e.message))throw e;}
   }
  }
  async function resumeUpload(id,files,context){

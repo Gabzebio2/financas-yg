@@ -651,15 +651,32 @@ test("erro real de autenticação após isolar inválidos continua interrompendo
   assert.equal(h.timers.size, 0);
 });
 
-test("falha ao sair mantém diagnóstico do remoto inválido junto com a sessão restaurada", async () => {
+test("sair sem rede desliga a conta, remove as credenciais da sessão e preserva os dados financeiros", async () => {
   const h = await seeded(); putInvalidRemote(h); await h.sync();
+  const key = "sb-mhgagjhwsjjjwwvopjgu-auth-token";
+  h.values.set(key, JSON.stringify({user:{id:"user-a"}}));
+  h.values.set(key + "-code-verifier", "synthetic-verifier");
+  h.values.set(key + "-user", "synthetic-user");
+  const before = h.values.get("fyg:ds:folder0001");
+  assert.ok(before);
   h.context.supabase.createClient().auth.signOut = async () => ({ error: new Error("Logout indisponível") });
   await h.cloud.logout();
   const state = h.cloud.getSyncState();
-  assert.equal(state.connected, true);
-  assert.equal(state.invalidRemoteCount, 1);
-  assert.equal(state.status, "error");
-  assert.match(state.error, /dados inválidos/);
+  assert.equal(state.connected, false);
+  assert.equal(state.owner, null);
+  assert.equal(h.cloud.getToken(), null);
+  assert.equal(h.cloud.ownsFolder("folder0001"), false);
+  for (const suffix of ["", "-code-verifier", "-user"]) assert.equal(h.values.has(key + suffix), false);
+  assert.equal(h.values.get("fyg:ds:folder0001"), before);
+  assert.match(h.nodes.get("#cloud-access-status").textContent, /saiu deste navegador/);
+});
+
+test("remoção da sessão em outra aba fecha a pasta sem apagar a cópia local", async () => {
+  const h = await seeded(); const before = h.local();
+  h.context.window.fire("storage", { key:"sb-mhgagjhwsjjjwwvopjgu-auth-token", newValue:null });
+  assert.equal(h.cloud.getToken(), null);
+  assert.equal(h.cloud.ownsFolder("folder0001"), false);
+  assert.deepEqual(h.local(), before);
 });
 
 test("mensagem de erro pendente é apresentada como texto sem interpretar HTML", async () => {

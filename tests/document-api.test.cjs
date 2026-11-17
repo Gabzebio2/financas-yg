@@ -1,6 +1,9 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 function setup(){
- const calls=[];const context={module:{exports:{}},require:()=>({readPage:async(value,key)=>{calls.push({value,key});return {itens:[]};}}),process:{env:{OPENAI_API_KEY:'server-test-secret'}},AbortSignal,fetch:async(url,init)=>{calls.push({url,init});return {ok:true};}};
+ const calls=[];const context={module:{exports:{}},require:module=>module.endsWith('receipt-quota.cjs')?require('../server/receipt-quota.cjs'):({readPage:async(value,key)=>{calls.push({value,key});return {itens:[]};}}),process:{env:{OPENAI_API_KEY:'server-test-secret',RECEIPT_WORKER_SECRET:'synthetic-worker'}},AbortSignal,fetch:async(url,init)=>{
+  if(url.endsWith('/rpc/receipt_reserve_direct_read'))return {ok:true,json:async()=>0};
+  calls.push({url,init});return {ok:true,json:async()=>({id:'test-user'})};
+ }};
  vm.runInNewContext(fs.readFileSync(require.resolve('../api/receipt-document.js'),'utf8'),context);
  const invoke=async(body,headers={authorization:'Bearer test-session'},method='POST')=>{let code,data;const res={setHeader(){},status(n){code=n;return this;},json(v){data=v;return this;}};await context.module.exports({body,headers,method},res);return {code,data};};
  return {context,calls,invoke};

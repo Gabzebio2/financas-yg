@@ -20,8 +20,9 @@ function harness(payload, options = {}) {
   const environment = vm.createContext({ module: { exports: {} }, console: { error() {} }, AbortSignal,
     require: require('node:module').createRequire(path.join(__dirname, '../api/receipt.js')),
     setTimeout: callback => { callback(); return 1; },
-    process: { env: provider === "gemini" ? { GEMINI_API_KEY: "synthetic-gemini-secret" } : { ANTHROPIC_API_KEY: "synthetic-anthropic-secret" } },
+    process: { env: { RECEIPT_WORKER_SECRET: "synthetic-worker", ...(provider === "gemini" ? { GEMINI_API_KEY: "synthetic-gemini-secret" } : { ANTHROPIC_API_KEY: "synthetic-anthropic-secret" }) } },
     fetch: async (url, init = {}) => {
+      if (url.endsWith('/rpc/receipt_reserve_direct_read')) return response(0);
       calls.push({ url, init });
       if (url.includes("/auth/v1/user")) return response({ id: "synthetic-user" });
       if (options.providerStatus) return response({ error: { message: "synthetic-private-provider-detail" } }, options.providerStatus);
