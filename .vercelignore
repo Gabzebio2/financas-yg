@@ -12,6 +12,10 @@
 !/api/whatsapp-config.js
 !/api/whatsapp.js
 !/css/design.css
+!/css/workspace-review.css
+!/css/dashboard-review.css
+!/css/ledger-review.css
+!/css/entry-review.css
 !/css/style.css
 !/css/whatsapp.css
 !/fonts/OpenSans-Var.woff2
